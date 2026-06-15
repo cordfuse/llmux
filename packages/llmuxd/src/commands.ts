@@ -1,0 +1,215 @@
+import { renderFlagHelp, notImplemented, type FlagSpecs, type ParsedArgs } from './cli.ts';
+
+export interface Command {
+  summary: string;
+  flags: FlagSpecs;
+  usage: string;
+  help: () => string;
+  run: (args: ParsedArgs) => Promise<void> | void;
+}
+
+function makeHelp(name: string, summary: string, usage: string, flags: FlagSpecs): () => string {
+  return () => {
+    const flagBlock = Object.keys(flags).length ? `\nOptions:\n${renderFlagHelp(flags)}\n` : '\n';
+    return [`llmuxd ${name} — ${summary}`, '', `Usage:`, `  ${usage}`, flagBlock].join('\n');
+  };
+}
+
+// Default daemon — local mode (unix socket only).
+const defaultDaemon: Command = {
+  summary: 'Start the daemon in local mode (unix socket only)',
+  usage: 'llmuxd [--config <path>]',
+  flags: {
+    config: { kind: 'string', description: 'Path to .llmux.yaml' },
+  },
+  help: () => '',
+  run: () => notImplemented('(local daemon)'),
+};
+defaultDaemon.help = makeHelp('', defaultDaemon.summary, defaultDaemon.usage, defaultDaemon.flags);
+
+const serve: Command = {
+  summary: 'Start REST API + web terminal server',
+  usage: 'llmuxd serve [--config <path>] [--port <n>] [--no-qr]',
+  flags: {
+    config: { kind: 'string', description: 'Path to .llmux.yaml' },
+    port: { kind: 'string', description: 'Listen port (overrides config)' },
+    'no-qr': { kind: 'boolean', description: 'Suppress QR codes (CI/headless)' },
+  },
+  help: () => '',
+  run: () => notImplemented('serve'),
+};
+serve.help = makeHelp('serve', serve.summary, serve.usage, serve.flags);
+
+const init: Command = {
+  summary: 'Generate a starter .llmux.yaml interactively',
+  usage: 'llmuxd init [--global]',
+  flags: {
+    global: { kind: 'boolean', description: 'Write to ~/.config/llmux/config.yaml' },
+  },
+  help: () => '',
+  run: () => notImplemented('init'),
+};
+init.help = makeHelp('init', init.summary, init.usage, init.flags);
+
+const configCmd: Command = {
+  summary: 'Inspect configuration (subcommands: show)',
+  usage: 'llmuxd config show [--config <path>]',
+  flags: {
+    config: { kind: 'string', description: 'Path to .llmux.yaml' },
+  },
+  help: () => '',
+  run: (args) => {
+    const sub = args.positional[0];
+    if (sub === 'show') return notImplemented('config show');
+    throw new Error(`config: unknown subcommand "${sub ?? ''}". Try \`llmuxd config show\`.`);
+  },
+};
+configCmd.help = makeHelp('config', configCmd.summary, configCmd.usage, configCmd.flags);
+
+const spawn: Command = {
+  summary: 'Spawn one or more agent sessions in tmux',
+  usage: 'llmuxd spawn <agent|agent,agent,...|all> [--name <n> | --prefix <p>] [--cwd <path>]',
+  flags: {
+    name: { kind: 'string', description: 'Named session (single agent only)' },
+    prefix: { kind: 'string', description: 'Prefixed sessions (e.g. proj- → proj-claude)' },
+    cwd: { kind: 'string', description: 'Working directory for the agent process' },
+  },
+  help: () => '',
+  run: (args) => {
+    if (args.positional.length === 0) throw new Error('spawn requires an agent (or `all`)');
+    if (args.flags.name && args.flags.prefix) throw new Error('--name and --prefix are mutually exclusive');
+    return notImplemented('spawn');
+  },
+};
+spawn.help = makeHelp('spawn', spawn.summary, spawn.usage, spawn.flags);
+
+const send: Command = {
+  summary: 'Send a prompt to a session (fire-and-forget)',
+  usage: 'llmuxd send <session> "<prompt>"',
+  flags: {},
+  help: () => '',
+  run: (args) => {
+    if (args.positional.length < 2) throw new Error('send requires <session> and "<prompt>"');
+    return notImplemented('send');
+  },
+};
+send.help = makeHelp('send', send.summary, send.usage, send.flags);
+
+const broadcast: Command = {
+  summary: 'Send a prompt to ALL sessions of an agent type',
+  usage: 'llmuxd broadcast <agent> "<prompt>"',
+  flags: {},
+  help: () => '',
+  run: (args) => {
+    if (args.positional.length < 2) throw new Error('broadcast requires <agent> and "<prompt>"');
+    return notImplemented('broadcast');
+  },
+};
+broadcast.help = makeHelp('broadcast', broadcast.summary, broadcast.usage, broadcast.flags);
+
+const chat: Command = {
+  summary: 'Interactively attach to a session',
+  usage: 'llmuxd chat <session> [--browser] [-it]',
+  flags: {
+    browser: { kind: 'boolean', description: 'Open in browser web terminal (requires serve)' },
+    it: { kind: 'boolean', description: 'Interactive picker when ambiguous' },
+  },
+  help: () => '',
+  run: (args) => {
+    if (args.positional.length < 1) throw new Error('chat requires <session>');
+    return notImplemented('chat');
+  },
+};
+chat.help = makeHelp('chat', chat.summary, chat.usage, chat.flags);
+
+const kill: Command = {
+  summary: 'Terminate a session (or all sessions)',
+  usage: 'llmuxd kill <session|all> [--cascade]',
+  flags: {
+    cascade: { kind: 'boolean', description: 'Also kill child sessions spawned by this one' },
+  },
+  help: () => '',
+  run: (args) => {
+    if (args.positional.length < 1) throw new Error('kill requires <session> or `all`');
+    return notImplemented('kill');
+  },
+};
+kill.help = makeHelp('kill', kill.summary, kill.usage, kill.flags);
+
+const status: Command = {
+  summary: 'Show all sessions, agent type, and state',
+  usage: 'llmuxd status [--json]',
+  flags: {
+    json: { kind: 'boolean', description: 'Emit JSON' },
+  },
+  help: () => '',
+  run: () => notImplemented('status'),
+};
+status.help = makeHelp('status', status.summary, status.usage, status.flags);
+
+const logs: Command = {
+  summary: 'View dispatch history for a session',
+  usage: 'llmuxd logs <session> [--tail <n>] [--follow]',
+  flags: {
+    tail: { kind: 'string', description: 'Show last N entries' },
+    follow: { kind: 'boolean', description: 'Stream new entries as they arrive' },
+  },
+  help: () => '',
+  run: (args) => {
+    if (args.positional.length < 1) throw new Error('logs requires <session>');
+    return notImplemented('logs');
+  },
+};
+logs.help = makeHelp('logs', logs.summary, logs.usage, logs.flags);
+
+const respawn: Command = {
+  summary: 'Restart a crashed or exited session',
+  usage: 'llmuxd respawn <session>',
+  flags: {},
+  help: () => '',
+  run: (args) => {
+    if (args.positional.length < 1) throw new Error('respawn requires <session>');
+    return notImplemented('respawn');
+  },
+};
+respawn.help = makeHelp('respawn', respawn.summary, respawn.usage, respawn.flags);
+
+const token: Command = {
+  summary: 'Manage SAS tokens (subcommands: create, refresh, revoke, show)',
+  usage: 'llmuxd token <create|refresh|revoke|show> [--expiry <iso-date>]',
+  flags: {
+    expiry: { kind: 'string', description: 'ISO date for token expiry (create only)' },
+  },
+  help: () => '',
+  run: (args) => {
+    const sub = args.positional[0];
+    switch (sub) {
+      case 'create':
+      case 'refresh':
+      case 'revoke':
+      case 'show':
+        return notImplemented(`token ${sub}`);
+      default:
+        throw new Error(`token: unknown subcommand "${sub ?? ''}". Try create|refresh|revoke|show.`);
+    }
+  },
+};
+token.help = makeHelp('token', token.summary, token.usage, token.flags);
+
+export const commands: Record<string, Command> = {
+  serve,
+  init,
+  config: configCmd,
+  spawn,
+  send,
+  broadcast,
+  chat,
+  kill,
+  status,
+  logs,
+  respawn,
+  token,
+};
+
+// Re-export default daemon for use when no subcommand is given (`llmuxd` alone).
+export { defaultDaemon };

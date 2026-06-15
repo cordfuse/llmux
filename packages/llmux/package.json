@@ -1,0 +1,42 @@
+{
+  "name": "@cordfuse/llmux",
+  "version": "0.0.0",
+  "description": "Thin HTTP client for llmuxd — send prompts to running AI agent CLI sessions over REST",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "llmux": "bin/llmux"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "build": "bun build src/index.ts --target=node --outdir=dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "tmux",
+    "ai",
+    "agent",
+    "llmux",
+    "cordfuse"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cordfuse/llmux.git",
+    "directory": "packages/llmux"
+  },
+  "homepage": "https://github.com/cordfuse/llmux#readme",
+  "bugs": {
+    "url": "https://github.com/cordfuse/llmux/issues"
+  }
+}
