@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typecheck-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build llmuxd
+        run: cd packages/llmuxd && bun run build
+
+      - name: Build llmux
+        run: cd packages/llmux && bun run build
+
+      - name: Smoke (--help)
+        run: |
+          node packages/llmuxd/dist/index.js --help
+          node packages/llmux/dist/index.js --help

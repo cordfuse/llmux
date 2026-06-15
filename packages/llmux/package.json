@@ -1,6 +1,6 @@
 {
   "name": "@cordfuse/llmux",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Thin HTTP client for llmuxd — send prompts to running AI agent CLI sessions over REST",
   "license": "MIT",
   "type": "module",
@@ -21,6 +21,7 @@
   "scripts": {
     "start": "bun src/index.ts",
     "build": "bun build src/index.ts --target=node --outdir=dist",
+    "prepublishOnly": "bun run build",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

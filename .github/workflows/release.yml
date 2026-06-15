@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build llmuxd
+        run: cd packages/llmuxd && bun run build
+
+      - name: Build llmux
+        run: cd packages/llmux && bun run build
+
+      - name: Pack tarballs
+        run: |
+          cd packages/llmuxd && npm pack && mv cordfuse-llmuxd-*.tgz ../../
+          cd ../llmux && npm pack && mv cordfuse-llmux-*.tgz ../../
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            cordfuse-llmuxd-*.tgz
+            cordfuse-llmux-*.tgz
+          generate_release_notes: true
+
+      - name: Publish @cordfuse/llmuxd to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        working-directory: packages/llmuxd
+        run: npm publish --access public --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @cordfuse/llmux to npm
+        if: ${{ env.NPM_TOKEN != '' }}
+        working-directory: packages/llmux
+        run: npm publish --access public --ignore-scripts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
