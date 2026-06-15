@@ -1,4 +1,5 @@
 import { renderFlagHelp, notImplemented, type FlagSpecs, type ParsedArgs } from './cli.ts';
+import * as h from './handlers.ts';
 
 export interface Command {
   summary: string;
@@ -75,11 +76,7 @@ const spawn: Command = {
     cwd: { kind: 'string', description: 'Working directory for the agent process' },
   },
   help: () => '',
-  run: (args) => {
-    if (args.positional.length === 0) throw new Error('spawn requires an agent (or `all`)');
-    if (args.flags.name && args.flags.prefix) throw new Error('--name and --prefix are mutually exclusive');
-    return notImplemented('spawn');
-  },
+  run: (args) => h.handleSpawn(args),
 };
 spawn.help = makeHelp('spawn', spawn.summary, spawn.usage, spawn.flags);
 
@@ -88,10 +85,7 @@ const send: Command = {
   usage: 'llmuxd send <session> "<prompt>"',
   flags: {},
   help: () => '',
-  run: (args) => {
-    if (args.positional.length < 2) throw new Error('send requires <session> and "<prompt>"');
-    return notImplemented('send');
-  },
+  run: (args) => h.handleSend(args),
 };
 send.help = makeHelp('send', send.summary, send.usage, send.flags);
 
@@ -100,10 +94,7 @@ const broadcast: Command = {
   usage: 'llmuxd broadcast <agent> "<prompt>"',
   flags: {},
   help: () => '',
-  run: (args) => {
-    if (args.positional.length < 2) throw new Error('broadcast requires <agent> and "<prompt>"');
-    return notImplemented('broadcast');
-  },
+  run: (args) => h.handleBroadcast(args),
 };
 broadcast.help = makeHelp('broadcast', broadcast.summary, broadcast.usage, broadcast.flags);
 
@@ -115,10 +106,7 @@ const chat: Command = {
     it: { kind: 'boolean', description: 'Interactive picker when ambiguous' },
   },
   help: () => '',
-  run: (args) => {
-    if (args.positional.length < 1) throw new Error('chat requires <session>');
-    return notImplemented('chat');
-  },
+  run: (args) => h.handleChat(args),
 };
 chat.help = makeHelp('chat', chat.summary, chat.usage, chat.flags);
 
@@ -129,10 +117,7 @@ const kill: Command = {
     cascade: { kind: 'boolean', description: 'Also kill child sessions spawned by this one' },
   },
   help: () => '',
-  run: (args) => {
-    if (args.positional.length < 1) throw new Error('kill requires <session> or `all`');
-    return notImplemented('kill');
-  },
+  run: (args) => h.handleKill(args),
 };
 kill.help = makeHelp('kill', kill.summary, kill.usage, kill.flags);
 
@@ -143,7 +128,7 @@ const status: Command = {
     json: { kind: 'boolean', description: 'Emit JSON' },
   },
   help: () => '',
-  run: () => notImplemented('status'),
+  run: (args) => h.handleStatus(args),
 };
 status.help = makeHelp('status', status.summary, status.usage, status.flags);
 
