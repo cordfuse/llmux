@@ -5,6 +5,8 @@ import { join, delimiter } from 'node:path';
 export interface AgentDefinition {
   /** Key under `agents:` in .llmux.yaml; default tmux-session name. */
   key: string;
+  /** Human-readable name shown in UI surfaces (picker dropdown, etc.). */
+  displayName: string;
   /** Executable to launch in the tmux pane. */
   cmd: string;
   /** Default args appended after `cmd`. */
@@ -36,16 +38,16 @@ const copilotInstalled = (): boolean => {
 };
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
-  claude: { key: 'claude', cmd: 'claude', flags: '--dangerously-skip-permissions', readyPrompt: '^>' },
-  codex: { key: 'codex', cmd: 'codex', readyPrompt: '^>' },
-  agy: { key: 'agy', cmd: 'agy', flags: '--dangerously-skip-permissions', readyPrompt: '^agy>' },
-  gemini: { key: 'gemini', cmd: 'gemini', readyPrompt: '^>' },
-  qwen: { key: 'qwen', cmd: 'qwen', readyPrompt: '^>' },
-  opencode: { key: 'opencode', cmd: 'opencode', readyPrompt: '^>' },
-  grok: { key: 'grok', cmd: 'grok', readyPrompt: '^grok>' },
-  aider: { key: 'aider', cmd: 'aider', flags: '--model claude-opus-4-6', readyPrompt: '^> $' },
-  goose: { key: 'goose', cmd: 'goose', readyPrompt: 'Goose❯' },
-  copilot: { key: 'copilot', cmd: 'gh copilot', readyPrompt: '●', detectInstalled: copilotInstalled },
+  claude:   { key: 'claude',   displayName: 'Claude Code',     cmd: 'claude',     flags: '--dangerously-skip-permissions', readyPrompt: '^>' },
+  codex:    { key: 'codex',    displayName: 'Codex CLI',       cmd: 'codex',                                              readyPrompt: '^>' },
+  agy:      { key: 'agy',      displayName: 'Antigravity CLI', cmd: 'agy',        flags: '--dangerously-skip-permissions', readyPrompt: '^agy>' },
+  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',      cmd: 'gemini',                                             readyPrompt: '^>' },
+  qwen:     { key: 'qwen',     displayName: 'Qwen Code',       cmd: 'qwen',                                               readyPrompt: '^>' },
+  opencode: { key: 'opencode', displayName: 'OpenCode',        cmd: 'opencode',                                           readyPrompt: '^>' },
+  grok:     { key: 'grok',     displayName: 'Grok CLI',        cmd: 'grok',                                               readyPrompt: '^grok>' },
+  aider:    { key: 'aider',    displayName: 'Aider',           cmd: 'aider',      flags: '--model claude-opus-4-6',        readyPrompt: '^> $' },
+  goose:    { key: 'goose',    displayName: 'Goose',           cmd: 'goose',                                              readyPrompt: 'Goose❯' },
+  copilot:  { key: 'copilot',  displayName: 'GitHub Copilot',  cmd: 'gh copilot',                                         readyPrompt: '●', detectInstalled: copilotInstalled },
 };
 
 export function isAgentInstalled(agent: AgentDefinition): boolean {

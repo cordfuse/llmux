@@ -92,6 +92,14 @@ export function killSession(name: string): void {
   }
 }
 
+export function renameSession(oldName: string, newName: string): void {
+  if (!hasSession(oldName)) return;
+  const r = spawnSync('tmux', ['rename-session', '-t', oldName, newName], { stdio: 'pipe' });
+  if (r.status !== 0) {
+    throw new Error(`tmux rename-session failed: ${r.stderr.toString().trim() || `exit ${r.status}`}`);
+  }
+}
+
 /**
  * Attach interactively. Inside a tmux client → `switch-client`. Outside → `attach`.
  * Inherits the controlling TTY so the user takes over the terminal.

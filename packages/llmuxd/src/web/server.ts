@@ -106,6 +106,7 @@ function pickerPage(): string {
   .actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 9px;font:12px ui-monospace,monospace;cursor:pointer;margin-left:4px}
   .actions button:hover{background:#252b34;border-color:#3a414b}
   .actions button.respawn{color:#7cc4ff;border-color:#2d4a66}
+  .actions button.edit{color:#d29922;border-color:#574122}
   .actions button.kill{color:#f85149;border-color:#4a2329}
   .actions button:disabled{opacity:.5;cursor:wait}
   .empty{color:#7a7f87;padding:18px;text-align:center;border:1px dashed #1f2329;border-radius:8px}
@@ -114,6 +115,8 @@ function pickerPage(): string {
   #new-btn:hover{background:#252b34}
   #new-form{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:14px;margin-bottom:14px;display:none}
   #new-form.open{display:block}
+  #new-form .form-title{margin:0 0 12px;font-size:13px;color:#c9d1d9;font-weight:600}
+  #new-form select:disabled{opacity:.6;cursor:not-allowed}
   #new-form .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
   #new-form label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em}
   #new-form select,#new-form input{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none}
@@ -153,6 +156,7 @@ function pickerPage(): string {
   </div>
 </header>
 <div id="new-form" aria-hidden="true">
+  <h3 id="new-title" class="form-title">new session</h3>
   <form id="new-session-form">
     <div class="field">
       <label for="new-agent">agent</label>
@@ -166,6 +170,7 @@ function pickerPage(): string {
       <label for="new-cwd">cwd</label>
       <input id="new-cwd" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="(defaults to \$HOME on the daemon host)">
     </div>
+    <div id="new-cwd-hint" class="hint" hidden>cwd changes take effect on next respawn (running sessions keep their original cwd)</div>
     <div class="actions">
       <button type="button" id="new-cancel">cancel</button>
       <button type="submit" class="primary" id="new-submit">spawn</button>
@@ -215,13 +220,14 @@ function pickerPage(): string {
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
     const respawnBtn = s.status === 'exited' ? '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '">↻ respawn</button>' : '';
+    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '">✎ edit</button>';
     const when = relativeTime(s.createdAt);
     return '<tr data-name="' + escapeHtml(s.name) + '">' +
       '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd"><code>' + escapeHtml(s.cwd) + '</code></span></td>' +
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col"><code>' + escapeHtml(s.cwd) + '</code></td>' +
-      '<td class="actions">' + respawnBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '">' + (s.status === 'running' ? '× kill' : '× remove') + '</button></td>' +
+      '<td class="actions">' + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '">' + (s.status === 'running' ? '× kill' : '× remove') + '</button></td>' +
       '</tr>';
   }
 
@@ -281,19 +287,27 @@ function pickerPage(): string {
     e.preventDefault();
     const name = btn.dataset.name;
     const kind = btn.dataset.action;
+    if (kind === 'edit'){
+      openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd });
+      return;
+    }
     action(name, kind, btn);
   });
 
-  // ---- New session form ----
+  // ---- New / Edit session form ----
   const newBtn = document.getElementById('new-btn');
   const newForm = document.getElementById('new-form');
+  const newTitle = document.getElementById('new-title');
   const newSessionForm = document.getElementById('new-session-form');
   const newAgent = document.getElementById('new-agent');
   const newName = document.getElementById('new-name');
   const newCwd = document.getElementById('new-cwd');
+  const newCwdHint = document.getElementById('new-cwd-hint');
   const newCancel = document.getElementById('new-cancel');
   const newSubmit = document.getElementById('new-submit');
   let agentsLoaded = false;
+  // mode: null (closed) | 'new' | { edit: <original-name> }
+  let formMode = null;
 
   async function loadAgents(){
     if (agentsLoaded) return;
@@ -305,7 +319,8 @@ function pickerPage(): string {
         newAgent.innerHTML = '<option value="" disabled selected>no installed agents</option>';
       } else {
         newAgent.innerHTML = list.map(function(a){
-          return '<option value="' + escapeHtml(a.key) + '">' + escapeHtml(a.key) + ' (' + escapeHtml(a.cmd) + ')</option>';
+          const label = a.displayName || a.key;
+          return '<option value="' + escapeHtml(a.key) + '">' + escapeHtml(label) + '</option>';
         }).join('');
       }
       agentsLoaded = true;
@@ -314,49 +329,92 @@ function pickerPage(): string {
     }
   }
 
-  newBtn.addEventListener('click', async function(){
-    const willOpen = !newForm.classList.contains('open');
-    newForm.classList.toggle('open', willOpen);
-    newForm.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
-    if (willOpen){
-      await loadAgents();
-      newName.value = '';
-      newCwd.value = '';
-      newAgent.focus();
-    }
-  });
-
-  newCancel.addEventListener('click', function(){
+  function closeForm(){
     newForm.classList.remove('open');
     newForm.setAttribute('aria-hidden', 'true');
+    formMode = null;
+    newAgent.disabled = false;
+  }
+
+  async function openNewForm(){
+    formMode = 'new';
+    newTitle.textContent = 'new session';
+    newSubmit.textContent = 'spawn';
+    newName.value = '';
+    newCwd.value = '';
+    newAgent.disabled = false;
+    newCwdHint.hidden = true;
+    newForm.classList.add('open');
+    newForm.setAttribute('aria-hidden', 'false');
+    await loadAgents();
+    newAgent.focus();
+  }
+
+  async function openEditForm(row){
+    formMode = { edit: row.name };
+    newTitle.textContent = 'edit "' + row.name + '"';
+    newSubmit.textContent = 'save';
+    newName.value = row.name;
+    newCwd.value = row.cwd || '';
+    newCwdHint.hidden = false;
+    newForm.classList.add('open');
+    newForm.setAttribute('aria-hidden', 'false');
+    await loadAgents();
+    // Agent of an existing session can't be changed without kill+respawn;
+    // surface it as read-only so the user sees what they have.
+    if (row.agent) newAgent.value = row.agent;
+    newAgent.disabled = true;
+    newName.focus();
+    newName.select();
+  }
+
+  newBtn.addEventListener('click', function(){
+    if (newForm.classList.contains('open') && formMode === 'new'){ closeForm(); return; }
+    openNewForm();
   });
+
+  newCancel.addEventListener('click', function(){ closeForm(); });
 
   newSessionForm.addEventListener('submit', async function(e){
     e.preventDefault();
-    const agent = newAgent.value;
-    if (!agent){ showToast('pick an agent', true); return; }
-    const body = { agent };
     const name = newName.value.trim();
     const cwd = newCwd.value.trim();
-    if (name) body.name = name;
-    if (cwd) body.cwd = cwd;
     newSubmit.disabled = true;
     const originalLabel = newSubmit.textContent;
-    newSubmit.textContent = 'spawning…';
     try {
-      const r = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const data = await r.json().catch(function(){ return {}; });
-      if (!r.ok || data.ok === false) throw new Error(data.error || 'spawn failed');
-      showToast('spawned ' + data.session.name);
-      newForm.classList.remove('open');
-      newForm.setAttribute('aria-hidden', 'true');
+      if (formMode && formMode.edit){
+        newSubmit.textContent = 'saving…';
+        const body = {};
+        if (name) body.name = name;
+        if (cwd) body.cwd = cwd;
+        const r = await fetch('/api/sessions/' + encodeURIComponent(formMode.edit), {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await r.json().catch(function(){ return {}; });
+        if (!r.ok || data.ok === false) throw new Error(data.error || 'edit failed');
+        showToast('updated ' + data.session.name);
+      } else {
+        const agent = newAgent.value;
+        if (!agent){ showToast('pick an agent', true); return; }
+        newSubmit.textContent = 'spawning…';
+        const body = { agent };
+        if (name) body.name = name;
+        if (cwd) body.cwd = cwd;
+        const r = await fetch('/api/sessions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await r.json().catch(function(){ return {}; });
+        if (!r.ok || data.ok === false) throw new Error(data.error || 'spawn failed');
+        showToast('spawned ' + data.session.name);
+      }
+      closeForm();
       poll();
     } catch(e){
-      showToast('spawn failed: ' + (e.message || e), true);
+      showToast((formMode && formMode.edit ? 'edit' : 'spawn') + ' failed: ' + (e.message || e), true);
     } finally {
       newSubmit.disabled = false;
       newSubmit.textContent = originalLabel;
@@ -1218,6 +1276,66 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
   };
 }
 
+function editSession(
+  oldName: string,
+  patch: { name?: string; cwd?: string },
+): { ok: true; session: SessionView } | { ok: false; error: string } {
+  const session = state.get(oldName);
+  if (!session) return { ok: false, error: `no tracked session "${oldName}"` };
+
+  // Build the new record. Validate first, mutate last.
+  const newName = patch.name?.trim();
+  const newCwd = patch.cwd?.trim();
+
+  if (newName !== undefined && newName !== oldName) {
+    if (!SESSION_NAME_RE.test(newName)) {
+      return { ok: false, error: 'name must start alphanumeric and contain only letters, numbers, _ or -' };
+    }
+    if (state.get(newName) || tmux.hasSession(newName)) {
+      return { ok: false, error: `session "${newName}" already exists` };
+    }
+  }
+
+  if (newCwd !== undefined && newCwd.length > 0 && !existsSync(newCwd)) {
+    return { ok: false, error: `cwd does not exist: ${newCwd}` };
+  }
+
+  const renaming = newName !== undefined && newName !== oldName && newName.length > 0;
+
+  if (renaming) {
+    try {
+      tmux.renameSession(oldName, newName!);
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  const updated: state.SessionState = {
+    name: renaming ? newName! : oldName,
+    agent: session.agent,
+    cwd: newCwd !== undefined && newCwd.length > 0 ? newCwd : session.cwd,
+    createdAt: session.createdAt,
+    parent: session.parent,
+    restart: session.restart,
+  };
+
+  if (renaming) state.forget(oldName);
+  state.record(updated);
+
+  const live = tmux.listSessions().some((s) => s.name === updated.name);
+  return {
+    ok: true,
+    session: {
+      name: updated.name,
+      agent: updated.agent,
+      cwd: updated.cwd,
+      createdAt: updated.createdAt,
+      parent: updated.parent,
+      status: live ? 'running' : 'exited',
+    },
+  };
+}
+
 function killSession(name: string): { ok: true; status: 'running' | 'exited' } | { ok: false; error: string } {
   const session = state.get(name);
   if (!session) return { ok: false, error: `no tracked session "${name}"` };
@@ -1240,6 +1358,7 @@ export interface ServerHandle {
 
 const RESPAWN_RE = /^\/api\/sessions\/([^/]+)\/respawn$/;
 const KILL_RE = /^\/api\/sessions\/([^/]+)\/kill$/;
+const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
 
 export function startServer(opts: ServeOptions): ServerHandle {
   const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -1318,7 +1437,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
     if (url.pathname === '/api/agents' && method === 'GET') {
       const installed = Object.entries(DEFAULT_AGENTS)
         .filter(([, def]) => isAgentInstalled(def))
-        .map(([key, def]) => ({ key, cmd: def.cmd }));
+        .map(([key, def]) => ({ key, displayName: def.displayName, cmd: def.cmd }));
       return sendJson(res, installed);
     }
     if (url.pathname === '/api/sessions' && method === 'POST') {
@@ -1346,6 +1465,22 @@ export function startServer(opts: ServeOptions): ServerHandle {
         const name = decodeURIComponent(mKill[1]!);
         const result = killSession(name);
         return sendJson(res, result, result.ok ? 200 : 400);
+      }
+    }
+    if (method === 'PATCH') {
+      const mEdit = url.pathname.match(EDIT_RE);
+      if (mEdit) {
+        const name = decodeURIComponent(mEdit[1]!);
+        try {
+          const body = (await readJsonBody(req)) as { name?: unknown; cwd?: unknown };
+          const result = editSession(name, {
+            ...(typeof body.name === 'string' ? { name: body.name } : {}),
+            ...(typeof body.cwd === 'string' ? { cwd: body.cwd } : {}),
+          });
+          return sendJson(res, result, result.ok ? 200 : 400);
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
+        }
       }
     }
 
