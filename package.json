@@ -7,18 +7,18 @@
     "packages/*"
   ],
   "scripts": {
-    "llmuxd": "bun --cwd packages/llmuxd src/index.ts",
-    "llmux": "bun --cwd packages/llmux src/index.ts",
-    "build": "bun run build:llmuxd && bun run build:llmux",
-    "build:llmuxd": "cd packages/llmuxd && bun build src/index.ts --target=node --outdir=dist",
-    "build:llmux": "cd packages/llmux && bun build src/index.ts --target=node --outdir=dist",
-    "typecheck": "bun run typecheck:llmuxd && bun run typecheck:llmux",
-    "typecheck:llmuxd": "cd packages/llmuxd && bun x tsc --noEmit",
-    "typecheck:llmux": "cd packages/llmux && bun x tsc --noEmit"
+    "llmuxd": "tsx packages/llmuxd/src/index.ts",
+    "llmux": "tsx packages/llmux/src/index.ts",
+    "build": "npm run build --workspace @cordfuse/llmuxd && npm run build --workspace @cordfuse/llmux",
+    "typecheck": "npm run typecheck --workspace @cordfuse/llmuxd && npm run typecheck --workspace @cordfuse/llmux"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
     "@types/node": "^22.0.0",
-    "@types/bun": "latest"
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -16,6 +16,6 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["bun", "node"]
+    "types": ["node"]
   }
 }
