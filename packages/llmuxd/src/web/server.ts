@@ -1076,19 +1076,27 @@ export function startServer(opts: ServeOptions): ServerHandle {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const method = req.method ?? 'GET';
 
-    // ---- Deep-link login: ?token=<sas> on any path ----
-    // QR scan lands here. If the query token is valid, set the cookie and 302
-    // to the same path without the token param so the address bar stays clean
-    // and the token isn't kept in browser history.
+    // ---- Deep-link auth: ?token=<sas> on any path ----
+    // When ?token= is present, the URL is canonical — it overrides any existing
+    // cookie. Valid → 302 + set cookie + clean redirect. Invalid → clear the
+    // cookie (so a stale prior session doesn't mask the rejection) + serve the
+    // gate so the test is visible.
     const queryToken = url.searchParams.get('token');
-    if (queryToken && authStore.validateAuthToken(queryToken)) {
-      url.searchParams.delete('token');
-      const cleanPath = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
-      res.writeHead(302, {
-        location: cleanPath,
-        'set-cookie': buildCookie(queryToken),
+    if (queryToken) {
+      if (authStore.validateAuthToken(queryToken)) {
+        url.searchParams.delete('token');
+        const cleanPath = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
+        res.writeHead(302, {
+          location: cleanPath,
+          'set-cookie': buildCookie(queryToken),
+        });
+        return res.end();
+      }
+      res.writeHead(401, {
+        'content-type': 'text/html; charset=utf-8',
+        'set-cookie': `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`,
       });
-      return res.end();
+      return res.end(gatePage('invalid'));
     }
 
     // ---- Always-open endpoints (no auth required) ----
