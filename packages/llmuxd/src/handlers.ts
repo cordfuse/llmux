@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from './agents.ts';
 import * as state from './state.ts';
 import * as tmux from './tmux.ts';
+import * as authStore from './auth-store.ts';
 import { startServer, printBanner } from './web/server.ts';
 import type { ParsedArgs } from './cli.ts';
 
@@ -208,6 +209,58 @@ export async function handleServe(args: ParsedArgs): Promise<void> {
 
   // Idle forever — the http server and ws server keep the event loop alive.
   await new Promise<void>(() => {});
+}
+
+export function handleTokenCreate(args: ParsedArgs): void {
+  const name = args.flags.name as string | undefined;
+  const expiry = args.flags.expiry as string | undefined;
+  if (expiry && isNaN(new Date(expiry).getTime())) {
+    throw new Error(`--expiry must be an ISO-8601 timestamp (got "${expiry}")`);
+  }
+  const wasEnabled = authStore.authEnabled();
+  const rec = authStore.createAuthToken({
+    ...(name !== undefined ? { name } : {}),
+    ...(expiry !== undefined ? { expiresAt: expiry } : {}),
+  });
+  console.log(`token created (id: ${rec.id})${rec.name ? ` "${rec.name}"` : ''}`);
+  console.log('');
+  console.log(`  ${rec.token}`);
+  console.log('');
+  console.log('Save this token now — it is shown once. Use in the LLMUX_TOKEN env var, the');
+  console.log('`Authorization: Bearer <token>` header, or paste it into the web gate page.');
+  if (!wasEnabled) {
+    console.log('');
+    console.log('Auth is now enabled. All non-localhost requests require this (or another) token.');
+  }
+}
+
+export function handleTokenShow(args: ParsedArgs): void {
+  const tokens = authStore.listAuthTokens();
+  if (args.flags.json) {
+    const out = tokens.map((t) => ({ id: t.id, name: t.name, createdAt: t.createdAt, expiresAt: t.expiresAt }));
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+  if (tokens.length === 0) {
+    console.log('no tokens — auth is disabled. Create one with `llmuxd token create`.');
+    return;
+  }
+  const headers = ['ID', 'NAME', 'CREATED', 'EXPIRES'];
+  const rows = tokens.map((t) => [t.id, t.name ?? '-', t.createdAt, t.expiresAt ?? '-']);
+  const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)));
+  console.log(headers.map((h, i) => h.padEnd(widths[i]!)).join('  '));
+  for (const r of rows) console.log(r.map((c, i) => c.padEnd(widths[i]!)).join('  '));
+}
+
+export function handleTokenRevoke(args: ParsedArgs): void {
+  const idPrefix = args.positional[1];
+  if (!idPrefix) throw new Error('token revoke requires an <id> (the 8-char prefix shown by `token show`)');
+  const ok = authStore.revokeAuthToken(idPrefix);
+  if (!ok) throw new Error(`no token with id "${idPrefix}"`);
+  console.log(`revoked ${idPrefix}`);
+  if (!authStore.authEnabled()) {
+    console.log('No tokens remain — auth is now disabled.');
+  }
 }
 
 export function handleRespawn(args: ParsedArgs): void {

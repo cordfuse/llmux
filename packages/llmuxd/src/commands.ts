@@ -174,22 +174,25 @@ const respawn: Command = {
 respawn.help = makeHelp('respawn', respawn.summary, respawn.usage, respawn.flags);
 
 const token: Command = {
-  summary: 'Manage SAS tokens (subcommands: create, refresh, revoke, show)',
-  usage: 'llmuxd token <create|refresh|revoke|show> [--expiry <iso-date>]',
+  summary: 'Manage SAS tokens (subcommands: create, show, revoke)',
+  usage: 'llmuxd token <create|show|revoke> [--name <label>] [--expiry <iso-date>] [--json]',
   flags: {
-    expiry: { kind: 'string', description: 'ISO date for token expiry (create only)' },
+    name: { kind: 'string', description: 'Human label for the token (create only)' },
+    expiry: { kind: 'string', description: 'ISO-8601 timestamp for token expiry (create only)' },
+    json: { kind: 'boolean', description: 'Emit JSON (show only)' },
   },
   help: () => '',
   run: (args) => {
     const sub = args.positional[0];
     switch (sub) {
       case 'create':
-      case 'refresh':
-      case 'revoke':
+        return h.handleTokenCreate(args);
       case 'show':
-        return notImplemented(`token ${sub}`);
+        return h.handleTokenShow(args);
+      case 'revoke':
+        return h.handleTokenRevoke(args);
       default:
-        throw new Error(`token: unknown subcommand "${sub ?? ''}". Try create|refresh|revoke|show.`);
+        throw new Error(`token: unknown subcommand "${sub ?? ''}". Try create|show|revoke.`);
     }
   },
 };
