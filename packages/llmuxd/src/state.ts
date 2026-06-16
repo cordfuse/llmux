@@ -10,6 +10,8 @@ export interface SessionState {
   flags?: string;
   /** Per-session environment variable overrides (merged over agent envDefaults). */
   env?: Record<string, string>;
+  /** ID of the agent's prior conversation this session resumed from (if any). */
+  resumeFrom?: string;
   createdAt: string;
   parent: string | null;
   restart: 'always' | 'on-failure' | 'never';

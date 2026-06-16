@@ -1,6 +1,21 @@
-import { accessSync, constants, existsSync } from 'node:fs';
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
+
+export interface Conversation {
+  id: string;
+  title: string;
+  startedAt: string;
+  lastMessageAt: string;
+  messageCount: number;
+}
+
+export interface AgentHistoryAdapter {
+  /** Past conversations for this agent in this cwd, newest-first. */
+  listConversations(cwd: string): Conversation[];
+  /** Build the launch flag fragment to resume a specific conversation. */
+  resumeFlag(conversationId: string): string;
+}
 
 export interface AgentDefinition {
   /** Key under `agents:` in .llmux.yaml; default tmux-session name. */
@@ -21,7 +36,101 @@ export interface AgentDefinition {
   docsUrl?: string;
   /** Environment variables baked in at spawn time. Per-session env overrides win. */
   envDefaults?: Record<string, string>;
+  /** Conversation-history adapter — enables the "resume past conversation" picker. */
+  history?: AgentHistoryAdapter;
 }
+
+/**
+ * Claude Code stores each conversation as a `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`
+ * file. The encoding is a literal `/`-to-`-` substitution. Each line is a JSON
+ * event; the first user message defines the conversation's title, and the
+ * event timestamps frame `startedAt` / `lastMessageAt`. Synthetic events
+ * (permission-mode, local-command-stdout, /resume command stubs) are skipped
+ * when picking the title so the picker shows the actual conversation opener.
+ */
+function encodeClaudeCwd(cwd: string): string {
+  return cwd.replace(/\//g, '-');
+}
+
+function extractClaudeUserText(msg: unknown): string | undefined {
+  if (typeof msg !== 'object' || msg === null) return undefined;
+  const content = (msg as { content?: unknown }).content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (typeof block === 'object' && block !== null) {
+        const b = block as { type?: string; text?: string };
+        if (b.type === 'text' && typeof b.text === 'string') return b.text;
+      }
+    }
+  }
+  return undefined;
+}
+
+function looksLikeRealUserMessage(text: string): boolean {
+  if (!text) return false;
+  if (text.startsWith('<local-command')) return false;
+  if (text.startsWith('<command-name>')) return false;
+  if (text.startsWith('<command-message>')) return false;
+  return true;
+}
+
+const claudeHistory: AgentHistoryAdapter = {
+  listConversations(cwd: string): Conversation[] {
+    const dir = join(homedir(), '.claude', 'projects', encodeClaudeCwd(cwd));
+    if (!existsSync(dir)) return [];
+    let entries: string[];
+    try {
+      entries = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+    } catch {
+      return [];
+    }
+    const out: Conversation[] = [];
+    for (const fname of entries) {
+      const id = fname.slice(0, -'.jsonl'.length);
+      const fpath = join(dir, fname);
+      try {
+        const raw = readFileSync(fpath, 'utf8');
+        const lines = raw.split('\n').filter((l) => l.length > 0);
+        let title: string | undefined;
+        let firstTs: string | undefined;
+        let lastTs: string | undefined;
+        for (const line of lines) {
+          let evt: { type?: string; timestamp?: string; message?: unknown };
+          try {
+            evt = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (evt.timestamp) {
+            if (!firstTs) firstTs = evt.timestamp;
+            lastTs = evt.timestamp;
+          }
+          if (!title && evt.type === 'user') {
+            const text = extractClaudeUserText(evt.message);
+            if (text && looksLikeRealUserMessage(text)) {
+              title = text.split('\n')[0]!.slice(0, 100).trim();
+            }
+          }
+        }
+        const stat = statSync(fpath);
+        out.push({
+          id,
+          title: title ?? '(no opener)',
+          startedAt: firstTs ?? new Date(stat.ctimeMs).toISOString(),
+          lastMessageAt: lastTs ?? new Date(stat.mtimeMs).toISOString(),
+          messageCount: lines.length,
+        });
+      } catch {
+        // skip unreadable / malformed files
+      }
+    }
+    return out.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  },
+  resumeFlag(id: string): string {
+    return `--resume ${id}`;
+  },
+};
 
 const which = (cmd: string): boolean => {
   const pathDirs = (process.env.PATH ?? '').split(delimiter);
@@ -46,7 +155,7 @@ const copilotInstalled = (): boolean => {
 };
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
-  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',             readyPrompt: '^>',     installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview' },
+  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',             readyPrompt: '^>',     installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory },
   codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox', readyPrompt: '^>',     installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex' },
   agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',             readyPrompt: '^agy>',  installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install' },
   gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',                                     readyPrompt: '^>',     installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli' },

@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
-import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from '../agents.ts';
+import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition, type Conversation } from '../agents.ts';
 import * as state from '../state.ts';
 import * as tmux from '../tmux.ts';
 import * as authStore from '../auth-store.ts';
@@ -58,6 +58,12 @@ interface SessionView {
   env?: Record<string, string>;
   /** Agent's default env vars — UI prefills the edit form from this when no override. */
   defaultEnv: Record<string, string>;
+  /** Conversation id this session is currently resumed from (if any). */
+  resumeFrom?: string;
+  /** Whether the agent has a history adapter — UI shows the conversations icon. */
+  hasHistory: boolean;
+  /** Count of prior conversations for this agent+cwd (0 if no adapter or empty history). */
+  conversationCount: number;
   createdAt: string;
   parent: string | null;
   status: 'running' | 'exited';
@@ -130,6 +136,7 @@ function pickerPage(): string {
   .actions button.respawn{color:#7cc4ff;border-color:#2d4a66}
   .actions button.edit{color:#d29922;border-color:#574122}
   .actions button.kill{color:#f85149;border-color:#4a2329}
+  .actions button.resume-btn{color:#a371f7;border-color:#3c2a59}
   .actions button .icon{font-size:13px;line-height:1}
   .actions button.kill .icon{font-size:15px;line-height:1}
   .actions button:disabled{opacity:.5;cursor:wait}
@@ -189,6 +196,23 @@ function pickerPage(): string {
   #agents-modal .actions{display:flex;justify-content:flex-end}
   #agents-modal button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
   #agents-modal button:hover{background:#252b34}
+  #convs-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
+  #convs-modal.open{display:flex}
+  #convs-modal .panel{background:#11141a;border:1px solid #1f2329;border-radius:10px;padding:18px;max-width:560px;width:100%;max-height:80vh;display:flex;flex-direction:column}
+  #convs-modal h3{margin:0 0 4px;font-size:15px;color:#e6e8eb}
+  #convs-modal .sub{margin:0 0 14px;font-size:11px;color:#7a7f87}
+  #convs-list{flex:1 1 auto;overflow-y:auto;margin-bottom:12px;min-height:0}
+  #convs-list .conv{padding:10px 0;border-bottom:1px solid #1f2329;cursor:pointer;display:block;width:100%;text-align:left;background:transparent;border-left:none;border-right:none;border-top:none;color:inherit;font-family:inherit;font-size:inherit}
+  #convs-list .conv:last-child{border-bottom:none}
+  #convs-list .conv:hover{background:#1a1d23}
+  #convs-list .conv-title{font-size:13px;color:#e6e8eb;font-weight:500;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+  #convs-list .conv-meta{font-size:11px;color:#7a7f87;margin-top:2px;display:flex;gap:8px}
+  #convs-list .conv-meta .when{color:#9aa0a6}
+  #convs-list .conv-meta .count{color:#7a7f87}
+  #convs-list .conv-current{color:#a371f7;font-weight:600}
+  #convs-modal .actions{display:flex;justify-content:flex-end}
+  #convs-modal button.close-btn{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  #convs-modal button.close-btn:hover{background:#252b34}
   /* Mobile: hide cwd column, show under name */
   @media (max-width: 600px){
     body{padding:14px 12px 72px}
@@ -269,6 +293,16 @@ function pickerPage(): string {
     </div>
   </div>
 </div>
+<div id="convs-modal" aria-hidden="true">
+  <div class="panel">
+    <h3 id="convs-title">Past conversations</h3>
+    <p class="sub" id="convs-sub">Pick one to resume. The current session will be killed and respawned with the agent's resume flag.</p>
+    <div id="convs-list">loading…</div>
+    <div class="actions">
+      <button type="button" id="convs-close">close</button>
+    </div>
+  </div>
+</div>
 <footer>
   <span>llmuxd v${escapeHtml(DAEMON_VERSION)}</span>
   ${authStore.authEnabled()
@@ -313,6 +347,9 @@ function pickerPage(): string {
     const respawnTitle = s.status === 'running' ? 'kill + relaunch with the persisted config (use after edit)' : 'launch the agent again with the persisted config';
     const respawnBtn = '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '" title="' + respawnTitle + '" aria-label="' + respawnText + '"><span class="icon">↻</span><span class="label">' + respawnText + '</span></button>';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" title="edit name, cwd, flags, or env" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
+    const resumeBtn = (s.hasHistory && s.conversationCount > 0)
+      ? '<button class="resume-btn" data-action="resume" data-name="' + escapeHtml(s.name) + '" title="resume a past conversation for this agent + cwd" aria-label="resume"><span class="icon">📜</span><span class="label">' + s.conversationCount + '</span></button>'
+      : '';
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
     return '<tr data-name="' + escapeHtml(s.name) + '">' +
@@ -320,7 +357,7 @@ function pickerPage(): string {
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
-      '<td class="actions">' + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">×</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
+      '<td class="actions">' + respawnBtn + resumeBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">×</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
       '</tr>';
   }
 
@@ -426,6 +463,101 @@ function pickerPage(): string {
     }
   });
 
+  // ---- Conversations modal ----
+  const convsModal = document.getElementById('convs-modal');
+  const convsTitle = document.getElementById('convs-title');
+  const convsList = document.getElementById('convs-list');
+  const convsClose = document.getElementById('convs-close');
+  let convsForSession = null;
+  let convsCurrentResumeFrom = null;
+
+  function relTime(iso){
+    const ms = Date.now() - new Date(iso).getTime();
+    if (isNaN(ms) || ms < 0) return iso;
+    if (ms < 60000) return 'just now';
+    const m = Math.floor(ms/60000);
+    if (m < 60) return m + 'm ago';
+    const h = Math.floor(m/60);
+    if (h < 24) return h + 'h ago';
+    const d = Math.floor(h/24);
+    return d + 'd ago';
+  }
+
+  async function openConvsModal(sessionName){
+    convsForSession = sessionName;
+    convsTitle.textContent = 'Past conversations · ' + sessionName;
+    convsList.innerHTML = 'loading…';
+    convsModal.classList.add('open');
+    convsModal.setAttribute('aria-hidden', 'false');
+    // Track this row's current resumeFrom so we can flag the active conversation
+    convsCurrentResumeFrom = null;
+    try {
+      const sres = await fetch('/api/sessions', { cache: 'no-store' });
+      if (sres.ok){
+        const list = await sres.json();
+        const row = list.find(function(s){ return s.name === sessionName; });
+        if (row) convsCurrentResumeFrom = row.resumeFrom || null;
+      }
+    } catch(_){}
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(sessionName) + '/conversations', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const list = await r.json();
+      if (!Array.isArray(list) || list.length === 0){
+        convsList.innerHTML = '<div class="conv">no past conversations for this agent + cwd</div>';
+        return;
+      }
+      convsList.innerHTML = list.map(function(c){
+        const isCurrent = c.id === convsCurrentResumeFrom;
+        const titleCls = isCurrent ? 'conv-title conv-current' : 'conv-title';
+        return '<button class="conv" data-conv-id="' + escapeHtml(c.id) + '" data-conv-title="' + escapeHtml(c.title) + '">' +
+          '<span class="' + titleCls + '">' + (isCurrent ? '↻ ' : '') + escapeHtml(c.title) + '</span>' +
+          '<span class="conv-meta"><span class="when">' + escapeHtml(relTime(c.lastMessageAt)) + '</span><span class="count">' + c.messageCount + ' msgs</span></span>' +
+          '</button>';
+      }).join('');
+    } catch(e){
+      convsList.innerHTML = '<div class="conv">failed to load conversations: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+  }
+
+  function closeConvsModal(){
+    convsModal.classList.remove('open');
+    convsModal.setAttribute('aria-hidden', 'true');
+    convsForSession = null;
+  }
+  convsClose.addEventListener('click', closeConvsModal);
+  convsModal.addEventListener('click', function(e){
+    if (e.target === convsModal) closeConvsModal();
+  });
+
+  convsList.addEventListener('click', async function(e){
+    const btn = e.target.closest('button[data-conv-id]');
+    if (!btn || !convsForSession) return;
+    const convId = btn.dataset.convId;
+    const convTitle = btn.dataset.convTitle || '(conversation)';
+    const ok = await askConfirm({
+      title: 'Resume conversation?',
+      body: 'Kill <code>' + escapeHtmlSafe(convsForSession) + '</code> and relaunch the agent with <code>--resume ' + escapeHtmlSafe(convId.slice(0, 8)) + '…</code>. The current in-process state is lost; conversation history (on the agent\\'s side) is intact.<br><br><em>' + escapeHtmlSafe(convTitle) + '</em>',
+      okLabel: 'resume',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(convsForSession) + '/resume', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ conversationId: convId }),
+      });
+      const data = await r.json().catch(function(){ return {}; });
+      if (!r.ok || data.ok === false) throw new Error(data.error || 'resume failed');
+      showToast('resumed ' + convsForSession);
+      closeConvsModal();
+      poll();
+    } catch(err){
+      showToast('resume failed: ' + (err.message || err), true);
+    }
+  });
+
   // ---- Confirm modal ----
   const confirmModal = document.getElementById('confirm-modal');
   const confirmTitle = document.getElementById('confirm-title');
@@ -471,6 +603,10 @@ function pickerPage(): string {
       let env = {};
       try { env = JSON.parse(btn.dataset.env || '{}'); } catch(_){}
       openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd, flags: btn.dataset.flags, env: env });
+      return;
+    }
+    if (kind === 'resume'){
+      openConvsModal(name);
       return;
     }
     if (kind === 'kill'){
@@ -709,6 +845,9 @@ function renderSessionTable(sessions: SessionView[]): string {
       const respawnText = s.status === 'running' ? 'restart' : 'respawn';
       const respawnBtn = `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}" aria-label="${respawnText}"><span class="icon">↻</span><span class="label">${respawnText}</span></button>`;
       const editBtn = `<button class="edit" data-action="edit" data-name="${escapeHtml(s.name)}" data-cwd="${escapeHtml(s.cwd)}" data-agent="${escapeHtml(s.agent)}" data-flags="${escapeHtml(s.flags || '')}" data-env="${escapeHtml(JSON.stringify(s.env || {}))}" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>`;
+      const resumeBtn = (s.hasHistory && s.conversationCount > 0)
+        ? `<button class="resume-btn" data-action="resume" data-name="${escapeHtml(s.name)}" aria-label="resume"><span class="icon">📜</span><span class="label">${s.conversationCount}</span></button>`
+        : '';
       const killText = s.status === 'running' ? 'kill' : 'remove';
       const killBtn = `<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}" aria-label="${killText}"><span class="icon">×</span><span class="label">${killText}</span></button>`;
       const cwdShort = s.cwdDisplay || s.cwd;
@@ -717,7 +856,7 @@ function renderSessionTable(sessions: SessionView[]): string {
   <td>${escapeHtml(s.agent)}</td>
   <td class="${cls}">${s.status}</td>
   <td class="cwd cwd-col" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></td>
-  <td class="actions">${respawnBtn}${editBtn}${killBtn}</td>
+  <td class="actions">${respawnBtn}${resumeBtn}${editBtn}${killBtn}</td>
 </tr>`;
     })
     .join('\n');
@@ -1465,21 +1604,39 @@ function sendJson(res: ServerResponse, body: unknown, status = 200): void {
 
 // ---------- API actions ----------
 
-function buildAgentCommand(agent: AgentDefinition, flagsOverride?: string): string {
+function buildAgentCommand(
+  agent: AgentDefinition,
+  flagsOverride?: string,
+  resumeFrom?: string,
+): string {
   const flags = flagsOverride !== undefined ? flagsOverride : (agent.flags ?? '');
-  return flags ? `${agent.cmd} ${flags}` : agent.cmd;
+  const resumeFragment = resumeFrom && agent.history ? agent.history.resumeFlag(resumeFrom) : '';
+  const tail = [flags, resumeFragment].filter((s) => s.length > 0).join(' ');
+  return tail ? `${agent.cmd} ${tail}` : agent.cmd;
 }
 
 function viewOf(s: state.SessionState, live: boolean): SessionView {
+  const agentDef = DEFAULT_AGENTS[s.agent];
+  let conversationCount = 0;
+  if (agentDef?.history) {
+    try {
+      conversationCount = agentDef.history.listConversations(s.cwd).length;
+    } catch {
+      conversationCount = 0;
+    }
+  }
   return {
     name: s.name,
     agent: s.agent,
     cwd: s.cwd,
     cwdDisplay: shortenCwd(s.cwd),
     ...(s.flags !== undefined ? { flags: s.flags } : {}),
-    defaultFlags: DEFAULT_AGENTS[s.agent]?.flags ?? '',
+    defaultFlags: agentDef?.flags ?? '',
     ...(s.env !== undefined ? { env: s.env } : {}),
-    defaultEnv: DEFAULT_AGENTS[s.agent]?.envDefaults ?? {},
+    defaultEnv: agentDef?.envDefaults ?? {},
+    ...(s.resumeFrom !== undefined ? { resumeFrom: s.resumeFrom } : {}),
+    hasHistory: Boolean(agentDef?.history),
+    conversationCount,
     createdAt: s.createdAt,
     parent: s.parent,
     status: live ? 'running' : 'exited',
@@ -1520,7 +1677,7 @@ function mergeSpawnEnv(agent: AgentDefinition, sessionEnv: Record<string, string
 
 const SESSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string; env?: string }):
+function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string; env?: string; resumeFrom?: string }):
   | { ok: true; session: SessionView }
   | { ok: false; error: string } {
   if (!input.agent) return { ok: false, error: 'agent is required' };
@@ -1550,10 +1707,14 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
   const envOverride: Record<string, string> | undefined =
     input.env !== undefined ? parseEnvText(input.env) : undefined;
 
+  // resumeFrom: optional conversation id. Only valid if the agent has a
+  // history adapter; otherwise we silently drop it (don't fail).
+  const resumeFrom = input.resumeFrom && agentDef.history ? input.resumeFrom : undefined;
+
   try {
     tmux.newSession({
       name,
-      command: buildAgentCommand(agentDef, flagsOverride),
+      command: buildAgentCommand(agentDef, flagsOverride, resumeFrom),
       cwd,
       env: mergeSpawnEnv(agentDef, envOverride, { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key }),
     });
@@ -1567,6 +1728,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
     cwd,
     ...(flagsOverride !== undefined ? { flags: flagsOverride } : {}),
     ...(envOverride !== undefined ? { env: envOverride } : {}),
+    ...(resumeFrom !== undefined ? { resumeFrom } : {}),
     createdAt: new Date().toISOString(),
     parent: null,
     restart: 'on-failure',
@@ -1594,7 +1756,7 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
   try {
     tmux.newSession({
       name: session.name,
-      command: buildAgentCommand(agent, session.flags),
+      command: buildAgentCommand(agent, session.flags, session.resumeFrom),
       cwd: session.cwd,
       env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent }),
     });
@@ -1602,6 +1764,48 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
   const refreshed: state.SessionState = { ...session, createdAt: new Date().toISOString() };
+  state.record(refreshed);
+  return { ok: true, session: viewOf(refreshed, true) };
+}
+
+function resumeConversation(
+  name: string,
+  conversationId: string,
+): { ok: true; session: SessionView } | { ok: false; error: string } {
+  const session = state.get(name);
+  if (!session) return { ok: false, error: `no tracked session "${name}"` };
+  const agent = DEFAULT_AGENTS[session.agent];
+  if (!agent) return { ok: false, error: `unknown agent "${session.agent}"` };
+  if (!agent.history) return { ok: false, error: `agent "${session.agent}" has no history adapter` };
+  if (!isAgentInstalled(agent)) return { ok: false, error: `agent "${session.agent}" is not installed` };
+
+  // Kill the live session if any — switching conversations is destructive to
+  // the current in-process agent state by definition. State (name, cwd,
+  // flags, env) is preserved across the respawn.
+  if (tmux.hasSession(name)) {
+    try {
+      tmux.killSession(name);
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  try {
+    tmux.newSession({
+      name: session.name,
+      command: buildAgentCommand(agent, session.flags, conversationId),
+      cwd: session.cwd,
+      env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent }),
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const refreshed: state.SessionState = {
+    ...session,
+    resumeFrom: conversationId,
+    createdAt: new Date().toISOString(),
+  };
   state.record(refreshed);
   return { ok: true, session: viewOf(refreshed, true) };
 }
@@ -1657,6 +1861,7 @@ function editSession(
     cwd: newCwd !== undefined && newCwd.length > 0 ? expandTilde(newCwd) : session.cwd,
     ...(nextFlags !== undefined ? { flags: nextFlags } : {}),
     ...(nextEnv !== undefined ? { env: nextEnv } : {}),
+    ...(session.resumeFrom !== undefined ? { resumeFrom: session.resumeFrom } : {}),
     createdAt: session.createdAt,
     parent: session.parent,
     restart: session.restart,
@@ -1677,7 +1882,7 @@ function editSession(
         tmux.killSession(updated.name);
         tmux.newSession({
           name: updated.name,
-          command: buildAgentCommand(agent, updated.flags),
+          command: buildAgentCommand(agent, updated.flags, updated.resumeFrom),
           cwd: updated.cwd,
           env: mergeSpawnEnv(agent, updated.env, { LLMUX_SESSION: updated.name, LLMUX_AGENT: updated.agent }),
         });
@@ -1718,6 +1923,8 @@ export interface ServerHandle {
 
 const RESPAWN_RE = /^\/api\/sessions\/([^/]+)\/respawn$/;
 const KILL_RE = /^\/api\/sessions\/([^/]+)\/kill$/;
+const RESUME_RE = /^\/api\/sessions\/([^/]+)\/resume$/;
+const CONVERSATIONS_RE = /^\/api\/sessions\/([^/]+)\/conversations$/;
 const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
 
 export function startServer(opts: ServeOptions): ServerHandle {
@@ -1819,13 +2026,14 @@ export function startServer(opts: ServeOptions): ServerHandle {
     }
     if (url.pathname === '/api/sessions' && method === 'POST') {
       try {
-        const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown };
+        const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown; resumeFrom?: unknown };
         const result = createSession({
           agent: typeof body.agent === 'string' ? body.agent : '',
           ...(typeof body.name === 'string' ? { name: body.name } : {}),
           ...(typeof body.cwd === 'string' ? { cwd: body.cwd } : {}),
           ...(typeof body.flags === 'string' ? { flags: body.flags } : {}),
           ...(typeof body.env === 'string' ? { env: body.env } : {}),
+          ...(typeof body.resumeFrom === 'string' ? { resumeFrom: body.resumeFrom } : {}),
         });
         return sendJson(res, result, result.ok ? 200 : 400);
       } catch (err) {
@@ -1844,6 +2052,36 @@ export function startServer(opts: ServeOptions): ServerHandle {
         const name = decodeURIComponent(mKill[1]!);
         const result = killSession(name);
         return sendJson(res, result, result.ok ? 200 : 400);
+      }
+      const mResume = url.pathname.match(RESUME_RE);
+      if (mResume) {
+        const name = decodeURIComponent(mResume[1]!);
+        try {
+          const body = (await readJsonBody(req)) as { conversationId?: unknown };
+          if (typeof body.conversationId !== 'string' || body.conversationId.length === 0) {
+            return sendJson(res, { ok: false, error: 'conversationId required' }, 400);
+          }
+          const result = resumeConversation(name, body.conversationId);
+          return sendJson(res, result, result.ok ? 200 : 400);
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
+        }
+      }
+    }
+    if (method === 'GET') {
+      const mConvs = url.pathname.match(CONVERSATIONS_RE);
+      if (mConvs) {
+        const name = decodeURIComponent(mConvs[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: 'session not found' }, 404);
+        const agent = DEFAULT_AGENTS[session.agent];
+        if (!agent?.history) return sendJson(res, []);
+        try {
+          const convs: Conversation[] = agent.history.listConversations(session.cwd);
+          return sendJson(res, convs);
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'history read failed' }, 500);
+        }
       }
     }
     if (method === 'PATCH') {
