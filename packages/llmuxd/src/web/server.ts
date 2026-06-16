@@ -49,9 +49,18 @@ interface SessionView {
   name: string;
   agent: string;
   cwd: string;
+  cwdDisplay: string;
   createdAt: string;
   parent: string | null;
   status: 'running' | 'exited';
+}
+
+function shortenCwd(cwd: string): string {
+  const home = process.env.HOME;
+  if (!home) return cwd;
+  if (cwd === home) return '~';
+  if (cwd.startsWith(home + '/')) return '~' + cwd.slice(home.length);
+  return cwd;
 }
 
 function listSessionViews(): SessionView[] {
@@ -62,6 +71,7 @@ function listSessionViews(): SessionView[] {
       name: s.name,
       agent: s.agent,
       cwd: s.cwd,
+      cwdDisplay: shortenCwd(s.cwd),
       createdAt: s.createdAt,
       parent: s.parent,
       status: live.has(s.name) ? 'running' as const : 'exited' as const,
@@ -101,7 +111,9 @@ function pickerPage(): string {
   .started{color:#7a7f87;font-size:11px;margin-top:2px;display:block}
   .state-running{color:#7ee787}
   .state-exited{color:#7a7f87}
-  .cwd{color:#c9d1d9;font-size:12px;word-break:break-all}
+  .cwd{color:#c9d1d9;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+  .cwd code{unicode-bidi:embed;direction:ltr}
+  .cwd-col{max-width:0}
   .actions{text-align:right;white-space:nowrap}
   .actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 9px;font:12px ui-monospace,monospace;cursor:pointer;margin-left:4px}
   .actions button:hover{background:#252b34;border-color:#3a414b}
@@ -137,8 +149,9 @@ function pickerPage(): string {
   @media (max-width: 600px){
     body{padding:14px 12px 72px}
     th.cwd-col,td.cwd-col{display:none}
-    .name-block .cwd{display:block;margin-top:3px}
+    .name-block .cwd{display:block;margin-top:3px;max-width:100%}
     th,td{padding:8px 6px;font-size:13px}
+    .name-block{max-width:55vw}
   }
   @media (min-width: 601px){
     .name-block .cwd{display:none}
@@ -222,11 +235,12 @@ function pickerPage(): string {
     const respawnBtn = s.status === 'exited' ? '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '">↻ respawn</button>' : '';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '">✎ edit</button>';
     const when = relativeTime(s.createdAt);
+    const cwdShort = s.cwdDisplay || s.cwd;
     return '<tr data-name="' + escapeHtml(s.name) + '">' +
-      '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd"><code>' + escapeHtml(s.cwd) + '</code></span></td>' +
+      '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></span></td>' +
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
-      '<td class="cwd cwd-col"><code>' + escapeHtml(s.cwd) + '</code></td>' +
+      '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
       '<td class="actions">' + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '">' + (s.status === 'running' ? '× kill' : '× remove') + '</button></td>' +
       '</tr>';
   }
@@ -446,11 +460,12 @@ function renderSessionTable(sessions: SessionView[]): string {
           ? `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}">↻ respawn</button>`
           : '';
       const killLabel = s.status === 'running' ? '× kill' : '× remove';
+      const cwdShort = s.cwdDisplay || s.cwd;
       return `<tr data-name="${escapeHtml(s.name)}">
-  <td class="name-block"><span class="name">${linkOpen}${escapeHtml(s.name)}</a></span><span class="cwd"><code>${escapeHtml(s.cwd)}</code></span></td>
+  <td class="name-block"><span class="name">${linkOpen}${escapeHtml(s.name)}</a></span><span class="cwd" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></span></td>
   <td>${escapeHtml(s.agent)}</td>
   <td class="${cls}">${s.status}</td>
-  <td class="cwd cwd-col"><code>${escapeHtml(s.cwd)}</code></td>
+  <td class="cwd cwd-col" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></td>
   <td class="actions">${respawnBtn}<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}">${killLabel}</button></td>
 </tr>`;
     })
@@ -1247,7 +1262,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string }):
 
   return {
     ok: true,
-    session: { ...session, status: 'running' },
+    session: { ...session, cwdDisplay: shortenCwd(session.cwd), status: 'running' },
   };
 }
 
@@ -1272,7 +1287,7 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
   state.record(refreshed);
   return {
     ok: true,
-    session: { name, agent: refreshed.agent, cwd: refreshed.cwd, createdAt: refreshed.createdAt, parent: refreshed.parent, status: 'running' },
+    session: { name, agent: refreshed.agent, cwd: refreshed.cwd, cwdDisplay: shortenCwd(refreshed.cwd), createdAt: refreshed.createdAt, parent: refreshed.parent, status: 'running' },
   };
 }
 
@@ -1329,6 +1344,7 @@ function editSession(
       name: updated.name,
       agent: updated.agent,
       cwd: updated.cwd,
+      cwdDisplay: shortenCwd(updated.cwd),
       createdAt: updated.createdAt,
       parent: updated.parent,
       status: live ? 'running' : 'exited',
@@ -1499,6 +1515,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
           name: session.name,
           agent: session.agent,
           cwd: session.cwd,
+          cwdDisplay: shortenCwd(session.cwd),
           createdAt: session.createdAt,
           parent: session.parent,
           status: 'exited',
