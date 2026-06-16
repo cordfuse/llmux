@@ -206,7 +206,7 @@ export async function handleServe(args: ParsedArgs): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-  // Idle forever — Bun.serve keeps the loop alive.
+  // Idle forever — the http server and ws server keep the event loop alive.
   await new Promise<void>(() => {});
 }
 

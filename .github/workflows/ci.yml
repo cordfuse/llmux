@@ -11,21 +11,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: '20'
+          cache: 'npm'
 
       - name: Install
-        run: bun install --frozen-lockfile
+        run: npm ci
 
       - name: Typecheck
-        run: bun run typecheck
+        run: npm run typecheck
 
       - name: Build llmuxd
-        run: cd packages/llmuxd && bun run build
+        run: npm run build --workspace @cordfuse/llmuxd
 
       - name: Build llmux
-        run: cd packages/llmux && bun run build
+        run: npm run build --workspace @cordfuse/llmux
 
       - name: Smoke (--help)
         run: |

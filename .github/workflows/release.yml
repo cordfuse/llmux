@@ -13,23 +13,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
       - name: Install
-        run: bun install --frozen-lockfile
+        run: npm ci
 
       - name: Build llmuxd
-        run: cd packages/llmuxd && bun run build
+        run: npm run build --workspace @cordfuse/llmuxd
 
       - name: Build llmux
-        run: cd packages/llmux && bun run build
+        run: npm run build --workspace @cordfuse/llmux
 
       - name: Pack tarballs
         run: |
