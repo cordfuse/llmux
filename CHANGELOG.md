@@ -5,6 +5,31 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.11] — 2026-06-16
+
+### Changed — mobile UX
+
+- **Toolbar is now two rows.** Top row: full `↑ ↓ ← →` arrow cluster
+  (no demoted ↓ — reverts the v0.2.10 split). Bottom row: chrome +
+  `Esc Tab Ctrl Alt ⇧` modifiers + `⋯`. Bar height grows from 42 → 72px
+  portrait, 34 → 52px landscape — trivial against gboard's ~250px
+  footprint. Net effect: every essential key fits without horizontal
+  scroll, modifiers stay next to gboard's letter row for fast chords,
+  arrows get their own row above.
+- **ARROWS section removed from the "All keys" overlay** (redundant
+  now that all 4 arrows are in the toolbar).
+
+### Fixed
+
+- **Android tab-switch focus loss — real fix this time.** v0.2.9's
+  `setTimeout(term.focus, 120)` was no-op'd by Android Chrome's
+  user-activation policy (programmatic `focus()` blocked without a
+  recent user gesture). New approach: on `visibilitychange visible`
+  and `pageshow`, arm a one-shot capture-phase `touchstart`/`mousedown`
+  listener. Next tap anywhere in the document re-focuses xterm, then
+  unregisters itself. The optimistic immediate `term.focus()` still
+  runs for browsers that don't enforce the policy.
+
 ## [0.2.10] — 2026-06-16
 
 ### Changed — mobile UX
