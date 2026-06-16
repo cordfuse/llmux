@@ -348,7 +348,7 @@ function pickerPage(): string {
     const respawnBtn = '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '" title="' + respawnTitle + '" aria-label="' + respawnText + '"><span class="icon">↻</span><span class="label">' + respawnText + '</span></button>';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" title="edit name, cwd, flags, or env" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
     const resumeBtn = (s.hasHistory && s.conversationCount > 0)
-      ? '<button class="resume-btn" data-action="resume" data-name="' + escapeHtml(s.name) + '" title="resume a past conversation for this agent + cwd" aria-label="resume"><span class="icon">📜</span><span class="label">' + s.conversationCount + '</span></button>'
+      ? '<button class="resume-btn" data-action="resume" data-name="' + escapeHtml(s.name) + '" title="resume a past conversation for this agent + cwd" aria-label="resume"><span class="icon">☰</span><span class="label">' + s.conversationCount + '</span></button>'
       : '';
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
@@ -357,7 +357,7 @@ function pickerPage(): string {
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
-      '<td class="actions">' + respawnBtn + resumeBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">×</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
+      '<td class="actions">' + resumeBtn + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">×</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
       '</tr>';
   }
 
@@ -846,7 +846,7 @@ function renderSessionTable(sessions: SessionView[]): string {
       const respawnBtn = `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}" aria-label="${respawnText}"><span class="icon">↻</span><span class="label">${respawnText}</span></button>`;
       const editBtn = `<button class="edit" data-action="edit" data-name="${escapeHtml(s.name)}" data-cwd="${escapeHtml(s.cwd)}" data-agent="${escapeHtml(s.agent)}" data-flags="${escapeHtml(s.flags || '')}" data-env="${escapeHtml(JSON.stringify(s.env || {}))}" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>`;
       const resumeBtn = (s.hasHistory && s.conversationCount > 0)
-        ? `<button class="resume-btn" data-action="resume" data-name="${escapeHtml(s.name)}" aria-label="resume"><span class="icon">📜</span><span class="label">${s.conversationCount}</span></button>`
+        ? `<button class="resume-btn" data-action="resume" data-name="${escapeHtml(s.name)}" aria-label="resume"><span class="icon">☰</span><span class="label">${s.conversationCount}</span></button>`
         : '';
       const killText = s.status === 'running' ? 'kill' : 'remove';
       const killBtn = `<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}" aria-label="${killText}"><span class="icon">×</span><span class="label">${killText}</span></button>`;
@@ -856,7 +856,7 @@ function renderSessionTable(sessions: SessionView[]): string {
   <td>${escapeHtml(s.agent)}</td>
   <td class="${cls}">${s.status}</td>
   <td class="cwd cwd-col" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></td>
-  <td class="actions">${respawnBtn}${resumeBtn}${editBtn}${killBtn}</td>
+  <td class="actions">${resumeBtn}${respawnBtn}${editBtn}${killBtn}</td>
 </tr>`;
     })
     .join('\n');
