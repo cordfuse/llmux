@@ -39,12 +39,19 @@ llmuxd send main "what does src/index.ts do?"
 # Attach interactively (tmux switch-client if you're inside tmux, else attach)
 llmuxd chat main
 
-# Or expose REST + web terminal
+# Or expose web terminal — opens in any browser
 llmuxd serve
 ```
 
-When `llmuxd serve` boots, it prints reachable URLs (Local, LAN, Tailscale)
-and QR codes for quick phone connection.
+When `llmuxd serve` boots, it prints reachable URLs (Local, LAN, Tailscale).
+Open one in a browser to see the session picker, click a session for a
+full-screen xterm.js terminal wired to your live tmux session over
+WebSocket. Multiple browser clients can attach to the same session — tmux
+handles the multiplexing.
+
+> **Auth:** `serve` runs without authentication today (Phase 3 lands
+> SAS tokens). Don't bind it to a public interface until then; bind to
+> `127.0.0.1` (default) or behind Tailscale.
 
 ## Supported agents
 

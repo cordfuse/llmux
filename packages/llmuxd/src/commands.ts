@@ -37,7 +37,7 @@ const serve: Command = {
     'no-qr': { kind: 'boolean', description: 'Suppress QR codes (CI/headless)' },
   },
   help: () => '',
-  run: () => notImplemented('serve'),
+  run: (args) => h.handleServe(args),
 };
 serve.help = makeHelp('serve', serve.summary, serve.usage, serve.flags);
 
