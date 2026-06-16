@@ -126,6 +126,7 @@ function pickerPage(): string {
   #new-form .hint{font-size:11px;color:#7a7f87;margin-top:-4px;margin-bottom:10px}
   footer{position:fixed;bottom:0;left:0;right:0;background:#0b0c10;border-top:1px solid #1f2329;padding:10px 16px;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;gap:10px}
   footer .warn{color:#d29922}
+  footer .ok{color:#7ee787}
   #toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:#11141a;border:1px solid #1f2329;color:#e6e8eb;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}
   #toast.show{opacity:1}
   #toast.error{border-color:#4a2329;color:#f85149}
@@ -175,7 +176,9 @@ function pickerPage(): string {
 <div id="toast"></div>
 <footer>
   <span>llmuxd v${escapeHtml(DAEMON_VERSION)}</span>
-  <span class="warn">⚠ no auth — anyone on the network can attach</span>
+  ${authStore.authEnabled()
+    ? `<span class="ok">✓ auth required — ${authStore.listAuthTokens().length} active token${authStore.listAuthTokens().length === 1 ? '' : 's'}</span>`
+    : `<span class="warn">⚠ no auth — anyone on the network can attach</span>`}
 </footer>
 <script>
 (function(){
