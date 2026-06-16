@@ -48,7 +48,7 @@ jobs:
       - name: Publish @cordfuse/llmuxd to npm
         if: ${{ env.NPM_TOKEN != '' }}
         working-directory: packages/llmuxd
-        run: npm publish --access public --ignore-scripts
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -56,7 +56,7 @@ jobs:
       - name: Publish @cordfuse/llmux to npm
         if: ${{ env.NPM_TOKEN != '' }}
         working-directory: packages/llmux
-        run: npm publish --access public --ignore-scripts
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

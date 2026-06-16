@@ -5,6 +5,29 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-06-16
+
+### Fixed
+
+- **CI publish now runs lifecycle scripts.** The Release workflow's
+  `npm publish` steps were running with `--ignore-scripts`, which skips
+  `prepublishOnly` — meaning even with auth working, CI-published
+  tarballs would not have included the README + LICENSE just wired up
+  in v0.2.3. Flag dropped; lifecycle hooks now fire as designed in CI.
+  No security regression — the only scripts in this repo are first-party
+  `prepublishOnly`/`postpublish` defined in the package.jsons under our
+  own control.
+
+### Note
+
+Co-shipped with a fresh `NPM_TOKEN` rotation in the
+`cordfuse/llmux` repo secrets (org-wide read+write, 2FA-disabled). Prior
+token had no access to the `@cordfuse/llmuxd` and `@cordfuse/llmux`
+packages, which made every Release workflow run since v0.0.1 fail with
+`404 Not Found` on `PUT registry.npmjs.org/@cordfuse%2fllmuxd` (npm's
+quirk: tokens without access return 404, not 403). This release is the
+first CI-published one if the new token takes.
+
 ## [0.2.3] — 2026-06-16
 
 ### Fixed
