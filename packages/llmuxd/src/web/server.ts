@@ -67,6 +67,15 @@ function shortenCwd(cwd: string): string {
   return cwd;
 }
 
+/** Expand a leading `~` (or `~/`) to $HOME on the daemon host. No-op for absolute paths. */
+function expandTilde(p: string): string {
+  const home = process.env.HOME;
+  if (!home) return p;
+  if (p === '~') return home;
+  if (p.startsWith('~/')) return home + p.slice(1);
+  return p;
+}
+
 function listSessionViews(): SessionView[] {
   const tracked = state.list();
   const live = new Set(tmux.listSessions().map((s) => s.name));
@@ -1302,8 +1311,9 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
     return { ok: false, error: `session "${name}" already exists` };
   }
 
-  const cwd = (input.cwd && input.cwd.trim()) || process.env.HOME || process.cwd();
-  if (!existsSync(cwd)) return { ok: false, error: `cwd does not exist: ${cwd}` };
+  const cwdRaw = (input.cwd && input.cwd.trim()) || process.env.HOME || process.cwd();
+  const cwd = expandTilde(cwdRaw);
+  if (!existsSync(cwd)) return { ok: false, error: `cwd does not exist: ${cwdRaw}` };
 
   // flags semantics:
   //   input.flags === undefined → no override; use agent default at spawn, don't persist
@@ -1386,7 +1396,7 @@ function editSession(
     }
   }
 
-  if (newCwd !== undefined && newCwd.length > 0 && !existsSync(newCwd)) {
+  if (newCwd !== undefined && newCwd.length > 0 && !existsSync(expandTilde(newCwd))) {
     return { ok: false, error: `cwd does not exist: ${newCwd}` };
   }
 
@@ -1410,7 +1420,7 @@ function editSession(
   const updated: state.SessionState = {
     name: renaming ? newName! : oldName,
     agent: session.agent,
-    cwd: newCwd !== undefined && newCwd.length > 0 ? newCwd : session.cwd,
+    cwd: newCwd !== undefined && newCwd.length > 0 ? expandTilde(newCwd) : session.cwd,
     ...(nextFlags !== undefined ? { flags: nextFlags } : {}),
     createdAt: session.createdAt,
     parent: session.parent,
