@@ -5,6 +5,28 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.13] — 2026-06-16
+
+### Fixed
+
+- **WebSocket auto-reconnects on return from background.** Android
+  Chrome closes idle backgrounded sockets without always firing
+  `onclose` on the client side. Symptom: returning to the tab leaves
+  the toolbar visually responsive but `safeSend` silently swallows
+  send-on-closed errors — buttons do nothing, only a browser refresh
+  recovers. Fix: `visibilitychange visible` and `pageshow` now call
+  `ensureConnected()`, which checks `ws.readyState` and re-creates the
+  WebSocket from scratch if it's not `OPEN`/`CONNECTING`. `term.onData`
+  is gated by a `dataPiped` flag so the input pipe is wired exactly
+  once across reconnects.
+
+### Changed
+
+- **Shift modifier renders as text `Shift`** instead of the `⇧`
+  Unicode glyph. `⇧` (U+21E7 "UPWARDS WHITE ARROW") visually reads as
+  another up-arrow; same disambiguation pattern as v0.2.12's
+  `⇥` → `Tab`.
+
 ## [0.2.12] — 2026-06-16
 
 ### Changed — toolbar polish
