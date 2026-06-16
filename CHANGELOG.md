@@ -5,6 +5,39 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-16
+
+### Added — Phase 4 mobile UX
+
+- **Floating top toolbar** on `/session/<name>`:
+  - `←` (back to picker) pinned left; status dot pinned with it.
+  - Esc, Tab, **Ctrl**, **Alt**, **Shift** modifier keys.
+  - `↑ ↓ ← →` arrow keys.
+  - Common shell/dev chars missing from Android `gboard`: `` ` ~ / \ | - _ ``
+  - `⋯ All keys` button pinned right.
+- **Modifier toggles** — tap once → next key gets the modifier and auto-releases (pending). Double-tap within 400ms → locked. Tap again → off. Visual states: faint blue (pending), solid blue (locked).
+- **"All keys" drop-down panel** — numbers `0-9`, brackets/quotes `( ) [ ] { } < > ' "`, operators `= + * & ^ % $ # @ ! ?`, punctuation `: ; , .`, navigation (Home/End/PgUp/PgDn/Del/Ins/Bsp/Enter), F1-F12.
+- **Status indicator** — single colored dot in the toolbar (green = live, amber = connecting, red = disconnected). Session name surfaces as a tooltip on the dot.
+
+### Added — viewport responsiveness
+
+- `<meta name="viewport" interactive-widget=resizes-content>` — Chrome Android shrinks the **layout viewport** when the soft keyboard appears (instead of overlaying it), so the terminal stays visible.
+- `html, body { height: 100dvh }` — dynamic viewport units, CSS-side responsiveness with no JS round-trip.
+- `visualViewport.resize` + `orientationchange` + `visibilitychange` listeners → debounced `fit.fit()` + WebSocket `resize` message to the backend; tmux reflows to the new pane dimensions in real time.
+- `@media (orientation: landscape) and (max-height: 500px)` — toolbar buttons compress to fit narrow landscape viewports.
+
+### Fixed
+
+- Touch responsiveness on mobile — removed `touchstart preventDefault` (was blocking scroll/tap disambiguation inside the horizontally-scrollable middle band, causing dropped or random taps). Replaced with `pointerdown preventDefault` (keeps focus on the xterm without breaking scroll) and `touch-action: manipulation` on every button (kills the 300ms double-tap-zoom delay).
+- Soft keyboard dropping when toolbar buttons are tapped — every toolbar button now has `tabindex="-1"` so focus stays pinned to xterm's hidden textarea.
+- Mask-image gradient on the scroll container was visually dimming edge buttons (Tab, ↑) making them look disabled. Dropped the mask.
+- Title text was redundant (also in URL bar and tmux's bottom status line) and either truncated awkwardly (`agyde…`) or collapsed to zero width via flex shrink. Removed the text; status dot stays.
+
+### Changed
+
+- Toolbar layout switched from single scrolling row to **pinned ends + scrolling middle**: `←` + status pinned left, `⋯` pinned right, all keys in between in a horizontal scroller.
+- "Status badge" absolute element removed; status moved to the toolbar dot.
+
 ## [0.2.0] — 2026-06-16
 
 ### Added
