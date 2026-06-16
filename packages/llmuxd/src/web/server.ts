@@ -1,10 +1,32 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
 import * as state from '../state.ts';
 import { listSessions } from '../tmux.ts';
 import { getAddresses } from '../net.ts';
+
+function readDaemonVersion(): string {
+  // Resolve package.json relative to this source file so the version stays
+  // accurate whether running from src/ (bun) or dist/ (npm install -g).
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (const candidate of [
+      resolve(here, '../../package.json'),
+      resolve(here, '../package.json'),
+      resolve(here, './package.json'),
+    ]){
+      try {
+        const pkg = JSON.parse(readFileSync(candidate, 'utf8'));
+        if (pkg.name === '@cordfuse/llmuxd' && typeof pkg.version === 'string') return pkg.version;
+      } catch {}
+    }
+  } catch {}
+  return 'unknown';
+}
 
 export interface ServeOptions {
   port: number;
@@ -64,7 +86,7 @@ function sessionPage(name: string): string {
   html,body{margin:0;background:#0b0c10;color:#eee;font-family:ui-monospace,monospace;overscroll-behavior:none}
   html{height:100dvh}
   body{height:100dvh;min-height:100dvh}
-  #bar{position:fixed;top:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-bottom:1px solid #1f2329;display:flex;align-items:center;gap:0;padding:0;z-index:20}
+  #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;align-items:center;gap:0;padding:0;z-index:20}
   /* Pinned regions (back+title on the left, more on the right) */
   #bar #back{flex:0 0 auto;margin-left:6px}
   #title-block{flex:0 0 auto;display:inline-flex;align-items:center;padding:0 8px;color:#c9d1d9;font-size:11px}
@@ -75,25 +97,25 @@ function sessionPage(name: string): string {
   #keys-scroll{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:4px;padding:0 4px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   #keys-scroll::-webkit-scrollbar{display:none}
   #bar #more{flex:0 0 auto;margin-right:6px}
-  #bar button{min-width:34px;height:30px;padding:0 8px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:13px ui-monospace,monospace;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
+  #bar button{flex:0 0 auto;min-width:40px;height:30px;padding:0 10px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:13px ui-monospace,monospace;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
   #bar button:active{background:#252b34;border-color:#3a414b}
   #bar button[aria-pressed="true"]{background:#1e3a52;border-color:#2d5a85;color:#7cc4ff}
   #bar button[aria-pressed="locked"]{background:#2d5a85;border-color:#4a7fae;color:#fff}
   #bar #back{font-size:18px;line-height:1;font-family:system-ui,sans-serif}
   #bar .sep{flex:0 0 auto;width:1px;height:20px;background:#262c34;margin:0 2px}
-  #all-keys{position:fixed;top:var(--bar-h);left:0;right:0;background:#0e1116;border-bottom:1px solid #1f2329;display:none;padding:8px;z-index:19;max-height:40vh;overflow-y:auto;box-sizing:border-box}
+  #all-keys{position:fixed;bottom:var(--bar-h);left:0;right:0;background:#0e1116;border-top:1px solid #1f2329;display:none;padding:8px;z-index:19;max-height:40vh;overflow-y:auto;box-sizing:border-box}
   #all-keys.open{display:block}
   #all-keys h4{margin:14px 4px 6px;font:500 10px/1 ui-monospace,monospace;color:#7a7f87;text-transform:uppercase;letter-spacing:.06em}
   #all-keys h4:first-child{margin-top:4px}
   #all-keys .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
   #all-keys button{flex:0 0 auto;min-width:36px;height:30px;padding:0 8px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:12px ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
   #all-keys button:active{background:#252b34;border-color:#3a414b}
-  #term{position:fixed;top:var(--bar-h);left:0;right:0;bottom:0}
-  body.allkeys-open #term{top:calc(var(--bar-h) + var(--allkeys-h))}
+  #term{position:fixed;top:0;left:0;right:0;bottom:var(--bar-h)}
+  body.allkeys-open #term{bottom:calc(var(--bar-h) + var(--allkeys-h))}
   /* Landscape with limited vertical space — compress bar */
   @media (orientation: landscape) and (max-height: 500px){
     :root{--bar-h:34px}
-    #bar button{height:24px;min-width:32px;padding:0 7px;font-size:11px}
+    #bar button{height:24px;min-width:36px;padding:0 8px;font-size:11px}
     #all-keys{max-height:60vh}
     #all-keys button{height:24px;min-width:30px;padding:0 7px;font-size:11px}
     #title-name{max-width:60px}
@@ -114,7 +136,12 @@ function sessionPage(name: string): string {
     <button data-key="down"  title="Down">↓</button>
     <button data-key="left"  title="Left">←</button>
     <button data-key="right" title="Right">→</button>
-    <span class="sep"></span>
+  </div>
+  <button id="more" title="All keys">⋯</button>
+</div>
+<div id="all-keys" aria-hidden="true">
+  <h4>shell</h4>
+  <div class="row">
     <button data-char="~" title="tilde">~</button>
     <button data-char="\`" title="backtick">\`</button>
     <button data-char="/" title="slash">/</button>
@@ -123,9 +150,6 @@ function sessionPage(name: string): string {
     <button data-char="-" title="dash">-</button>
     <button data-char="_" title="underscore">_</button>
   </div>
-  <button id="more" title="All keys">⋯</button>
-</div>
-<div id="all-keys" aria-hidden="true">
   <h4>numbers</h4>
   <div class="row">
     <button data-char="0">0</button><button data-char="1">1</button><button data-char="2">2</button>
@@ -252,9 +276,9 @@ function sessionPage(name: string): string {
     const barH = parseInt(cs.getPropertyValue('--bar-h'),10) || 42;
     const vv = window.visualViewport;
     const visibleH = vv ? vv.height : window.innerHeight;
-    termEl.style.top = (barH + allKeysH) + 'px';
+    termEl.style.top = '0';
+    termEl.style.bottom = (barH + allKeysH) + 'px';
     termEl.style.height = Math.max(60, visibleH - barH - allKeysH) + 'px';
-    termEl.style.bottom = 'auto';
   }
   function scheduleResize(){
     clearTimeout(resizeTimer);
@@ -341,8 +365,21 @@ function sessionPage(name: string): string {
     window.visualViewport.addEventListener('resize', function(){ scheduleResize('vv-resize'); });
     window.visualViewport.addEventListener('scroll', function(){ scheduleResize('vv-scroll'); });
   }
-  // Also re-fit when the page becomes visible again (orientation change in another tab, etc.).
-  document.addEventListener('visibilitychange', function(){ if (!document.hidden) scheduleResize('visible'); });
+  // Also re-fit AND re-focus when the page becomes visible again — on Android
+  // Chrome, returning from a tab switch leaves the xterm hidden textarea
+  // blurred, so keystrokes have no target until something re-focuses it.
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden){
+      scheduleResize('visible');
+      // Defer focus until the resize and any soft-keyboard settling has run.
+      setTimeout(function(){ try { term.focus(); } catch(e){} }, 120);
+    }
+  });
+  // pageshow covers the bfcache-restore path that visibilitychange misses.
+  addEventListener('pageshow', function(){
+    scheduleResize('pageshow');
+    setTimeout(function(){ try { term.focus(); } catch(e){} }, 120);
+  });
 })();
 </script>
 </body></html>`;
@@ -477,7 +514,7 @@ function attachSession(ws: WebSocket, sessionName: string): void {
 }
 
 export function printBanner(port: number): void {
-  console.log(`llmuxd v0.2.0\n`);
+  console.log(`llmuxd v${readDaemonVersion()}\n`);
   for (const addr of getAddresses(port)) {
     console.log(`  ▸ ${addr.label.padEnd(10)}${addr.url}`);
   }
