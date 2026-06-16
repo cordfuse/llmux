@@ -5,6 +5,25 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.12] — 2026-06-16
+
+### Changed — toolbar polish
+
+- **Vertical padding around toolbar rows.** Bar grows 72→84px portrait,
+  52→62px landscape. Rows are fixed 32/24px and centered; explicit 8px
+  gap between rows. Buttons no longer touch row edges.
+- **Tab key renders as text `Tab`** instead of the `⇥` Unicode glyph.
+  `⇥` visually reads as a right-arrow with a bar, indistinguishable from
+  `→` to a first-time user. Plain text removes the ambiguity.
+- **Arrows switched to filled triangles** `▲ ▼ ◀ ▶` (Geometric Shapes
+  block). Unicode arrows (`↑↓←→`) render at inconsistent weights across
+  fonts — line-arrows in some glyphs, heavy in others. Triangles are
+  basic geometric primitives that render identically everywhere.
+- **`Home` and `End` added to the top toolbar row** alongside the
+  arrows. Line-start / line-end navigation is high-frequency in terminal
+  prompts; natural extension of the cursor-movement row. Row now reads:
+  `Home ▲ ▼ ◀ ▶ End`.
+
 ## [0.2.11] — 2026-06-16
 
 ### Changed — mobile UX
