@@ -164,7 +164,7 @@ function pickerPage(): string {
   #toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:#11141a;border:1px solid #1f2329;color:#e6e8eb;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}
   #toast.show{opacity:1}
   #toast.error{border-color:#4a2329;color:#f85149}
-  #confirm-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
+  #confirm-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:none;align-items:center;justify-content:center;z-index:60;padding:20px}
   #confirm-modal.open{display:flex}
   #confirm-modal .panel{background:#11141a;border:1px solid #1f2329;border-radius:10px;padding:20px;max-width:360px;width:100%}
   #confirm-modal h3{margin:0 0 8px;font-size:15px;color:#e6e8eb}
@@ -299,7 +299,7 @@ function pickerPage(): string {
     <p class="sub" id="convs-sub">Pick one to resume. The current session will be killed and respawned with the agent's resume flag.</p>
     <div id="convs-list">loading…</div>
     <div class="actions">
-      <button type="button" id="convs-close">close</button>
+      <button type="button" id="convs-close">cancel</button>
     </div>
   </div>
 </div>
@@ -535,23 +535,28 @@ function pickerPage(): string {
     if (!btn || !convsForSession) return;
     const convId = btn.dataset.convId;
     const convTitle = btn.dataset.convTitle || '(conversation)';
+    const sessionName = convsForSession;
+    // Dismiss the conversations modal immediately so the confirm dialog
+    // doesn't stack underneath it (was a real bug — same z-index meant the
+    // confirm rendered behind the picker and tapping looked like nothing
+    // happened).
+    closeConvsModal();
     const ok = await askConfirm({
       title: 'Resume conversation?',
-      body: 'Kill <code>' + escapeHtmlSafe(convsForSession) + '</code> and relaunch the agent with <code>--resume ' + escapeHtmlSafe(convId.slice(0, 8)) + '…</code>. The current in-process state is lost; conversation history (on the agent\\'s side) is intact.<br><br><em>' + escapeHtmlSafe(convTitle) + '</em>',
+      body: 'Kill <code>' + escapeHtmlSafe(sessionName) + '</code> and relaunch the agent with <code>--resume ' + escapeHtmlSafe(convId.slice(0, 8)) + '…</code>. The current in-process state is lost; conversation history (on the agent\\'s side) is intact.<br><br><em>' + escapeHtmlSafe(convTitle) + '</em>',
       okLabel: 'resume',
       destructive: true,
     });
     if (!ok) return;
     try {
-      const r = await fetch('/api/sessions/' + encodeURIComponent(convsForSession) + '/resume', {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(sessionName) + '/resume', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ conversationId: convId }),
       });
       const data = await r.json().catch(function(){ return {}; });
       if (!r.ok || data.ok === false) throw new Error(data.error || 'resume failed');
-      showToast('resumed ' + convsForSession);
-      closeConvsModal();
+      showToast('resumed ' + sessionName);
       poll();
     } catch(err){
       showToast('resume failed: ' + (err.message || err), true);
