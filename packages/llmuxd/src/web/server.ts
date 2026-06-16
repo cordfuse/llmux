@@ -233,7 +233,9 @@ function pickerPage(): string {
   function rowHtml(s){
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
-    const respawnBtn = s.status === 'exited' ? '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '">↻ respawn</button>' : '';
+    const respawnLabel = s.status === 'running' ? '↻ restart' : '↻ respawn';
+    const respawnTitle = s.status === 'running' ? 'kill + relaunch with the persisted config (use after edit)' : 'launch the agent again with the persisted config';
+    const respawnBtn = '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '" title="' + respawnTitle + '">' + respawnLabel + '</button>';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '">✎ edit</button>';
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
@@ -489,10 +491,8 @@ function renderSessionTable(sessions: SessionView[]): string {
     .map((s) => {
       const cls = `state-${s.status}`;
       const linkOpen = `<a class="session-link" href="/session/${encodeURIComponent(s.name)}">`;
-      const respawnBtn =
-        s.status === 'exited'
-          ? `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}">↻ respawn</button>`
-          : '';
+      const respawnLabel = s.status === 'running' ? '↻ restart' : '↻ respawn';
+      const respawnBtn = `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}">${respawnLabel}</button>`;
       const killLabel = s.status === 'running' ? '× kill' : '× remove';
       const cwdShort = s.cwdDisplay || s.cwd;
       return `<tr data-name="${escapeHtml(s.name)}">
@@ -1321,10 +1321,18 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
 function respawnSession(name: string): { ok: true; session: SessionView } | { ok: false; error: string } {
   const session = state.get(name);
   if (!session) return { ok: false, error: `no tracked session "${name}"` };
-  if (tmux.hasSession(name)) return { ok: false, error: `session "${name}" is still running` };
   const agent = DEFAULT_AGENTS[session.agent];
   if (!agent) return { ok: false, error: `unknown agent "${session.agent}"` };
   if (!isAgentInstalled(agent)) return { ok: false, error: `agent "${session.agent}" is not installed` };
+  // If still running, kill first so the new spawn picks up any name/cwd/flags
+  // edits the operator has made since the last spawn.
+  if (tmux.hasSession(name)) {
+    try {
+      tmux.killSession(name);
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
   try {
     tmux.newSession({
       name: session.name,
