@@ -1,6 +1,6 @@
 {
   "name": "@cordfuse/llmux",
-  "version": "0.8.6",
+  "version": "0.9.0",
   "description": "Thin HTTP client for llmuxd — send prompts to running AI agent CLI sessions over REST",
   "license": "MIT",
   "type": "module",

@@ -54,6 +54,10 @@ interface SessionView {
   flags?: string;
   /** The agent's default flags — included so the UI can prefill the edit form. */
   defaultFlags: string;
+  /** Per-session env override stored on this session (undefined = inherits agent defaults). */
+  env?: Record<string, string>;
+  /** Agent's default env vars — UI prefills the edit form from this when no override. */
+  defaultEnv: Record<string, string>;
   createdAt: string;
   parent: string | null;
   status: 'running' | 'exited';
@@ -139,8 +143,8 @@ function pickerPage(): string {
   #new-form select:disabled{opacity:.6;cursor:not-allowed}
   #new-form .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
   #new-form label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em}
-  #new-form select,#new-form input{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none}
-  #new-form select:focus,#new-form input:focus{border-color:#2d4a66}
+  #new-form select,#new-form input,#new-form textarea{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none;width:100%;box-sizing:border-box;resize:vertical}
+  #new-form select:focus,#new-form input:focus,#new-form textarea:focus{border-color:#2d4a66}
   #new-form .actions{display:flex;gap:8px;justify-content:flex-end}
   #new-form button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:12px ui-monospace,monospace;cursor:pointer}
   #new-form button.primary{color:#7cc4ff;border-color:#2d4a66}
@@ -232,6 +236,11 @@ function pickerPage(): string {
       <input id="new-flags" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
     </div>
     <div id="new-flags-hint" class="hint" hidden></div>
+    <div class="field">
+      <label for="new-env">env vars</label>
+      <textarea id="new-env" rows="3" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="KEY=VALUE one per line"></textarea>
+    </div>
+    <div id="new-env-hint" class="hint" hidden></div>
     <div class="actions">
       <button type="button" id="new-cancel">cancel</button>
       <button type="submit" class="primary" id="new-submit">spawn</button>
@@ -303,7 +312,7 @@ function pickerPage(): string {
     const respawnText = s.status === 'running' ? 'restart' : 'respawn';
     const respawnTitle = s.status === 'running' ? 'kill + relaunch with the persisted config (use after edit)' : 'launch the agent again with the persisted config';
     const respawnBtn = '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '" title="' + respawnTitle + '" aria-label="' + respawnText + '"><span class="icon">↻</span><span class="label">' + respawnText + '</span></button>';
-    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" title="edit name, cwd, or flags" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
+    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" title="edit name, cwd, flags, or env" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
     return '<tr data-name="' + escapeHtml(s.name) + '">' +
@@ -459,7 +468,9 @@ function pickerPage(): string {
     const name = btn.dataset.name;
     const kind = btn.dataset.action;
     if (kind === 'edit'){
-      openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd, flags: btn.dataset.flags });
+      let env = {};
+      try { env = JSON.parse(btn.dataset.env || '{}'); } catch(_){}
+      openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd, flags: btn.dataset.flags, env: env });
       return;
     }
     if (kind === 'kill'){
@@ -486,8 +497,10 @@ function pickerPage(): string {
   const newName = document.getElementById('new-name');
   const newCwd = document.getElementById('new-cwd');
   const newFlags = document.getElementById('new-flags');
+  const newEnv = document.getElementById('new-env');
   const newCwdHint = document.getElementById('new-cwd-hint');
   const newFlagsHint = document.getElementById('new-flags-hint');
+  const newEnvHint = document.getElementById('new-env-hint');
   const newCancel = document.getElementById('new-cancel');
   const newSubmit = document.getElementById('new-submit');
   let agentsLoaded = false;
@@ -498,6 +511,14 @@ function pickerPage(): string {
   function agentDefaultFlags(key){
     const a = agentList.find(function(x){ return x.key === key; });
     return (a && a.flags) || '';
+  }
+  function agentDefaultEnv(key){
+    const a = agentList.find(function(x){ return x.key === key; });
+    return (a && a.envDefaults) || {};
+  }
+  function envToText(envObj){
+    if (!envObj) return '';
+    return Object.keys(envObj).sort().map(function(k){ return k + '=' + envObj[k]; }).join('\\n');
   }
 
   async function loadAgents(){
@@ -535,6 +556,13 @@ function pickerPage(): string {
       ? 'agent default: ' + def + '. Clear the input to spawn with no flags. Takes effect on next respawn.'
       : 'this agent has no default flags. Takes effect on next respawn.';
   }
+  function syncEnvHint(agentKey){
+    const def = agentDefaultEnv(agentKey);
+    const keys = Object.keys(def);
+    newEnvHint.textContent = keys.length > 0
+      ? 'agent defaults: ' + keys.join(', ') + '. KEY=VALUE one per line. Stored on the daemon host (auth-gated) — keep secrets out if you prefer to inject from a shell profile.'
+      : 'no defaults for this agent. KEY=VALUE one per line. Stored on the daemon host (auth-gated) — keep secrets out if you prefer to inject from a shell profile.';
+  }
 
   async function openNewForm(){
     formMode = 'new';
@@ -545,13 +573,16 @@ function pickerPage(): string {
     newAgent.disabled = false;
     newCwdHint.hidden = true;
     newFlagsHint.hidden = false;
+    newEnvHint.hidden = false;
     newForm.classList.add('open');
     newForm.setAttribute('aria-hidden', 'false');
     await loadAgents();
-    // Pre-fill flags with the selected agent's default so the operator can
-    // edit/clear from there. Empty = spawn with no flags.
+    // Pre-fill flags + env with the selected agent's defaults so the operator
+    // can edit/clear from there. Empty = spawn with no flags / no env override.
     newFlags.value = agentDefaultFlags(newAgent.value);
+    newEnv.value = envToText(agentDefaultEnv(newAgent.value));
     syncFlagsHint(newAgent.value);
+    syncEnvHint(newAgent.value);
     newAgent.focus();
   }
 
@@ -563,6 +594,7 @@ function pickerPage(): string {
     newCwd.value = row.cwd || '';
     newCwdHint.hidden = false;
     newFlagsHint.hidden = false;
+    newEnvHint.hidden = false;
     newForm.classList.add('open');
     newForm.setAttribute('aria-hidden', 'false');
     await loadAgents();
@@ -571,20 +603,25 @@ function pickerPage(): string {
     if (row.agent) newAgent.value = row.agent;
     newAgent.disabled = true;
     // Pre-fill with the persisted override if present, else the agent default.
-    // Operator can edit either further or clear to spawn with no flags.
     newFlags.value = row.flags !== undefined && row.flags !== ''
       ? row.flags
       : agentDefaultFlags(newAgent.value);
+    newEnv.value = row.env && Object.keys(row.env).length > 0
+      ? envToText(row.env)
+      : envToText(agentDefaultEnv(newAgent.value));
     syncFlagsHint(newAgent.value);
+    syncEnvHint(newAgent.value);
     newName.focus();
     newName.select();
   }
 
   newAgent.addEventListener('change', function(){
     if (formMode === 'new'){
-      // Reset flags to the new agent's default so the field reflects intent.
+      // Reset flags + env to the new agent's defaults so fields reflect intent.
       newFlags.value = agentDefaultFlags(newAgent.value);
+      newEnv.value = envToText(agentDefaultEnv(newAgent.value));
       syncFlagsHint(newAgent.value);
+      syncEnvHint(newAgent.value);
     }
   });
 
@@ -600,14 +637,15 @@ function pickerPage(): string {
     const name = newName.value.trim();
     const cwd = newCwd.value.trim();
     const flags = newFlags.value;
+    const env = newEnv.value;
     newSubmit.disabled = true;
     const originalLabel = newSubmit.textContent;
     try {
       if (formMode && formMode.edit){
         newSubmit.textContent = 'saving…';
-        // For edit, always send flags so the input value is canonical.
+        // For edit, always send flags + env so input values are canonical.
         // name/cwd still only sent if user typed (so blank = no change).
-        const body = { flags: flags };
+        const body = { flags: flags, env: env };
         if (name) body.name = name;
         if (cwd) body.cwd = cwd;
         const r = await fetch('/api/sessions/' + encodeURIComponent(formMode.edit), {
@@ -625,9 +663,10 @@ function pickerPage(): string {
         const body = { agent };
         if (name) body.name = name;
         if (cwd) body.cwd = cwd;
-        // Always send flags as the input is pre-filled with the agent default;
-        // empty value = explicit "no flags".
+        // Always send flags + env as the inputs are pre-filled with agent defaults;
+        // empty values = explicit "no flags" / "no env override".
         body.flags = flags;
+        body.env = env;
         const r = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -669,7 +708,7 @@ function renderSessionTable(sessions: SessionView[]): string {
       const linkOpen = `<a class="session-link" href="/session/${encodeURIComponent(s.name)}">`;
       const respawnText = s.status === 'running' ? 'restart' : 'respawn';
       const respawnBtn = `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}" aria-label="${respawnText}"><span class="icon">↻</span><span class="label">${respawnText}</span></button>`;
-      const editBtn = `<button class="edit" data-action="edit" data-name="${escapeHtml(s.name)}" data-cwd="${escapeHtml(s.cwd)}" data-agent="${escapeHtml(s.agent)}" data-flags="${escapeHtml(s.flags || '')}" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>`;
+      const editBtn = `<button class="edit" data-action="edit" data-name="${escapeHtml(s.name)}" data-cwd="${escapeHtml(s.cwd)}" data-agent="${escapeHtml(s.agent)}" data-flags="${escapeHtml(s.flags || '')}" data-env="${escapeHtml(JSON.stringify(s.env || {}))}" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>`;
       const killText = s.status === 'running' ? 'kill' : 'remove';
       const killBtn = `<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}" aria-label="${killText}"><span class="icon">×</span><span class="label">${killText}</span></button>`;
       const cwdShort = s.cwdDisplay || s.cwd;
@@ -1439,15 +1478,49 @@ function viewOf(s: state.SessionState, live: boolean): SessionView {
     cwdDisplay: shortenCwd(s.cwd),
     ...(s.flags !== undefined ? { flags: s.flags } : {}),
     defaultFlags: DEFAULT_AGENTS[s.agent]?.flags ?? '',
+    ...(s.env !== undefined ? { env: s.env } : {}),
+    defaultEnv: DEFAULT_AGENTS[s.agent]?.envDefaults ?? {},
     createdAt: s.createdAt,
     parent: s.parent,
     status: live ? 'running' : 'exited',
   };
 }
 
+/**
+ * Parse a multi-line "KEY=VALUE" text blob into Record<string, string>.
+ * Skips blank lines and comments (lines starting with #). Trims whitespace
+ * around the key. Value is kept verbatim after the first `=`.
+ */
+function parseEnvText(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!key) continue;
+    out[key] = line.slice(eq + 1);
+  }
+  return out;
+}
+
+/** Serialize Record<string,string> back to a KEY=VALUE\n blob (stable key order). */
+function serializeEnv(env: Record<string, string>): string {
+  return Object.keys(env)
+    .sort()
+    .map((k) => `${k}=${env[k]}`)
+    .join('\n');
+}
+
+/** Merge order: agent defaults < session override < the LLMUX_* internals. */
+function mergeSpawnEnv(agent: AgentDefinition, sessionEnv: Record<string, string> | undefined, llmuxEnv: Record<string, string>): Record<string, string> {
+  return { ...(agent.envDefaults ?? {}), ...(sessionEnv ?? {}), ...llmuxEnv };
+}
+
 const SESSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string }):
+function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string; env?: string }):
   | { ok: true; session: SessionView }
   | { ok: false; error: string } {
   if (!input.agent) return { ok: false, error: 'agent is required' };
@@ -1473,12 +1546,16 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
   const flagsOverride: string | undefined =
     input.flags !== undefined ? input.flags.trim() : undefined;
 
+  // env semantics: same model — undefined = no override; string = parse + persist.
+  const envOverride: Record<string, string> | undefined =
+    input.env !== undefined ? parseEnvText(input.env) : undefined;
+
   try {
     tmux.newSession({
       name,
       command: buildAgentCommand(agentDef, flagsOverride),
       cwd,
-      env: { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key },
+      env: mergeSpawnEnv(agentDef, envOverride, { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key }),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1489,6 +1566,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
     agent: agentDef.key,
     cwd,
     ...(flagsOverride !== undefined ? { flags: flagsOverride } : {}),
+    ...(envOverride !== undefined ? { env: envOverride } : {}),
     createdAt: new Date().toISOString(),
     parent: null,
     restart: 'on-failure',
@@ -1518,7 +1596,7 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
       name: session.name,
       command: buildAgentCommand(agent, session.flags),
       cwd: session.cwd,
-      env: { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent },
+      env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent }),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -1530,7 +1608,7 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
 
 function editSession(
   oldName: string,
-  patch: { name?: string; cwd?: string; flags?: string },
+  patch: { name?: string; cwd?: string; flags?: string; env?: string },
 ): { ok: true; session: SessionView } | { ok: false; error: string } {
   const session = state.get(oldName);
   if (!session) return { ok: false, error: `no tracked session "${oldName}"` };
@@ -1569,11 +1647,16 @@ function editSession(
   // input. To revert to agent default, retype the default value.
   const nextFlags = patch.flags !== undefined ? patch.flags.trim() : session.flags;
 
+  // env semantics: undefined → no change; string → parse + set as override
+  // (including empty → empty override = "no extra env vars beyond the LLMUX_*").
+  const nextEnv = patch.env !== undefined ? parseEnvText(patch.env) : session.env;
+
   const updated: state.SessionState = {
     name: renaming ? newName! : oldName,
     agent: session.agent,
     cwd: newCwd !== undefined && newCwd.length > 0 ? expandTilde(newCwd) : session.cwd,
     ...(nextFlags !== undefined ? { flags: nextFlags } : {}),
+    ...(nextEnv !== undefined ? { env: nextEnv } : {}),
     createdAt: session.createdAt,
     parent: session.parent,
     restart: session.restart,
@@ -1687,7 +1770,13 @@ export function startServer(opts: ServeOptions): ServerHandle {
     if (url.pathname === '/api/agents' && method === 'GET') {
       const installed = Object.entries(DEFAULT_AGENTS)
         .filter(([, def]) => isAgentInstalled(def))
-        .map(([key, def]) => ({ key, displayName: def.displayName, cmd: def.cmd, flags: def.flags ?? '' }));
+        .map(([key, def]) => ({
+          key,
+          displayName: def.displayName,
+          cmd: def.cmd,
+          flags: def.flags ?? '',
+          envDefaults: def.envDefaults ?? {},
+        }));
       return sendJson(res, installed);
     }
     if (url.pathname === '/api/agents/all' && method === 'GET') {
@@ -1703,12 +1792,13 @@ export function startServer(opts: ServeOptions): ServerHandle {
     }
     if (url.pathname === '/api/sessions' && method === 'POST') {
       try {
-        const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown; flags?: unknown };
+        const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown };
         const result = createSession({
           agent: typeof body.agent === 'string' ? body.agent : '',
           ...(typeof body.name === 'string' ? { name: body.name } : {}),
           ...(typeof body.cwd === 'string' ? { cwd: body.cwd } : {}),
           ...(typeof body.flags === 'string' ? { flags: body.flags } : {}),
+          ...(typeof body.env === 'string' ? { env: body.env } : {}),
         });
         return sendJson(res, result, result.ok ? 200 : 400);
       } catch (err) {
@@ -1734,11 +1824,12 @@ export function startServer(opts: ServeOptions): ServerHandle {
       if (mEdit) {
         const name = decodeURIComponent(mEdit[1]!);
         try {
-          const body = (await readJsonBody(req)) as { name?: unknown; cwd?: unknown; flags?: unknown };
+          const body = (await readJsonBody(req)) as { name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown };
           const result = editSession(name, {
             ...(typeof body.name === 'string' ? { name: body.name } : {}),
             ...(typeof body.cwd === 'string' ? { cwd: body.cwd } : {}),
             ...(typeof body.flags === 'string' ? { flags: body.flags } : {}),
+            ...(typeof body.env === 'string' ? { env: body.env } : {}),
           });
           return sendJson(res, result, result.ok ? 200 : 400);
         } catch (err) {

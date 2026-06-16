@@ -8,6 +8,8 @@ export interface SessionState {
   cwd: string;
   /** Override of the agent definition's default flags. undefined = use default. */
   flags?: string;
+  /** Per-session environment variable overrides (merged over agent envDefaults). */
+  env?: Record<string, string>;
   createdAt: string;
   parent: string | null;
   restart: 'always' | 'on-failure' | 'never';
