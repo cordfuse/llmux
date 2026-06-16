@@ -82,21 +82,22 @@ function sessionPage(name: string): string {
 <title>${escapedName} — llmuxd</title>
 <link rel="stylesheet" href="${XTERM_CSS}">
 <style>
-  :root{--bar-h:42px;--allkeys-h:0px}
+  :root{--bar-h:72px;--allkeys-h:0px}
   html,body{margin:0;background:#0b0c10;color:#eee;font-family:ui-monospace,monospace;overscroll-behavior:none}
   html{height:100dvh}
   body{height:100dvh;min-height:100dvh}
-  #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;align-items:center;gap:0;padding:0;z-index:20}
-  /* Pinned regions (back+title on the left, more on the right) */
-  #bar #back{flex:0 0 auto;margin-left:6px}
-  #title-block{flex:0 0 auto;display:inline-flex;align-items:center;padding:0 8px;color:#c9d1d9;font-size:11px}
+  #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:0;padding:4px 0;z-index:20;box-sizing:border-box}
+  #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:1 1 auto;min-height:0}
+  /* Row 1 — arrows (top, further from gboard) */
+  #bar .row.arrows{justify-content:center}
+  /* Row 2 — chrome + modifiers + ⋯ (bottom, next to gboard) */
+  #bar #back{flex:0 0 auto}
+  #title-block{flex:0 0 auto;display:inline-flex;align-items:center;padding:0 4px;color:#c9d1d9;font-size:11px}
   #title-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s;cursor:pointer}
   #title-dot[data-state="live"]{background:#7ee787;box-shadow:0 0 6px #7ee78766}
   #title-dot[data-state="error"],#title-dot[data-state="closed"]{background:#f85149}
-  /* Scrolling middle region — no mask, just native scroll */
-  #keys-scroll{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:4px;padding:0 4px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-  #keys-scroll::-webkit-scrollbar{display:none}
-  #bar #more{flex:0 0 auto;margin-right:6px}
+  #keys-row{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:6px;justify-content:flex-start}
+  #bar #more{flex:0 0 auto;margin-left:auto}
   #bar button{flex:0 0 auto;min-width:40px;height:30px;padding:0 10px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:13px ui-monospace,monospace;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
   #bar button:active{background:#252b34;border-color:#3a414b}
   #bar button[aria-pressed="true"]{background:#1e3a52;border-color:#2d5a85;color:#7cc4ff}
@@ -114,8 +115,10 @@ function sessionPage(name: string): string {
   body.allkeys-open #term{bottom:calc(var(--bar-h) + var(--allkeys-h))}
   /* Landscape with limited vertical space — compress bar */
   @media (orientation: landscape) and (max-height: 500px){
-    :root{--bar-h:34px}
-    #bar button{height:24px;min-width:36px;padding:0 8px;font-size:11px}
+    :root{--bar-h:52px}
+    #bar button{height:22px;min-width:36px;padding:0 8px;font-size:11px}
+    #bar{padding:2px 0}
+    #bar .row{gap:4px}
     #all-keys{max-height:60vh}
     #all-keys button{height:24px;min-width:30px;padding:0 7px;font-size:11px}
     #title-name{max-width:60px}
@@ -123,28 +126,26 @@ function sessionPage(name: string): string {
 </style></head>
 <body>
 <div id="bar">
-  <button id="back" title="Back to sessions">⌂</button>
-  <span id="title-block"><span id="title-dot" data-state="connecting" title="${escapedName} — connecting…"></span></span>
-  <div id="keys-scroll">
-    <button data-key="esc" title="Escape">Esc</button>
-    <button data-key="tab" title="Tab">⇥</button>
-    <button data-mod="ctrl"  title="Ctrl (tap then key, double-tap to lock)">Ctrl</button>
-    <button data-mod="alt"   title="Alt (tap then key, double-tap to lock)">Alt</button>
-    <button data-mod="shift" title="Shift (next char uppercase)">⇧</button>
-    <span class="sep"></span>
-    <button data-key="left"  title="Left">←</button>
-    <button data-key="right" title="Right">→</button>
-  </div>
-  <button id="more" title="All keys">⋯</button>
-</div>
-<div id="all-keys" aria-hidden="true">
-  <h4>arrows</h4>
-  <div class="row">
+  <div class="row arrows">
     <button data-key="up"    title="Up">↑</button>
     <button data-key="down"  title="Down">↓</button>
     <button data-key="left"  title="Left">←</button>
     <button data-key="right" title="Right">→</button>
   </div>
+  <div class="row">
+    <button id="back" title="Back to sessions">⌂</button>
+    <span id="title-block"><span id="title-dot" data-state="connecting" title="${escapedName} — connecting…"></span></span>
+    <div id="keys-row">
+      <button data-key="esc" title="Escape">Esc</button>
+      <button data-key="tab" title="Tab">⇥</button>
+      <button data-mod="ctrl"  title="Ctrl (tap then key, double-tap to lock)">Ctrl</button>
+      <button data-mod="alt"   title="Alt (tap then key, double-tap to lock)">Alt</button>
+      <button data-mod="shift" title="Shift (next char uppercase)">⇧</button>
+    </div>
+    <button id="more" title="All keys">⋯</button>
+  </div>
+</div>
+<div id="all-keys" aria-hidden="true">
   <h4>shell</h4>
   <div class="row">
     <button data-char="~" title="tilde">~</button>
@@ -370,20 +371,36 @@ function sessionPage(name: string): string {
     window.visualViewport.addEventListener('resize', function(){ scheduleResize('vv-resize'); });
     window.visualViewport.addEventListener('scroll', function(){ scheduleResize('vv-scroll'); });
   }
-  // Also re-fit AND re-focus when the page becomes visible again — on Android
-  // Chrome, returning from a tab switch leaves the xterm hidden textarea
-  // blurred, so keystrokes have no target until something re-focuses it.
+  // Re-fit when the page becomes visible again. Re-focus is deferred until
+  // the next user touch — Android Chrome blocks programmatic focus() without
+  // a user-activation context, so calling term.focus() immediately on
+  // visibilitychange is silently no-op'd. Arm a one-shot listener; the next
+  // tap anywhere in the document re-focuses xterm, then unregisters itself.
+  let pendingRefocus = false;
+  function armRefocus(){
+    if (pendingRefocus) return;
+    pendingRefocus = true;
+    function onUserTouch(){
+      pendingRefocus = false;
+      try { term.focus(); } catch(e){}
+      document.removeEventListener('touchstart', onUserTouch, true);
+      document.removeEventListener('mousedown', onUserTouch, true);
+    }
+    document.addEventListener('touchstart', onUserTouch, true);
+    document.addEventListener('mousedown', onUserTouch, true);
+  }
   document.addEventListener('visibilitychange', function(){
     if (!document.hidden){
       scheduleResize('visible');
-      // Defer focus until the resize and any soft-keyboard settling has run.
-      setTimeout(function(){ try { term.focus(); } catch(e){} }, 120);
+      try { term.focus(); } catch(e){}
+      armRefocus();
     }
   });
   // pageshow covers the bfcache-restore path that visibilitychange misses.
   addEventListener('pageshow', function(){
     scheduleResize('pageshow');
-    setTimeout(function(){ try { term.focus(); } catch(e){} }, 120);
+    try { term.focus(); } catch(e){}
+    armRefocus();
   });
 })();
 </script>
