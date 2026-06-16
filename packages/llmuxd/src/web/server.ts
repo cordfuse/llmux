@@ -343,7 +343,7 @@ function sessionPage(name: string): string {
 <title>${escapedName} — llmuxd</title>
 <link rel="stylesheet" href="${XTERM_CSS}">
 <style>
-  :root{--topbar-h:38px;--bar-h:74px;--allkeys-h:0px;color-scheme:dark}
+  :root{--topbar-h:38px;--bar-h:92px;--allkeys-h:0px;color-scheme:dark}
   html,body{margin:0;background:#0b0c10;color:#eee;font-family:ui-monospace,monospace;overscroll-behavior:none}
   html{height:100dvh}
   body{height:100dvh;min-height:100dvh}
@@ -359,7 +359,7 @@ function sessionPage(name: string): string {
   #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;margin-left:auto;padding-left:8px}
   #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;padding-left:6px}
-  #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:8px 0;z-index:20;box-sizing:border-box}
+  #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:6px 0 14px;z-index:20;box-sizing:border-box}
   #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:0 0 auto;height:32px}
   #bar .row.arrows{justify-content:center}
   #bar .row.keys{justify-content:flex-start}
@@ -387,14 +387,14 @@ function sessionPage(name: string): string {
   #overlay button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:12px ui-monospace,monospace;cursor:pointer}
   #overlay button.primary{color:#7cc4ff;border-color:#2d4a66}
   @media (orientation: landscape) and (max-height: 500px){
-    :root{--topbar-h:28px;--bar-h:54px}
+    :root{--topbar-h:28px;--bar-h:64px}
     #topbar{padding:0 6px;gap:6px}
     #topbar #back{height:20px;width:30px;font-size:13px}
     #title-block{font-size:11px}
     #title-brand{font-size:10px;padding-left:6px}
     #title-version{font-size:9px;padding-left:4px}
     #bar button{height:22px;min-width:36px;padding:0 8px;font-size:11px}
-    #bar{padding:4px 0;gap:4px}
+    #bar{padding:4px 0 10px;gap:4px}
     #bar .row{gap:4px;height:24px}
     #all-keys{max-height:60vh}
     #all-keys button{height:24px;min-width:30px;padding:0 7px;font-size:11px}
