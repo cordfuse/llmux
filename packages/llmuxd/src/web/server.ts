@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -110,6 +110,20 @@ function pickerPage(): string {
   .actions button:disabled{opacity:.5;cursor:wait}
   .empty{color:#7a7f87;padding:18px;text-align:center;border:1px dashed #1f2329;border-radius:8px}
   .empty code{color:#c9d1d9;background:#11141a;padding:2px 6px;border-radius:4px}
+  #new-btn{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:6px 10px;font:12px ui-monospace,monospace;cursor:pointer}
+  #new-btn:hover{background:#252b34}
+  #new-form{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:14px;margin-bottom:14px;display:none}
+  #new-form.open{display:block}
+  #new-form .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  #new-form label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em}
+  #new-form select,#new-form input{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none}
+  #new-form select:focus,#new-form input:focus{border-color:#2d4a66}
+  #new-form .actions{display:flex;gap:8px;justify-content:flex-end}
+  #new-form button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:12px ui-monospace,monospace;cursor:pointer}
+  #new-form button.primary{color:#7cc4ff;border-color:#2d4a66}
+  #new-form button:hover{background:#252b34}
+  #new-form button:disabled{opacity:.5;cursor:wait}
+  #new-form .hint{font-size:11px;color:#7a7f87;margin-top:-4px;margin-bottom:10px}
   footer{position:fixed;bottom:0;left:0;right:0;background:#0b0c10;border-top:1px solid #1f2329;padding:10px 16px;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;gap:10px}
   footer .warn{color:#d29922}
   #toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:#11141a;border:1px solid #1f2329;color:#e6e8eb;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}
@@ -130,12 +144,33 @@ function pickerPage(): string {
 <header>
   <h1>llmuxd — sessions</h1>
   <div id="meta">
+    <button id="new-btn" type="button">+ new session</button>
     <span id="refresh-dot" title="updates every 3s"></span>
     <span id="refresh-label">live</span>
     <span>·</span>
     <span>v${escapeHtml(DAEMON_VERSION)}</span>
   </div>
 </header>
+<div id="new-form" aria-hidden="true">
+  <form id="new-session-form">
+    <div class="field">
+      <label for="new-agent">agent</label>
+      <select id="new-agent" required></select>
+    </div>
+    <div class="field">
+      <label for="new-name">name</label>
+      <input id="new-name" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="(defaults to agent key)" pattern="[a-zA-Z0-9][a-zA-Z0-9_-]*">
+    </div>
+    <div class="field">
+      <label for="new-cwd">cwd</label>
+      <input id="new-cwd" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="(defaults to \$HOME on the daemon host)">
+    </div>
+    <div class="actions">
+      <button type="button" id="new-cancel">cancel</button>
+      <button type="submit" class="primary" id="new-submit">spawn</button>
+    </div>
+  </form>
+</div>
 <div id="list-container">${renderSessionTable(sessions)}</div>
 <div id="toast"></div>
 <footer>
@@ -244,6 +279,85 @@ function pickerPage(): string {
     const name = btn.dataset.name;
     const kind = btn.dataset.action;
     action(name, kind, btn);
+  });
+
+  // ---- New session form ----
+  const newBtn = document.getElementById('new-btn');
+  const newForm = document.getElementById('new-form');
+  const newSessionForm = document.getElementById('new-session-form');
+  const newAgent = document.getElementById('new-agent');
+  const newName = document.getElementById('new-name');
+  const newCwd = document.getElementById('new-cwd');
+  const newCancel = document.getElementById('new-cancel');
+  const newSubmit = document.getElementById('new-submit');
+  let agentsLoaded = false;
+
+  async function loadAgents(){
+    if (agentsLoaded) return;
+    try {
+      const r = await fetch('/api/agents', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const list = await r.json();
+      if (!Array.isArray(list) || list.length === 0){
+        newAgent.innerHTML = '<option value="" disabled selected>no installed agents</option>';
+      } else {
+        newAgent.innerHTML = list.map(function(a){
+          return '<option value="' + escapeHtml(a.key) + '">' + escapeHtml(a.key) + ' (' + escapeHtml(a.cmd) + ')</option>';
+        }).join('');
+      }
+      agentsLoaded = true;
+    } catch(e){
+      showToast('couldn\\'t load agents: ' + (e.message || e), true);
+    }
+  }
+
+  newBtn.addEventListener('click', async function(){
+    const willOpen = !newForm.classList.contains('open');
+    newForm.classList.toggle('open', willOpen);
+    newForm.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
+    if (willOpen){
+      await loadAgents();
+      newName.value = '';
+      newCwd.value = '';
+      newAgent.focus();
+    }
+  });
+
+  newCancel.addEventListener('click', function(){
+    newForm.classList.remove('open');
+    newForm.setAttribute('aria-hidden', 'true');
+  });
+
+  newSessionForm.addEventListener('submit', async function(e){
+    e.preventDefault();
+    const agent = newAgent.value;
+    if (!agent){ showToast('pick an agent', true); return; }
+    const body = { agent };
+    const name = newName.value.trim();
+    const cwd = newCwd.value.trim();
+    if (name) body.name = name;
+    if (cwd) body.cwd = cwd;
+    newSubmit.disabled = true;
+    const originalLabel = newSubmit.textContent;
+    newSubmit.textContent = 'spawning…';
+    try {
+      const r = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await r.json().catch(function(){ return {}; });
+      if (!r.ok || data.ok === false) throw new Error(data.error || 'spawn failed');
+      showToast('spawned ' + data.session.name);
+      newForm.classList.remove('open');
+      newForm.setAttribute('aria-hidden', 'true');
+      poll();
+    } catch(e){
+      showToast('spawn failed: ' + (e.message || e), true);
+    } finally {
+      newSubmit.disabled = false;
+      newSubmit.textContent = originalLabel;
+    }
   });
 
   document.addEventListener('visibilitychange', function(){
@@ -1028,6 +1142,54 @@ function buildAgentCommand(agent: AgentDefinition): string {
   return agent.flags ? `${agent.cmd} ${agent.flags}` : agent.cmd;
 }
 
+const SESSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
+
+function createSession(input: { agent: string; name?: string; cwd?: string }):
+  | { ok: true; session: SessionView }
+  | { ok: false; error: string } {
+  if (!input.agent) return { ok: false, error: 'agent is required' };
+  const agentDef = DEFAULT_AGENTS[input.agent];
+  if (!agentDef) return { ok: false, error: `unknown agent "${input.agent}"` };
+  if (!isAgentInstalled(agentDef)) return { ok: false, error: `agent "${input.agent}" is not installed on the daemon host` };
+
+  const name = (input.name && input.name.trim()) || agentDef.key;
+  if (!SESSION_NAME_RE.test(name)) {
+    return { ok: false, error: 'name must start alphanumeric and contain only letters, numbers, _ or -' };
+  }
+  if (state.get(name) || tmux.hasSession(name)) {
+    return { ok: false, error: `session "${name}" already exists` };
+  }
+
+  const cwd = (input.cwd && input.cwd.trim()) || process.env.HOME || process.cwd();
+  if (!existsSync(cwd)) return { ok: false, error: `cwd does not exist: ${cwd}` };
+
+  try {
+    tmux.newSession({
+      name,
+      command: buildAgentCommand(agentDef),
+      cwd,
+      env: { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key },
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const session = {
+    name,
+    agent: agentDef.key,
+    cwd,
+    createdAt: new Date().toISOString(),
+    parent: null,
+    restart: 'on-failure' as const,
+  };
+  state.record(session);
+
+  return {
+    ok: true,
+    session: { ...session, status: 'running' },
+  };
+}
+
 function respawnSession(name: string): { ok: true; session: SessionView } | { ok: false; error: string } {
   const session = state.get(name);
   if (!session) return { ok: false, error: `no tracked session "${name}"` };
@@ -1149,6 +1311,25 @@ export function startServer(opts: ServeOptions): ServerHandle {
     // ---- API ----
     if (url.pathname === '/api/sessions' && method === 'GET') {
       return sendJson(res, listSessionViews());
+    }
+    if (url.pathname === '/api/agents' && method === 'GET') {
+      const installed = Object.entries(DEFAULT_AGENTS)
+        .filter(([, def]) => isAgentInstalled(def))
+        .map(([key, def]) => ({ key, cmd: def.cmd }));
+      return sendJson(res, installed);
+    }
+    if (url.pathname === '/api/sessions' && method === 'POST') {
+      try {
+        const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown };
+        const result = createSession({
+          agent: typeof body.agent === 'string' ? body.agent : '',
+          ...(typeof body.name === 'string' ? { name: body.name } : {}),
+          ...(typeof body.cwd === 'string' ? { cwd: body.cwd } : {}),
+        });
+        return sendJson(res, result, result.ok ? 200 : 400);
+      } catch (err) {
+        return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
+      }
     }
     if (method === 'POST') {
       const mRespawn = url.pathname.match(RESPAWN_RE);
