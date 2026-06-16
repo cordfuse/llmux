@@ -137,8 +137,7 @@ function pickerPage(): string {
   .actions button.edit{color:#d29922;border-color:#574122}
   .actions button.kill{color:#f85149;border-color:#4a2329}
   .actions button.resume-btn{color:#a371f7;border-color:#3c2a59}
-  .actions button .icon{font-size:13px;line-height:1}
-  .actions button.kill .icon{font-size:15px;line-height:1}
+  .actions button .icon{font-size:13px;line-height:1;display:inline-block;vertical-align:middle}
   .actions button:disabled{opacity:.5;cursor:wait}
   .empty{color:#7a7f87;padding:18px;text-align:center;border:1px dashed #1f2329;border-radius:8px}
   .empty code{color:#c9d1d9;background:#11141a;padding:2px 6px;border-radius:4px}
@@ -357,7 +356,7 @@ function pickerPage(): string {
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
-      '<td class="actions">' + resumeBtn + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">×</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
+      '<td class="actions">' + resumeBtn + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">✕</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
       '</tr>';
   }
 
@@ -854,7 +853,7 @@ function renderSessionTable(sessions: SessionView[]): string {
         ? `<button class="resume-btn" data-action="resume" data-name="${escapeHtml(s.name)}" aria-label="resume"><span class="icon">☰</span><span class="label">${s.conversationCount}</span></button>`
         : '';
       const killText = s.status === 'running' ? 'kill' : 'remove';
-      const killBtn = `<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}" aria-label="${killText}"><span class="icon">×</span><span class="label">${killText}</span></button>`;
+      const killBtn = `<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}" aria-label="${killText}"><span class="icon">✕</span><span class="label">${killText}</span></button>`;
       const cwdShort = s.cwdDisplay || s.cwd;
       return `<tr data-name="${escapeHtml(s.name)}">
   <td class="name-block"><span class="name">${linkOpen}${escapeHtml(s.name)}</a></span><span class="cwd" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></span></td>
