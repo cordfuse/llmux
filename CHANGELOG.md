@@ -5,6 +5,27 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-06-16
+
+### Changed
+
+- **Debug instrumentation removed from Release workflow.** The mystery
+  is solved: every CI Release run since v0.0.1 failed because the
+  `NPM_TOKEN` repo secret was set via `printf '%s' '<token>' |
+  gh secret set NPM_TOKEN -R cordfuse/llmux --body -` (stdin pipe).
+  Under fish shell on cachy, that pipe arrives empty at `gh secret set`,
+  so the stored secret value was an empty string. GitHub Actions then
+  set `NODE_AUTH_TOKEN=""` and `NPM_TOKEN=""` on every Release run, and
+  npm's registry returned 401 on `whoami` and 404 on `publish` (npm's
+  quirk: unauthenticated PUT to a scoped package returns 404, not 403).
+  The CI mystery wasn't account-2FA, IP allowlist, or token grants —
+  the secret was literally empty.
+- Fix: secret re-set with explicit `gh secret set NPM_TOKEN -R
+  cordfuse/llmux --body '<token>'` form. v0.2.5 was the first
+  successful CI publish in this repo's history.
+- Debug step + `--loglevel=verbose` from v0.2.5 reverted; workflow is
+  back to its clean shape.
+
 ## [0.2.5] — 2026-06-16
 
 ### Changed (CI debug-only)
