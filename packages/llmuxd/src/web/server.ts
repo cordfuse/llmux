@@ -56,15 +56,20 @@ interface SessionView {
 function listSessionViews(): SessionView[] {
   const tracked = state.list();
   const live = new Set(tmux.listSessions().map((s) => s.name));
-  return tracked.map((s) => ({
-    name: s.name,
-    agent: s.agent,
-    cwd: s.cwd,
-    createdAt: s.createdAt,
-    parent: s.parent,
-    status: live.has(s.name) ? 'running' : 'exited',
-  }));
+  return tracked
+    .map((s) => ({
+      name: s.name,
+      agent: s.agent,
+      cwd: s.cwd,
+      createdAt: s.createdAt,
+      parent: s.parent,
+      status: live.has(s.name) ? 'running' as const : 'exited' as const,
+    }))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
+
+const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#0b0c10"/><rect x="5" y="5" width="9" height="9" fill="#7cc4ff"/><rect x="18" y="5" width="9" height="9" fill="#7cc4ff"/><rect x="5" y="18" width="9" height="9" fill="#7cc4ff"/><rect x="18" y="18" width="9" height="9" fill="#7cc4ff"/></svg>`;
+const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`;
 
 // ---------- pages ----------
 
@@ -73,6 +78,8 @@ function pickerPage(): string {
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>llmuxd — sessions</title>
+<link rel="icon" href="${FAVICON_DATA_URL}">
+<link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <style>
   :root{color-scheme:dark}
   html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px}
@@ -90,6 +97,7 @@ function pickerPage(): string {
   a.session-link{color:#7cc4ff;text-decoration:none}
   a.session-link:hover{text-decoration:underline}
   .name{font-weight:600}
+  .started{color:#7a7f87;font-size:11px;margin-top:2px;display:block}
   .state-running{color:#7ee787}
   .state-exited{color:#7a7f87}
   .cwd{color:#c9d1d9;font-size:12px;word-break:break-all}
@@ -153,12 +161,24 @@ function pickerPage(): string {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  function relativeTime(iso){
+    const ms = Date.now() - new Date(iso).getTime();
+    if (isNaN(ms) || ms < 0) return '';
+    if (ms < 60000) return 'just now';
+    const m = Math.floor(ms/60000);
+    if (m < 60) return m + 'm ago';
+    const h = Math.floor(m/60);
+    if (h < 24) return h + 'h ago';
+    const d = Math.floor(h/24);
+    return d + 'd ago';
+  }
   function rowHtml(s){
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
     const respawnBtn = s.status === 'exited' ? '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '">↻ respawn</button>' : '';
+    const when = relativeTime(s.createdAt);
     return '<tr data-name="' + escapeHtml(s.name) + '">' +
-      '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span><span class="cwd"><code>' + escapeHtml(s.cwd) + '</code></span></td>' +
+      '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd"><code>' + escapeHtml(s.cwd) + '</code></span></td>' +
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col"><code>' + escapeHtml(s.cwd) + '</code></td>' +
@@ -341,6 +361,8 @@ function sessionPage(name: string): string {
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <title>${escapedName} — llmuxd</title>
+<link rel="icon" href="${FAVICON_DATA_URL}">
+<link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <link rel="stylesheet" href="${XTERM_CSS}">
 <style>
   :root{--topbar-h:38px;--bar-h:92px;--allkeys-h:0px;color-scheme:dark}
@@ -480,6 +502,10 @@ function sessionPage(name: string): string {
     <button data-key="f7">F7</button><button data-key="f8">F8</button>
     <button data-key="f9">F9</button><button data-key="f10">F10</button>
     <button data-key="f11">F11</button><button data-key="f12">F12</button>
+  </div>
+  <h4>actions</h4>
+  <div class="row">
+    <button id="reset-term" title="Clear xterm buffer and send Ctrl-L to redraw">Reset terminal</button>
   </div>
 </div>
 <div id="term"></div>
@@ -724,6 +750,13 @@ function sessionPage(name: string): string {
   document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
 
   document.getElementById('back').addEventListener('click', function(e){ e.preventDefault(); location.href = '/'; });
+
+  document.getElementById('reset-term').addEventListener('click', function(e){
+    e.preventDefault();
+    try { term.reset(); } catch(err){}
+    safeSend('\\x0c');
+    term.focus();
+  });
 
   document.getElementById('more').addEventListener('click', function(e){
     e.preventDefault();
@@ -1035,8 +1068,10 @@ function attachSession(ws: WebSocket, sessionName: string): void {
 
 export function printBanner(port: number): void {
   console.log(`llmuxd v${DAEMON_VERSION}\n`);
-  for (const addr of getAddresses(port)) {
-    console.log(`  ▸ ${addr.label.padEnd(10)}${addr.url}`);
+  const addrs = getAddresses(port);
+  const width = Math.max(10, ...addrs.map((a) => a.label.length + 2));
+  for (const addr of addrs) {
+    console.log(`  ▸ ${addr.label.padEnd(width)}${addr.url}`);
   }
   console.log(`\n  ⚠ running without auth — anyone on the network can attach to your tmux sessions\n`);
 }

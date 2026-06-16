@@ -1,8 +1,23 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { parseArgs, type ParsedArgs } from './cli.ts';
 import { commands, defaultDaemon, type Command } from './commands.ts';
 
-const VERSION = '0.0.0';
+function readVersion(): string {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (const candidate of [resolve(here, '../package.json'), resolve(here, '../../package.json')]) {
+      try {
+        const pkg = JSON.parse(readFileSync(candidate, 'utf8'));
+        if (pkg.name === '@cordfuse/llmuxd' && typeof pkg.version === 'string') return pkg.version;
+      } catch {}
+    }
+  } catch {}
+  return 'unknown';
+}
+const VERSION = readVersion();
 
 function printRootHelp(): void {
   const lines: string[] = [];
