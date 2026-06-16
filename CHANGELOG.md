@@ -5,6 +5,39 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.9] — 2026-06-16
+
+### Changed — mobile UX, batch
+
+- **Toolbar moved to the bottom of the viewport.** Matches Termux / Blink
+  convention. Puts the back-to-sessions button, status dot, modifiers,
+  arrows, and `⋯` in the same thumb zone as the soft keyboard. The
+  "All keys" overlay opens *upward* from the toolbar; terminal sits at
+  the top of the viewport and shrinks from the bottom as the overlay
+  opens.
+- **Shell chars `` ` ~ / \ | - _ `` moved out of the toolbar into a new
+  `SHELL` section at the top of the "All keys" overlay.** Net effect:
+  toolbar drops from ~17 hit targets to ~10 — fits without horizontal
+  scroll on a normal phone. Two taps to reach shell chars is acceptable
+  for a low-frequency tier.
+- **Toolbar buttons no longer get squeezed below content size.** Added
+  `flex: 0 0 auto` plus a `min-width` bump (34px → 40px in portrait,
+  32px → 36px in landscape). The default flex-shrink was letting Ctrl /
+  Esc / Alt text overflow their button borders when the row got
+  crowded.
+
+### Fixed
+
+- **Android tab-switch dead-key bug.** When the browser tab was
+  backgrounded and returned, the xterm hidden textarea stayed blurred
+  and keystrokes had no input target. Now `visibilitychange` (visible)
+  and `pageshow` both re-focus the terminal after the resize settles.
+- **Banner version is real.** `printBanner` was hardcoded to
+  `llmuxd v0.2.0` and shipped that string through every release.
+  Now reads from the daemon's own `package.json` at startup
+  (`@cordfuse/llmuxd` name guard, walks two directory levels to handle
+  both `src/` and `dist/` runs).
+
 ## [0.2.8] — 2026-06-16
 
 ### Changed
