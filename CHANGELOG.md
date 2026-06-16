@@ -5,6 +5,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-06-16
+
+### Fixed
+
+- **Drop `child_process` + `shell: true` for agent-on-PATH detection.**
+  `isAgentInstalled` was running `command -v <cmd>` via `spawnSync` with
+  `shell: true`, which Node 25+ now flags with
+  `DeprecationWarning DEP0190`. Replaced with a pure-Node PATH walk
+  using `accessSync(join(dir, cmd), X_OK)`. No shell, no deprecation
+  warning, removes the (unused-but-present) shell-injection vector
+  along the path that was using a hardcoded agent name.
+
 ## [0.2.6] — 2026-06-16
 
 ### Changed
