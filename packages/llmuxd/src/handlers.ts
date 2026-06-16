@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from './agents.ts';
 import * as state from './state.ts';
 import * as tmux from './tmux.ts';
+import { startServer, printBanner } from './web/server.ts';
 import type { ParsedArgs } from './cli.ts';
 
 // ---------- helpers ----------
@@ -184,6 +185,29 @@ export function handleChat(args: ParsedArgs): void {
     throw new Error(`session "${session.name}" is not live in tmux`);
   }
   tmux.attachOrSwitch(session.name);
+}
+
+export async function handleServe(args: ParsedArgs): Promise<void> {
+  tmux.requireTmux();
+  const portRaw = (args.flags.port as string | undefined) ?? process.env.LLMUXD_PORT ?? '3000';
+  const port = Number(portRaw);
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+    throw new Error(`invalid port: ${portRaw}`);
+  }
+  const host = process.env.LLMUXD_HOST ?? '0.0.0.0';
+  const handle = startServer({ port, host });
+  printBanner(handle.port);
+
+  const shutdown = async (sig: string) => {
+    console.log(`\n${sig} received — shutting down`);
+    await handle.stop();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+  // Idle forever — Bun.serve keeps the loop alive.
+  await new Promise<void>(() => {});
 }
 
 export function handleKill(args: ParsedArgs): void {
