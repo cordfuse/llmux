@@ -111,11 +111,13 @@ function pickerPage(): string {
   .cwd code{unicode-bidi:embed;direction:ltr}
   .cwd-col{max-width:0}
   .actions{text-align:right;white-space:nowrap}
-  .actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 9px;font:12px ui-monospace,monospace;cursor:pointer;margin-left:4px}
+  .actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 9px;font:12px ui-monospace,monospace;cursor:pointer;margin-left:4px;display:inline-flex;align-items:center;gap:4px}
   .actions button:hover{background:#252b34;border-color:#3a414b}
   .actions button.respawn{color:#7cc4ff;border-color:#2d4a66}
   .actions button.edit{color:#d29922;border-color:#574122}
   .actions button.kill{color:#f85149;border-color:#4a2329}
+  .actions button .icon{font-size:13px;line-height:1}
+  .actions button.kill .icon{font-size:15px;line-height:1}
   .actions button:disabled{opacity:.5;cursor:wait}
   .empty{color:#7a7f87;padding:18px;text-align:center;border:1px dashed #1f2329;border-radius:8px}
   .empty code{color:#c9d1d9;background:#11141a;padding:2px 6px;border-radius:4px}
@@ -148,6 +150,9 @@ function pickerPage(): string {
     .name-block .cwd{display:block;margin-top:3px;max-width:100%}
     th,td{padding:8px 6px;font-size:13px}
     .name-block{max-width:55vw}
+    /* Buttons collapse to icon-only — long-press surfaces title= for label. */
+    .actions button .label{display:none}
+    .actions button{padding:6px 8px;min-width:32px;justify-content:center;margin-left:3px}
   }
   @media (min-width: 601px){
     .name-block .cwd{display:none}
@@ -233,10 +238,10 @@ function pickerPage(): string {
   function rowHtml(s){
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
-    const respawnLabel = s.status === 'running' ? '↻ restart' : '↻ respawn';
+    const respawnText = s.status === 'running' ? 'restart' : 'respawn';
     const respawnTitle = s.status === 'running' ? 'kill + relaunch with the persisted config (use after edit)' : 'launch the agent again with the persisted config';
-    const respawnBtn = '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '" title="' + respawnTitle + '">' + respawnLabel + '</button>';
-    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '">✎ edit</button>';
+    const respawnBtn = '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '" title="' + respawnTitle + '" aria-label="' + respawnText + '"><span class="icon">↻</span><span class="label">' + respawnText + '</span></button>';
+    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" title="edit name, cwd, or flags" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
     return '<tr data-name="' + escapeHtml(s.name) + '">' +
@@ -244,7 +249,7 @@ function pickerPage(): string {
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
-      '<td class="actions">' + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '">' + (s.status === 'running' ? '× kill' : '× remove') + '</button></td>' +
+      '<td class="actions">' + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">×</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
       '</tr>';
   }
 
@@ -501,16 +506,18 @@ function renderSessionTable(sessions: SessionView[]): string {
     .map((s) => {
       const cls = `state-${s.status}`;
       const linkOpen = `<a class="session-link" href="/session/${encodeURIComponent(s.name)}">`;
-      const respawnLabel = s.status === 'running' ? '↻ restart' : '↻ respawn';
-      const respawnBtn = `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}">${respawnLabel}</button>`;
-      const killLabel = s.status === 'running' ? '× kill' : '× remove';
+      const respawnText = s.status === 'running' ? 'restart' : 'respawn';
+      const respawnBtn = `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}" aria-label="${respawnText}"><span class="icon">↻</span><span class="label">${respawnText}</span></button>`;
+      const editBtn = `<button class="edit" data-action="edit" data-name="${escapeHtml(s.name)}" data-cwd="${escapeHtml(s.cwd)}" data-agent="${escapeHtml(s.agent)}" data-flags="${escapeHtml(s.flags || '')}" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>`;
+      const killText = s.status === 'running' ? 'kill' : 'remove';
+      const killBtn = `<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}" aria-label="${killText}"><span class="icon">×</span><span class="label">${killText}</span></button>`;
       const cwdShort = s.cwdDisplay || s.cwd;
       return `<tr data-name="${escapeHtml(s.name)}">
   <td class="name-block"><span class="name">${linkOpen}${escapeHtml(s.name)}</a></span><span class="cwd" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></span></td>
   <td>${escapeHtml(s.agent)}</td>
   <td class="${cls}">${s.status}</td>
   <td class="cwd cwd-col" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></td>
-  <td class="actions">${respawnBtn}<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}">${killLabel}</button></td>
+  <td class="actions">${respawnBtn}${editBtn}${killBtn}</td>
 </tr>`;
     })
     .join('\n');
