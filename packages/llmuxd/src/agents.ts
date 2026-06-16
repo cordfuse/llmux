@@ -15,6 +15,10 @@ export interface AgentDefinition {
   readyPrompt: string;
   /** Custom install detection (overrides the default PATH lookup). */
   detectInstalled?: () => boolean;
+  /** One-line install command (shell). Shown in the agent-help modal. */
+  installHint?: string;
+  /** Homepage / docs URL. Shown alongside installHint as a fallback. */
+  docsUrl?: string;
 }
 
 const which = (cmd: string): boolean => {
@@ -40,23 +44,23 @@ const copilotInstalled = (): boolean => {
 };
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
-  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',             readyPrompt: '^>' },
-  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox', readyPrompt: '^>' },
-  agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',             readyPrompt: '^agy>' },
-  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',                                     readyPrompt: '^>' },
-  qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',                                     readyPrompt: '^>' },
-  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     flags: '--dangerously-skip-permissions',             readyPrompt: '^>' },
-  amp:      { key: 'amp',      displayName: 'Sourcegraph Amp',     cmd: 'amp',          flags: '--dangerously-allow-all',                    readyPrompt: '^>' },
-  grok:     { key: 'grok',     displayName: 'Grok Build CLI',      cmd: 'grok',         flags: '--always-approve',                           readyPrompt: '^grok>' },
-  aider:    { key: 'aider',    displayName: 'Aider',               cmd: 'aider',        flags: '--yes-always --model claude-opus-4-6',       readyPrompt: '^> $' },
-  continue: { key: 'continue', displayName: 'Continue CLI',        cmd: 'cn',           flags: '--auto',                                     readyPrompt: '^>' },
-  kiro:     { key: 'kiro',     displayName: 'Kiro CLI',            cmd: 'kiro-cli',     flags: '--trust-all-tools',                          readyPrompt: '^>' },
-  cursor:   { key: 'cursor',   displayName: 'Cursor CLI',          cmd: 'cursor-agent',                                                      readyPrompt: '^>' },
-  plandex:  { key: 'plandex',  displayName: 'Plandex',             cmd: 'plandex',                                                           readyPrompt: '^>' },
+  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',             readyPrompt: '^>',     installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview' },
+  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox', readyPrompt: '^>',     installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex' },
+  agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',             readyPrompt: '^agy>',  installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install' },
+  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',                                     readyPrompt: '^>',     installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli' },
+  qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',                                     readyPrompt: '^>',     installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code' },
+  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     flags: '--dangerously-skip-permissions',             readyPrompt: '^>',     installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai' },
+  amp:      { key: 'amp',      displayName: 'Sourcegraph Amp',     cmd: 'amp',          flags: '--dangerously-allow-all',                    readyPrompt: '^>',     installHint: 'npm install -g @sourcegraph/amp',                 docsUrl: 'https://ampcode.com/manual' },
+  grok:     { key: 'grok',     displayName: 'Grok Build CLI',      cmd: 'grok',         flags: '--always-approve',                           readyPrompt: '^grok>', installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',   docsUrl: 'https://x.ai/cli' },
+  aider:    { key: 'aider',    displayName: 'Aider',               cmd: 'aider',        flags: '--yes-always --model claude-opus-4-6',       readyPrompt: '^> $',   installHint: 'python -m pip install aider-chat',                docsUrl: 'https://aider.chat' },
+  continue: { key: 'continue', displayName: 'Continue CLI',        cmd: 'cn',           flags: '--auto',                                     readyPrompt: '^>',     installHint: 'npm install -g @continuedev/cli',                 docsUrl: 'https://docs.continue.dev/guides/cli' },
+  kiro:     { key: 'kiro',     displayName: 'Kiro CLI',            cmd: 'kiro-cli',     flags: '--trust-all-tools',                          readyPrompt: '^>',     installHint: 'brew install kiro  # or see docs for Linux/Windows', docsUrl: 'https://kiro.dev/docs/cli/installation/' },
+  cursor:   { key: 'cursor',   displayName: 'Cursor CLI',          cmd: 'cursor-agent',                                                      readyPrompt: '^>',     installHint: 'curl https://cursor.com/install -fsSL | bash',    docsUrl: 'https://cursor.com/docs/cli/installation' },
+  plandex:  { key: 'plandex',  displayName: 'Plandex',             cmd: 'plandex',                                                           readyPrompt: '^>',     installHint: 'curl -fsSL https://plandex.ai/install.sh | bash', docsUrl: 'https://docs.plandex.ai' },
   // goose has no launch flag — auto-approve is controlled via GOOSE_MODE=auto
   // env var or permission.yaml config.
-  goose:    { key: 'goose',    displayName: 'Goose',               cmd: 'goose',                                                             readyPrompt: 'Goose❯' },
-  copilot:  { key: 'copilot',  displayName: 'GitHub Copilot CLI',  cmd: 'gh copilot',                                                        readyPrompt: '●', detectInstalled: copilotInstalled },
+  goose:    { key: 'goose',    displayName: 'Goose',               cmd: 'goose',                                                             readyPrompt: 'Goose❯', installHint: 'curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash', docsUrl: 'https://block.github.io/goose' },
+  copilot:  { key: 'copilot',  displayName: 'GitHub Copilot CLI',  cmd: 'gh copilot',                                                        readyPrompt: '●',      detectInstalled: copilotInstalled, installHint: 'gh copilot suggest "hi"  # gh prerequisite; first run downloads', docsUrl: 'https://docs.github.com/en/copilot/how-tos/use-copilot-in-the-cli' },
 };
 
 export function isAgentInstalled(agent: AgentDefinition): boolean {

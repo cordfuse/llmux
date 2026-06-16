@@ -164,6 +164,27 @@ function pickerPage(): string {
   #confirm-modal button.danger{color:#f85149;border-color:#4a2329}
   #confirm-modal button.danger:hover{background:#2a1c1f}
   #confirm-modal button:disabled{opacity:.5;cursor:wait}
+  .help-btn{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:50%;width:18px;height:18px;font:11px ui-monospace,monospace;cursor:pointer;padding:0;margin-left:4px;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle}
+  .help-btn:hover{background:#252b34}
+  #agents-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
+  #agents-modal.open{display:flex}
+  #agents-modal .panel{background:#11141a;border:1px solid #1f2329;border-radius:10px;padding:18px;max-width:520px;width:100%;max-height:80vh;display:flex;flex-direction:column}
+  #agents-modal h3{margin:0 0 4px;font-size:15px;color:#e6e8eb}
+  #agents-modal .sub{margin:0 0 14px;font-size:11px;color:#7a7f87}
+  #agents-list{flex:1 1 auto;overflow-y:auto;margin-bottom:12px;min-height:0}
+  #agents-list .agent{padding:10px 0;border-bottom:1px solid #1f2329}
+  #agents-list .agent:last-child{border-bottom:none}
+  #agents-list .agent-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  #agents-list .agent-name{font-weight:600;color:#e6e8eb;font-size:13px}
+  #agents-list .agent-status{font-size:10px;padding:2px 6px;border-radius:3px;border:1px solid}
+  #agents-list .agent-status.ok{color:#7ee787;border-color:#235828;background:#0d1f10}
+  #agents-list .agent-status.miss{color:#7a7f87;border-color:#262c34;background:#0e1116}
+  #agents-list .agent-install{font:11px ui-monospace,monospace;color:#c9d1d9;background:#0b0c10;border:1px solid #1f2329;border-radius:4px;padding:6px 8px;margin-top:4px;word-break:break-all}
+  #agents-list .agent-docs{font-size:11px;color:#7cc4ff;text-decoration:none;margin-top:4px;display:inline-block}
+  #agents-list .agent-docs:hover{text-decoration:underline}
+  #agents-modal .actions{display:flex;justify-content:flex-end}
+  #agents-modal button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  #agents-modal button:hover{background:#252b34}
   /* Mobile: hide cwd column, show under name */
   @media (max-width: 600px){
     body{padding:14px 12px 72px}
@@ -194,7 +215,7 @@ function pickerPage(): string {
   <h3 id="new-title" class="form-title">new session</h3>
   <form id="new-session-form">
     <div class="field">
-      <label for="new-agent">agent</label>
+      <label for="new-agent">agent <button type="button" id="agent-help-btn" class="help-btn" title="Show all supported agents">?</button></label>
       <select id="new-agent" required></select>
     </div>
     <div class="field">
@@ -226,6 +247,16 @@ function pickerPage(): string {
     <div class="actions">
       <button type="button" id="confirm-cancel">cancel</button>
       <button type="button" class="danger" id="confirm-ok">kill</button>
+    </div>
+  </div>
+</div>
+<div id="agents-modal" aria-hidden="true">
+  <div class="panel">
+    <h3>Supported agents</h3>
+    <p class="sub">Only installed agents appear in the spawn dropdown. Install the others on the daemon host to enable them.</p>
+    <div id="agents-list">loading…</div>
+    <div class="actions">
+      <button type="button" id="agents-close">close</button>
     </div>
   </div>
 </div>
@@ -333,6 +364,58 @@ function pickerPage(): string {
       btn.textContent = original;
     }
   }
+
+  // ---- Agents help modal ----
+  const agentsModal = document.getElementById('agents-modal');
+  const agentsList = document.getElementById('agents-list');
+  const agentsClose = document.getElementById('agents-close');
+  const agentHelpBtn = document.getElementById('agent-help-btn');
+  let agentsAllLoaded = false;
+
+  async function loadAgentsAll(){
+    if (agentsAllLoaded) return;
+    try {
+      const r = await fetch('/api/agents/all', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const list = await r.json();
+      agentsList.innerHTML = list.map(function(a){
+        const status = a.installed
+          ? '<span class="agent-status ok">installed</span>'
+          : '<span class="agent-status miss">not installed</span>';
+        const install = a.installHint
+          ? '<div class="agent-install">' + escapeHtml(a.installHint) + '</div>'
+          : '';
+        const docs = a.docsUrl
+          ? '<a class="agent-docs" href="' + escapeHtml(a.docsUrl) + '" target="_blank" rel="noopener">docs ↗</a>'
+          : '';
+        return '<div class="agent">' +
+          '<div class="agent-head"><span class="agent-name">' + escapeHtml(a.displayName) + '</span>' + status + '</div>' +
+          install + docs +
+          '</div>';
+      }).join('');
+      agentsAllLoaded = true;
+    } catch(e){
+      agentsList.innerHTML = '<div class="agent">failed to load agents: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+  }
+
+  agentHelpBtn.addEventListener('click', async function(e){
+    e.preventDefault();
+    e.stopPropagation();
+    agentsModal.classList.add('open');
+    agentsModal.setAttribute('aria-hidden', 'false');
+    await loadAgentsAll();
+  });
+  agentsClose.addEventListener('click', function(){
+    agentsModal.classList.remove('open');
+    agentsModal.setAttribute('aria-hidden', 'true');
+  });
+  agentsModal.addEventListener('click', function(e){
+    if (e.target === agentsModal){
+      agentsModal.classList.remove('open');
+      agentsModal.setAttribute('aria-hidden', 'true');
+    }
+  });
 
   // ---- Confirm modal ----
   const confirmModal = document.getElementById('confirm-modal');
@@ -1606,6 +1689,17 @@ export function startServer(opts: ServeOptions): ServerHandle {
         .filter(([, def]) => isAgentInstalled(def))
         .map(([key, def]) => ({ key, displayName: def.displayName, cmd: def.cmd, flags: def.flags ?? '' }));
       return sendJson(res, installed);
+    }
+    if (url.pathname === '/api/agents/all' && method === 'GET') {
+      const all = Object.entries(DEFAULT_AGENTS).map(([key, def]) => ({
+        key,
+        displayName: def.displayName,
+        cmd: def.cmd,
+        installed: isAgentInstalled(def),
+        installHint: def.installHint ?? '',
+        docsUrl: def.docsUrl ?? '',
+      }));
+      return sendJson(res, all);
     }
     if (url.pathname === '/api/sessions' && method === 'POST') {
       try {
