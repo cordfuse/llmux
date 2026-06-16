@@ -175,10 +175,12 @@ respawn.help = makeHelp('respawn', respawn.summary, respawn.usage, respawn.flags
 
 const token: Command = {
   summary: 'Manage SAS tokens (subcommands: create, show, revoke)',
-  usage: 'llmuxd token <create|show|revoke> [--name <label>] [--expiry <iso-date>] [--json]',
+  usage: 'llmuxd token <create|show|revoke> [--name <label>] [--expiry <iso>] [--qr [--qr-endpoint <selector>]] [--json]',
   flags: {
     name: { kind: 'string', description: 'Human label for the token (create only)' },
     expiry: { kind: 'string', description: 'ISO-8601 timestamp for token expiry (create only)' },
+    qr: { kind: 'boolean', description: 'Print a QR encoding <url>/?token=<sas> for instant phone setup (create only). Without --qr-endpoint, prompts interactively.' },
+    'qr-endpoint': { kind: 'string', description: 'Endpoint label for the QR target (e.g. tailscale-https, tailscale-http, local). Non-interactive.' },
     json: { kind: 'boolean', description: 'Emit JSON (show only)' },
   },
   help: () => '',

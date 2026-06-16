@@ -1076,6 +1076,21 @@ export function startServer(opts: ServeOptions): ServerHandle {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const method = req.method ?? 'GET';
 
+    // ---- Deep-link login: ?token=<sas> on any path ----
+    // QR scan lands here. If the query token is valid, set the cookie and 302
+    // to the same path without the token param so the address bar stays clean
+    // and the token isn't kept in browser history.
+    const queryToken = url.searchParams.get('token');
+    if (queryToken && authStore.validateAuthToken(queryToken)) {
+      url.searchParams.delete('token');
+      const cleanPath = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
+      res.writeHead(302, {
+        location: cleanPath,
+        'set-cookie': buildCookie(queryToken),
+      });
+      return res.end();
+    }
+
     // ---- Always-open endpoints (no auth required) ----
     if (url.pathname === '/health') {
       return sendJson(res, {

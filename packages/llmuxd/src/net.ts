@@ -13,13 +13,20 @@ interface TailscaleServeConfig {
   Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>;
 }
 
+interface ServeMatch {
+  hostname: string;
+  hasHttp: boolean;
+  hasHttps: boolean;
+  httpPort?: string;
+  httpsPort?: string;
+}
+
 /**
- * Inspect `tailscale serve status --json` for any Web proxies pointing at our
- * local port. Returns one ReachableAddress per matching proxy (could be HTTP
- * and HTTPS both, if the operator has opted into both). Returns empty when
- * Tailscale isn't installed, no serve config exists, or none match our port.
+ * Returns the tailnet hostname + which schemes have a `tailscale serve` config
+ * that proxies to our local port. Empty when tailscale isn't installed or no
+ * serve config matches.
  */
-function detectTailscaleServe(port: number): ReachableAddress[] {
+function detectTailscaleServe(port: number): ServeMatch | undefined {
   try {
     const raw = execSync('tailscale serve status --json', {
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -27,51 +34,80 @@ function detectTailscaleServe(port: number): ReachableAddress[] {
     })
       .toString()
       .trim();
-    if (!raw) return [];
+    if (!raw) return undefined;
     const config: TailscaleServeConfig = JSON.parse(raw);
     const targets = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
-    const out: ReachableAddress[] = [];
+    let hostname: string | undefined;
+    let hasHttp = false;
+    let hasHttps = false;
+    let httpPort: string | undefined;
+    let httpsPort: string | undefined;
     for (const [hostPort, web] of Object.entries(config.Web ?? {})) {
       for (const handler of Object.values(web.Handlers ?? {})) {
         if (!handler.Proxy || !targets.includes(handler.Proxy)) continue;
         const [host, p] = hostPort.split(':');
         if (!host || !p) continue;
+        hostname = host;
         const tcp = (config.TCP ?? {})[p];
-        const isHttps = Boolean(tcp?.HTTPS);
-        const proto = isHttps ? 'https' : 'http';
-        const defaultPort = isHttps ? '443' : '80';
-        const portSuffix = p === defaultPort ? '' : `:${p}`;
-        out.push({
-          label: isHttps ? 'Tailscale HTTPS' : 'Tailscale HTTP',
-          url: `${proto}://${host}${portSuffix}`,
-        });
+        if (tcp?.HTTPS) {
+          hasHttps = true;
+          httpsPort = p;
+        } else if (tcp?.HTTP) {
+          hasHttp = true;
+          httpPort = p;
+        }
       }
     }
-    return out;
+    if (!hostname) return undefined;
+    return { hostname, hasHttp, hasHttps, ...(httpPort ? { httpPort } : {}), ...(httpsPort ? { httpsPort } : {}) };
   } catch {
-    return [];
+    return undefined;
   }
+}
+
+function findTailscaleIp(): string | undefined {
+  for (const ifaces of Object.values(networkInterfaces())) {
+    for (const iface of ifaces ?? []) {
+      if (iface.family !== 'IPv4' || iface.internal) continue;
+      if (TAILSCALE_CGNAT.test(iface.address)) return iface.address;
+    }
+  }
+  return undefined;
 }
 
 /** Build the address list shown on `llmuxd serve` startup. */
 export function getAddresses(port: number): ReachableAddress[] {
   const out: ReachableAddress[] = [];
-  const tailscaleServe = detectTailscaleServe(port);
-  // HTTPS-first ordering: the friendliest URL for browsers comes first.
-  for (const a of tailscaleServe.sort((a, b) => (a.label === 'Tailscale HTTPS' ? -1 : 1))) {
-    out.push(a);
+  const serve = detectTailscaleServe(port);
+  const tailscaleIp = findTailscaleIp();
+
+  // Tailscale HTTPS — only exists if `tailscale serve --https` is configured.
+  if (serve?.hasHttps) {
+    const portSuffix = serve.httpsPort && serve.httpsPort !== '443' ? `:${serve.httpsPort}` : '';
+    out.push({ label: 'Tailscale HTTPS', url: `https://${serve.hostname}${portSuffix}` });
   }
+
+  // Tailscale HTTP — one entry whenever tailscale is up. Prefer the friendlier
+  // hostname-via-serve form when `tailscale serve --http` is configured; fall
+  // back to the direct IP+port form. Same conceptual slot either way.
+  if (serve?.hasHttp) {
+    const portSuffix = serve.httpPort && serve.httpPort !== '80' ? `:${serve.httpPort}` : '';
+    out.push({ label: 'Tailscale HTTP', url: `http://${serve.hostname}${portSuffix}` });
+  } else if (tailscaleIp) {
+    out.push({ label: 'Tailscale HTTP', url: `http://${tailscaleIp}:${port}` });
+  }
+
+  // Local
   out.push({ label: 'Local', url: `http://localhost:${port}` });
-  const nets = networkInterfaces();
-  for (const ifaces of Object.values(nets)) {
+
+  // LAN — every non-internal, non-tailnet IPv4 interface
+  for (const ifaces of Object.values(networkInterfaces())) {
     for (const iface of ifaces ?? []) {
       if (iface.family !== 'IPv4' || iface.internal) continue;
-      const isTailscale = TAILSCALE_CGNAT.test(iface.address);
-      out.push({
-        label: isTailscale ? 'Tailscale' : 'LAN',
-        url: `http://${iface.address}:${port}`,
-      });
+      if (TAILSCALE_CGNAT.test(iface.address)) continue;
+      out.push({ label: 'LAN', url: `http://${iface.address}:${port}` });
     }
   }
+
   return out;
 }

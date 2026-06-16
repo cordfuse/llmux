@@ -1,10 +1,13 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { createInterface } from 'node:readline';
+import qrcodeTerminal from 'qrcode-terminal';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from './agents.ts';
 import * as state from './state.ts';
 import * as tmux from './tmux.ts';
 import * as authStore from './auth-store.ts';
 import { startServer, printBanner } from './web/server.ts';
+import { getAddresses } from './net.ts';
 import type { ParsedArgs } from './cli.ts';
 
 // ---------- helpers ----------
@@ -211,12 +214,84 @@ export async function handleServe(args: ParsedArgs): Promise<void> {
   await new Promise<void>(() => {});
 }
 
-export function handleTokenCreate(args: ParsedArgs): void {
+function endpointPort(): number {
+  // Default daemon port — matches the `serve` command default in commands.ts.
+  // QR builders run from a separate `token create` invocation that doesn't
+  // know which port the daemon is bound to, so we resolve from the running
+  // daemon if reachable, else fall back to 3030 (the documented default).
+  return Number(process.env.LLMUX_PORT) || 3030;
+}
+
+function selectorOf(label: string): string {
+  return label.toLowerCase().replace(/\s+/g, '-');
+}
+
+function resolveQrEndpoint(selector: string, port: number): { label: string; url: string } {
+  const addrs = getAddresses(port);
+  const wanted = selector.toLowerCase().trim();
+  const matches = addrs.filter((a) => selectorOf(a.label) === wanted);
+  if (matches.length === 0) {
+    const available = Array.from(new Set(addrs.map((a) => selectorOf(a.label)))).join(', ');
+    throw new Error(`unknown --qr-endpoint "${selector}". Available: ${available}`);
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `--qr-endpoint "${selector}" is ambiguous (${matches.length} matches). Use \`llmuxd token create --qr\` without an endpoint to pick interactively.`,
+    );
+  }
+  return matches[0]!;
+}
+
+async function pickEndpointInteractively(port: number): Promise<{ label: string; url: string }> {
+  const addrs = getAddresses(port);
+  if (addrs.length === 0) throw new Error('no reachable endpoints found');
+  console.log('');
+  console.log('Pick an endpoint for the QR code:');
+  for (let i = 0; i < addrs.length; i++) {
+    console.log(`  ${i + 1}) ${addrs[i]!.label.padEnd(18)} ${addrs[i]!.url}`);
+  }
+  if (!process.stdin.isTTY) {
+    throw new Error('--qr without --qr-endpoint requires an interactive terminal');
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolve) => rl.question('  > ', (a) => resolve(a)));
+  rl.close();
+  const idx = Number(answer.trim()) - 1;
+  if (!Number.isInteger(idx) || idx < 0 || idx >= addrs.length) {
+    throw new Error(`invalid selection "${answer}"`);
+  }
+  return addrs[idx]!;
+}
+
+function printQr(url: string, token: string, label: string): void {
+  const deepLink = `${url.replace(/\/$/, '')}/?token=${encodeURIComponent(token)}`;
+  console.log('');
+  console.log(`QR for ${label}:`);
+  console.log('');
+  qrcodeTerminal.generate(deepLink, { small: true });
+  console.log(`  ${deepLink}`);
+}
+
+export async function handleTokenCreate(args: ParsedArgs): Promise<void> {
   const name = args.flags.name as string | undefined;
   const expiry = args.flags.expiry as string | undefined;
+  const qrFlag = Boolean(args.flags.qr);
+  const qrEndpoint = args.flags['qr-endpoint'] as string | undefined;
   if (expiry && isNaN(new Date(expiry).getTime())) {
     throw new Error(`--expiry must be an ISO-8601 timestamp (got "${expiry}")`);
   }
+  const wantsQr = qrFlag || qrEndpoint !== undefined;
+
+  // Resolve the QR endpoint BEFORE creating the token so a bad selector
+  // doesn't leave an orphan token in auth.json.
+  let endpoint: { label: string; url: string } | undefined;
+  if (wantsQr) {
+    const port = endpointPort();
+    endpoint = qrEndpoint
+      ? resolveQrEndpoint(qrEndpoint, port)
+      : await pickEndpointInteractively(port);
+  }
+
   const wasEnabled = authStore.authEnabled();
   const rec = authStore.createAuthToken({
     ...(name !== undefined ? { name } : {}),
@@ -231,6 +306,9 @@ export function handleTokenCreate(args: ParsedArgs): void {
   if (!wasEnabled) {
     console.log('');
     console.log('Auth is now enabled. All non-localhost requests require this (or another) token.');
+  }
+  if (endpoint) {
+    printQr(endpoint.url, rec.token, endpoint.label);
   }
 }
 
