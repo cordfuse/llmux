@@ -93,7 +93,7 @@ function pickerPage(): string {
   const sessions = listSessionViews();
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>llmuxd — sessions</title>
+<title>LLMUX: Sessions</title>
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <style>
@@ -102,6 +102,7 @@ function pickerPage(): string {
   body{padding:18px 16px 80px;max-width:980px;margin:0 auto}
   header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   h1{font-size:18px;margin:0}
+  h1 .brand{color:#7cc4ff;letter-spacing:.08em;font-weight:600}
   #meta{color:#7a7f87;font-size:11px;display:flex;gap:10px;align-items:center}
   #refresh-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ee787;transition:background .25s;box-shadow:0 0 6px #7ee78766}
   #refresh-dot.stale{background:#9aa0a6;box-shadow:none}
@@ -180,7 +181,7 @@ function pickerPage(): string {
 </style></head>
 <body>
 <header>
-  <h1>llmuxd — sessions</h1>
+  <h1><span class="brand">LLMUX</span>: Sessions</h1>
   <div id="meta">
     <button id="new-btn" type="button">+ new session</button>
     <span id="refresh-dot" title="updates every 3s"></span>
