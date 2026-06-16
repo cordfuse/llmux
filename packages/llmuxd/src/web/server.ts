@@ -343,31 +343,31 @@ function sessionPage(name: string): string {
 <title>${escapedName} — llmuxd</title>
 <link rel="stylesheet" href="${XTERM_CSS}">
 <style>
-  :root{--bar-h:84px;--allkeys-h:0px;color-scheme:dark}
+  :root{--topbar-h:38px;--bar-h:74px;--allkeys-h:0px;color-scheme:dark}
   html,body{margin:0;background:#0b0c10;color:#eee;font-family:ui-monospace,monospace;overscroll-behavior:none}
   html{height:100dvh}
   body{height:100dvh;min-height:100dvh}
-  #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:8px 0;z-index:20;box-sizing:border-box}
-  #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:0 0 auto;height:32px}
-  #bar .row.arrows{justify-content:center}
-  #bar #back{flex:0 0 auto}
-  #title-block{flex:0 1 auto;display:inline-flex;align-items:center;gap:6px;padding:0 4px;color:#c9d1d9;font-size:11px;min-width:0}
+  #topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:#11141a;border-bottom:1px solid #1f2329;display:flex;align-items:center;gap:8px;padding:0 10px;z-index:21;box-sizing:border-box}
+  #topbar #back{flex:0 0 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;height:26px;width:36px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-family:system-ui,sans-serif;font-size:16px;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
+  #topbar #back:active{background:#252b34;border-color:#3a414b}
+  #title-block{flex:1 1 auto;display:flex;align-items:center;gap:8px;color:#c9d1d9;font-size:12px;min-width:0}
   #title-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s,box-shadow .2s;cursor:pointer}
   #title-dot[data-state="live"]{background:#7ee787;box-shadow:0 0 6px #7ee78766}
   #title-dot[data-state="error"],#title-dot[data-state="closed"],#title-dot[data-state="reconnecting"]{background:#f85149}
   #title-dot[data-state="reconnecting"]{animation:pulse 1s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-  #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
-  #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;margin-left:2px}
-  #keys-row{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:6px;justify-content:flex-start}
+  #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;margin-left:auto;padding-left:8px}
+  #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:8px 0;z-index:20;box-sizing:border-box}
+  #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:0 0 auto;height:32px}
+  #bar .row.arrows{justify-content:center}
+  #bar .row.keys{justify-content:flex-start}
   #bar #more{flex:0 0 auto;margin-left:auto}
   #bar button{flex:0 0 auto;min-width:40px;height:30px;padding:0 10px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:13px ui-monospace,monospace;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none;transition:background .15s,border-color .15s}
   #bar button:active{background:#252b34;border-color:#3a414b}
   #bar button[aria-pressed="true"]{background:#1e3a52;border-color:#2d5a85;color:#7cc4ff}
   #bar button[aria-pressed="locked"]{background:#2d5a85;border-color:#4a7fae;color:#fff}
   #bar button.fail{background:#4a2329;border-color:#f85149;color:#f85149}
-  #bar #back{font-size:18px;line-height:1;font-family:system-ui,sans-serif}
-  #bar .sep{flex:0 0 auto;width:1px;height:20px;background:#262c34;margin:0 2px}
   #all-keys{position:fixed;bottom:var(--bar-h);left:0;right:0;background:#0e1116;border-top:1px solid #1f2329;display:none;padding:8px;z-index:19;max-height:40vh;overflow-y:auto;box-sizing:border-box}
   #all-keys.open{display:block}
   #all-keys h4{margin:14px 4px 6px;font:500 10px/1 ui-monospace,monospace;color:#7a7f87;text-transform:uppercase;letter-spacing:.06em}
@@ -375,7 +375,7 @@ function sessionPage(name: string): string {
   #all-keys .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
   #all-keys button{flex:0 0 auto;min-width:36px;height:30px;padding:0 8px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:12px ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
   #all-keys button:active{background:#252b34;border-color:#3a414b}
-  #term{position:fixed;top:0;left:0;right:0;bottom:var(--bar-h)}
+  #term{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:var(--bar-h)}
   body.allkeys-open #term{bottom:calc(var(--bar-h) + var(--allkeys-h))}
   #overlay{position:fixed;inset:0;background:rgba(11,12,16,.92);display:none;align-items:center;justify-content:center;z-index:30;padding:20px}
   #overlay.show{display:flex}
@@ -386,16 +386,24 @@ function sessionPage(name: string): string {
   #overlay button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:12px ui-monospace,monospace;cursor:pointer}
   #overlay button.primary{color:#7cc4ff;border-color:#2d4a66}
   @media (orientation: landscape) and (max-height: 500px){
-    :root{--bar-h:62px}
+    :root{--topbar-h:28px;--bar-h:54px}
+    #topbar{padding:0 6px;gap:6px}
+    #topbar #back{height:20px;width:30px;font-size:13px}
+    #title-block{font-size:11px}
+    #title-version{font-size:9px}
     #bar button{height:22px;min-width:36px;padding:0 8px;font-size:11px}
     #bar{padding:4px 0;gap:4px}
     #bar .row{gap:4px;height:24px}
     #all-keys{max-height:60vh}
     #all-keys button{height:24px;min-width:30px;padding:0 7px;font-size:11px}
-    #title-name{max-width:80px}
   }
 </style></head>
 <body>
+<div id="topbar">
+  <button id="back" title="Back to sessions">⌂</button>
+  <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span></span>
+  <span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span>
+</div>
 <div id="bar">
   <div class="row arrows">
     <button data-mod="shift" title="Shift (next char uppercase; double-tap to lock)">Shift</button>
@@ -406,15 +414,11 @@ function sessionPage(name: string): string {
     <button data-key="right" title="Right">▶</button>
     <button data-key="end"   title="End">End</button>
   </div>
-  <div class="row">
-    <button id="back" title="Back to sessions">⌂</button>
-    <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span><span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span></span>
-    <div id="keys-row">
-      <button data-key="esc" title="Escape">Esc</button>
-      <button data-key="tab" title="Tab">Tab</button>
-      <button data-mod="ctrl"  title="Ctrl (tap then key, double-tap to lock)">Ctrl</button>
-      <button data-mod="alt"   title="Alt (tap then key, double-tap to lock)">Alt</button>
-    </div>
+  <div class="row keys">
+    <button data-key="esc" title="Escape">Esc</button>
+    <button data-key="tab" title="Tab">Tab</button>
+    <button data-mod="ctrl"  title="Ctrl (tap then key, double-tap to lock)">Ctrl</button>
+    <button data-mod="alt"   title="Alt (tap then key, double-tap to lock)">Alt</button>
     <button id="more" title="All keys">⋯</button>
   </div>
 </div>
@@ -694,11 +698,12 @@ function sessionPage(name: string): string {
     document.documentElement.style.setProperty('--allkeys-h', allKeysH + 'px');
     const cs = getComputedStyle(document.documentElement);
     const barH = parseInt(cs.getPropertyValue('--bar-h'),10) || 42;
+    const topbarH = parseInt(cs.getPropertyValue('--topbar-h'),10) || 0;
     const vv = window.visualViewport;
     const visibleH = vv ? vv.height : window.innerHeight;
-    termEl.style.top = '0';
+    termEl.style.top = topbarH + 'px';
     termEl.style.bottom = (barH + allKeysH) + 'px';
-    termEl.style.height = Math.max(60, visibleH - barH - allKeysH) + 'px';
+    termEl.style.height = Math.max(60, visibleH - topbarH - barH - allKeysH) + 'px';
   }
   function scheduleResize(){
     clearTimeout(resizeTimer);
@@ -713,7 +718,7 @@ function sessionPage(name: string): string {
   try { fit.fit(); } catch(e){}
 
   // ---- Wire toolbar ----
-  document.querySelectorAll('#bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
+  document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
 
   document.getElementById('back').addEventListener('click', function(e){ e.preventDefault(); location.href = '/'; });
 
