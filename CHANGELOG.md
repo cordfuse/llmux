@@ -5,6 +5,17 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.14] — 2026-06-16
+
+### Changed
+
+- **Shift button moved from row 2 to row 1**, leftmost position. The
+  chords Shift most often participates in on mobile are cursor-range
+  selection (Shift+Home/End/arrow). Putting it next to those keys
+  shortens the chord-tap travel. Row 1 reads
+  `Shift Home ▲ ▼ ◀ ▶ End`; row 2 reads
+  `⌂ ● Esc Tab Ctrl Alt ⋯`.
+
 ## [0.2.13] — 2026-06-16
 
 ### Fixed
