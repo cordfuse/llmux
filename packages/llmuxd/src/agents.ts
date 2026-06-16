@@ -54,11 +54,12 @@ export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   // OpenCode's --dangerously-skip-permissions only applies to `opencode run`
   // (one-shot). The TUI default mode rejects it and exits — danger mode in
   // the TUI is controlled via OPENCODE_YOLO=1 instead.
-  // Default model is qwen2.5-coder:14b on the local Ollama provider — strong
-  // agentic tooling at ~9GB VRAM. Operator can switch the model via the
-  // spawn-form flags field (e.g. `-m ollama/gpt-oss:20b`) without touching
-  // their global ~/.config/opencode/opencode.json.
-  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     flags: '-m ollama/qwen2.5-coder:14b',                 readyPrompt: '^>',     installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai',          envDefaults: { OPENCODE_YOLO: '1' } },
+  // No model flag set — OpenCode honors the operator's own config at
+  // ~/.config/opencode/opencode.json (provider + default model). Operator
+  // overrides per-spawn via the flags field if they want a specific model
+  // (e.g. `-m openrouter/anthropic/claude-sonnet-4.6` or
+  // `-m ollama/qwen2.5-coder:14b`).
+  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',                                                          readyPrompt: '^>',     installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai',          envDefaults: { OPENCODE_YOLO: '1' } },
   amp:      { key: 'amp',      displayName: 'Sourcegraph Amp',     cmd: 'amp',          flags: '--dangerously-allow-all',                    readyPrompt: '^>',     installHint: 'npm install -g @sourcegraph/amp',                 docsUrl: 'https://ampcode.com/manual' },
   grok:     { key: 'grok',     displayName: 'Grok Build CLI',      cmd: 'grok',         flags: '--always-approve',                           readyPrompt: '^grok>', installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',   docsUrl: 'https://x.ai/cli' },
   aider:    { key: 'aider',    displayName: 'Aider',               cmd: 'aider',        flags: '--yes-always --model claude-opus-4-6',       readyPrompt: '^> $',   installHint: 'python -m pip install aider-chat',                docsUrl: 'https://aider.chat' },
