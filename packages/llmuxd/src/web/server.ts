@@ -127,6 +127,7 @@ function sessionPage(name: string): string {
 <body>
 <div id="bar">
   <div class="row arrows">
+    <button data-mod="shift" title="Shift (next char uppercase; double-tap to lock)">Shift</button>
     <button data-key="home"  title="Home">Home</button>
     <button data-key="up"    title="Up">▲</button>
     <button data-key="down"  title="Down">▼</button>
@@ -142,7 +143,6 @@ function sessionPage(name: string): string {
       <button data-key="tab" title="Tab">Tab</button>
       <button data-mod="ctrl"  title="Ctrl (tap then key, double-tap to lock)">Ctrl</button>
       <button data-mod="alt"   title="Alt (tap then key, double-tap to lock)">Alt</button>
-      <button data-mod="shift" title="Shift (next char uppercase)">Shift</button>
     </div>
     <button id="more" title="All keys">⋯</button>
   </div>
