@@ -210,6 +210,34 @@ export async function handleServe(args: ParsedArgs): Promise<void> {
   await new Promise<void>(() => {});
 }
 
+export function handleRespawn(args: ParsedArgs): void {
+  tmux.requireTmux();
+  const target = args.positional[0];
+  if (!target) throw new Error('respawn requires <session>');
+
+  const session = state.get(target);
+  if (!session) throw new Error(`no tracked session "${target}"`);
+
+  if (tmux.hasSession(target)) {
+    throw new Error(`session "${target}" is still running — kill it first`);
+  }
+
+  const agent = DEFAULT_AGENTS[session.agent];
+  if (!agent) throw new Error(`unknown agent "${session.agent}" — cannot respawn`);
+  if (!isAgentInstalled(agent)) {
+    throw new Error(`agent "${session.agent}" is not installed (looked for: ${agent.cmd})`);
+  }
+
+  tmux.newSession({
+    name: session.name,
+    command: buildCommand(agent),
+    cwd: session.cwd,
+    env: { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent },
+  });
+  state.record({ ...session, createdAt: new Date().toISOString() });
+  console.log(`respawned ${target} (agent: ${session.agent}, cwd: ${session.cwd})`);
+}
+
 export function handleKill(args: ParsedArgs): void {
   tmux.requireTmux();
   const target = args.positional[0];

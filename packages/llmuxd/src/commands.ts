@@ -169,10 +169,7 @@ const respawn: Command = {
   usage: 'llmuxd respawn <session>',
   flags: {},
   help: () => '',
-  run: (args) => {
-    if (args.positional.length < 1) throw new Error('respawn requires <session>');
-    return notImplemented('respawn');
-  },
+  run: (args) => h.handleRespawn(args),
 };
 respawn.help = makeHelp('respawn', respawn.summary, respawn.usage, respawn.flags);
 
