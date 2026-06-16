@@ -152,6 +152,17 @@ function pickerPage(): string {
   #toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:#11141a;border:1px solid #1f2329;color:#e6e8eb;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}
   #toast.show{opacity:1}
   #toast.error{border-color:#4a2329;color:#f85149}
+  #confirm-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
+  #confirm-modal.open{display:flex}
+  #confirm-modal .panel{background:#11141a;border:1px solid #1f2329;border-radius:10px;padding:20px;max-width:360px;width:100%}
+  #confirm-modal h3{margin:0 0 8px;font-size:15px;color:#e6e8eb}
+  #confirm-modal p{margin:0 0 16px;font-size:13px;color:#c9d1d9;line-height:1.5}
+  #confirm-modal p code{color:#7cc4ff;background:#0b0c10;padding:2px 5px;border-radius:3px}
+  #confirm-modal .actions{display:flex;gap:8px;justify-content:flex-end}
+  #confirm-modal button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  #confirm-modal button.danger{color:#f85149;border-color:#4a2329}
+  #confirm-modal button.danger:hover{background:#2a1c1f}
+  #confirm-modal button:disabled{opacity:.5;cursor:wait}
   /* Mobile: hide cwd column, show under name */
   @media (max-width: 600px){
     body{padding:14px 12px 72px}
@@ -207,6 +218,16 @@ function pickerPage(): string {
 </div>
 <div id="list-container">${renderSessionTable(sessions)}</div>
 <div id="toast"></div>
+<div id="confirm-modal" aria-hidden="true">
+  <div class="panel">
+    <h3 id="confirm-title">Kill session?</h3>
+    <p id="confirm-body"></p>
+    <div class="actions">
+      <button type="button" id="confirm-cancel">cancel</button>
+      <button type="button" class="danger" id="confirm-ok">kill</button>
+    </div>
+  </div>
+</div>
 <footer>
   <span>llmuxd v${escapeHtml(DAEMON_VERSION)}</span>
   ${authStore.authEnabled()
@@ -312,7 +333,42 @@ function pickerPage(): string {
     }
   }
 
-  container.addEventListener('click', function(e){
+  // ---- Confirm modal ----
+  const confirmModal = document.getElementById('confirm-modal');
+  const confirmTitle = document.getElementById('confirm-title');
+  const confirmBody = document.getElementById('confirm-body');
+  const confirmCancel = document.getElementById('confirm-cancel');
+  const confirmOk = document.getElementById('confirm-ok');
+  let confirmResolve = null;
+
+  function askConfirm(opts){
+    confirmTitle.textContent = opts.title;
+    confirmBody.innerHTML = opts.body;
+    confirmOk.textContent = opts.okLabel || 'confirm';
+    confirmOk.className = opts.destructive ? 'danger' : '';
+    confirmModal.classList.add('open');
+    confirmModal.setAttribute('aria-hidden', 'false');
+    return new Promise(function(resolve){ confirmResolve = resolve; });
+  }
+  function closeConfirm(answer){
+    confirmModal.classList.remove('open');
+    confirmModal.setAttribute('aria-hidden', 'true');
+    const r = confirmResolve;
+    confirmResolve = null;
+    if (r) r(answer);
+  }
+  confirmCancel.addEventListener('click', function(){ closeConfirm(false); });
+  confirmOk.addEventListener('click', function(){ closeConfirm(true); });
+  // Tapping the dim background = cancel
+  confirmModal.addEventListener('click', function(e){
+    if (e.target === confirmModal) closeConfirm(false);
+  });
+
+  function escapeHtmlSafe(s){
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  container.addEventListener('click', async function(e){
     const btn = e.target.closest('button[data-action]');
     if (!btn) return;
     e.preventDefault();
@@ -321,6 +377,18 @@ function pickerPage(): string {
     if (kind === 'edit'){
       openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd, flags: btn.dataset.flags });
       return;
+    }
+    if (kind === 'kill'){
+      const running = btn.dataset.status === 'running';
+      const ok = await askConfirm({
+        title: running ? 'Kill session?' : 'Remove session record?',
+        body: running
+          ? 'Terminate the tmux session <code>' + escapeHtmlSafe(name) + '</code> and remove its state record. The agent process inside will be killed. This cannot be undone.'
+          : 'Remove the state record for <code>' + escapeHtmlSafe(name) + '</code>. The tmux session is already exited; this just cleans up the row.',
+        okLabel: running ? 'kill' : 'remove',
+        destructive: true,
+      });
+      if (!ok) return;
     }
     action(name, kind, btn);
   });
