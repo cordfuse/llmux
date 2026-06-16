@@ -108,8 +108,8 @@ function pickerPage(): string {
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <style>
   :root{color-scheme:dark}
-  html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px}
-  body{padding:18px 16px 80px;max-width:980px;margin:0 auto}
+  html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px;overflow-x:hidden}
+  body{padding:18px 16px 80px;max-width:980px;margin:0 auto;box-sizing:border-box}
   header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   h1{font-size:18px;margin:0}
   h1 .brand{color:#7cc4ff;letter-spacing:.08em;font-weight:600}
@@ -214,14 +214,15 @@ function pickerPage(): string {
   #convs-modal button.close-btn:hover{background:#252b34}
   /* Mobile: hide cwd column, show under name */
   @media (max-width: 600px){
-    body{padding:14px 12px 72px}
+    body{padding:14px 8px 72px}
     th.cwd-col,td.cwd-col{display:none}
     .name-block .cwd{display:block;margin-top:3px;max-width:100%}
-    th,td{padding:8px 6px;font-size:13px}
-    .name-block{max-width:55vw}
+    th,td{padding:8px 4px;font-size:13px}
+    .name-block{max-width:42vw}
+    td.actions{white-space:nowrap;text-align:right;padding-right:0}
     /* Buttons collapse to icon-only — long-press surfaces title= for label. */
     .actions button .label{display:none}
-    .actions button{padding:6px 8px;min-width:32px;justify-content:center;margin-left:3px}
+    .actions button{padding:5px 6px;min-width:28px;justify-content:center;margin-left:2px}
   }
   @media (min-width: 601px){
     .name-block .cwd{display:none}
