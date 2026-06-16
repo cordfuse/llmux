@@ -132,14 +132,19 @@ function sessionPage(name: string): string {
     <button data-mod="alt"   title="Alt (tap then key, double-tap to lock)">Alt</button>
     <button data-mod="shift" title="Shift (next char uppercase)">⇧</button>
     <span class="sep"></span>
-    <button data-key="up"    title="Up">↑</button>
-    <button data-key="down"  title="Down">↓</button>
     <button data-key="left"  title="Left">←</button>
     <button data-key="right" title="Right">→</button>
   </div>
   <button id="more" title="All keys">⋯</button>
 </div>
 <div id="all-keys" aria-hidden="true">
+  <h4>arrows</h4>
+  <div class="row">
+    <button data-key="up"    title="Up">↑</button>
+    <button data-key="down"  title="Down">↓</button>
+    <button data-key="left"  title="Left">←</button>
+    <button data-key="right" title="Right">→</button>
+  </div>
   <h4>shell</h4>
   <div class="row">
     <button data-char="~" title="tilde">~</button>

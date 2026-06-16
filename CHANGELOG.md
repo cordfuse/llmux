@@ -5,6 +5,19 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.10] — 2026-06-16
+
+### Changed — mobile UX
+
+- **Toolbar arrows reduced to `← →` only.** `↑ ↓` removed from the
+  bottom toolbar. Cursor-in-prompt left/right stays one-tap; history
+  scroll up/down becomes two-tap (open overlay, hit ↑ ↓ in the new
+  ARROWS section). Frequency-tiered: most prompts are horizontal
+  editing, history walks are intermittent.
+- **New `ARROWS` section at the top of the "All keys" overlay** —
+  full `↑ ↓ ← →` group. First section, so vertical nav is
+  discoverable in one tap of `⋯`.
+
 ## [0.2.9] — 2026-06-16
 
 ### Changed — mobile UX, batch
