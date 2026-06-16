@@ -230,7 +230,7 @@ function pickerPage(): string {
       <label for="new-cwd">cwd</label>
       <input id="new-cwd" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="(defaults to \$HOME on the daemon host)">
     </div>
-    <div id="new-cwd-hint" class="hint" hidden>cwd changes take effect on next respawn (running sessions keep their original cwd)</div>
+    <div id="new-cwd-hint" class="hint" hidden>cwd changes apply immediately — if the session is running, it'll be killed and respawned in the new directory</div>
     <div class="field">
       <label for="new-flags">flags</label>
       <input id="new-flags" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
@@ -1664,6 +1664,33 @@ function editSession(
 
   if (renaming) state.forget(oldName);
   state.record(updated);
+
+  // cwd is set at tmux fork time and can't be changed on a live session — the
+  // operator's edit would otherwise be invisible until they manually respawn.
+  // Auto kill+respawn when cwd actually changed and the session is running.
+  const cwdChanged =
+    newCwd !== undefined && newCwd.length > 0 && updated.cwd !== session.cwd;
+  if (cwdChanged && tmux.hasSession(updated.name)) {
+    const agent = DEFAULT_AGENTS[updated.agent];
+    if (agent && isAgentInstalled(agent)) {
+      try {
+        tmux.killSession(updated.name);
+        tmux.newSession({
+          name: updated.name,
+          command: buildAgentCommand(agent, updated.flags),
+          cwd: updated.cwd,
+          env: mergeSpawnEnv(agent, updated.env, { LLMUX_SESSION: updated.name, LLMUX_AGENT: updated.agent }),
+        });
+        // Refresh createdAt so the picker's "started Xm ago" reflects the
+        // actual moment the agent process began running with the new cwd.
+        const refreshed: state.SessionState = { ...updated, createdAt: new Date().toISOString() };
+        state.record(refreshed);
+        return { ok: true, session: viewOf(refreshed, true) };
+      } catch (err) {
+        return { ok: false, error: `cwd updated but restart failed: ${err instanceof Error ? err.message : String(err)}` };
+      }
+    }
+  }
 
   const live = tmux.listSessions().some((s) => s.name === updated.name);
   return { ok: true, session: viewOf(updated, live) };
