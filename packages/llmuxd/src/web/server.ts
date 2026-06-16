@@ -82,12 +82,12 @@ function sessionPage(name: string): string {
 <title>${escapedName} — llmuxd</title>
 <link rel="stylesheet" href="${XTERM_CSS}">
 <style>
-  :root{--bar-h:72px;--allkeys-h:0px}
+  :root{--bar-h:84px;--allkeys-h:0px}
   html,body{margin:0;background:#0b0c10;color:#eee;font-family:ui-monospace,monospace;overscroll-behavior:none}
   html{height:100dvh}
   body{height:100dvh;min-height:100dvh}
-  #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:0;padding:4px 0;z-index:20;box-sizing:border-box}
-  #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:1 1 auto;min-height:0}
+  #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:8px 0;z-index:20;box-sizing:border-box}
+  #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:0 0 auto;height:32px}
   /* Row 1 — arrows (top, further from gboard) */
   #bar .row.arrows{justify-content:center}
   /* Row 2 — chrome + modifiers + ⋯ (bottom, next to gboard) */
@@ -115,10 +115,10 @@ function sessionPage(name: string): string {
   body.allkeys-open #term{bottom:calc(var(--bar-h) + var(--allkeys-h))}
   /* Landscape with limited vertical space — compress bar */
   @media (orientation: landscape) and (max-height: 500px){
-    :root{--bar-h:52px}
+    :root{--bar-h:62px}
     #bar button{height:22px;min-width:36px;padding:0 8px;font-size:11px}
-    #bar{padding:2px 0}
-    #bar .row{gap:4px}
+    #bar{padding:4px 0;gap:4px}
+    #bar .row{gap:4px;height:24px}
     #all-keys{max-height:60vh}
     #all-keys button{height:24px;min-width:30px;padding:0 7px;font-size:11px}
     #title-name{max-width:60px}
@@ -127,17 +127,19 @@ function sessionPage(name: string): string {
 <body>
 <div id="bar">
   <div class="row arrows">
-    <button data-key="up"    title="Up">↑</button>
-    <button data-key="down"  title="Down">↓</button>
-    <button data-key="left"  title="Left">←</button>
-    <button data-key="right" title="Right">→</button>
+    <button data-key="home"  title="Home">Home</button>
+    <button data-key="up"    title="Up">▲</button>
+    <button data-key="down"  title="Down">▼</button>
+    <button data-key="left"  title="Left">◀</button>
+    <button data-key="right" title="Right">▶</button>
+    <button data-key="end"   title="End">End</button>
   </div>
   <div class="row">
     <button id="back" title="Back to sessions">⌂</button>
     <span id="title-block"><span id="title-dot" data-state="connecting" title="${escapedName} — connecting…"></span></span>
     <div id="keys-row">
       <button data-key="esc" title="Escape">Esc</button>
-      <button data-key="tab" title="Tab">⇥</button>
+      <button data-key="tab" title="Tab">Tab</button>
       <button data-mod="ctrl"  title="Ctrl (tap then key, double-tap to lock)">Ctrl</button>
       <button data-mod="alt"   title="Alt (tap then key, double-tap to lock)">Alt</button>
       <button data-mod="shift" title="Shift (next char uppercase)">⇧</button>
