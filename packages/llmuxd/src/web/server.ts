@@ -5,8 +5,9 @@ import { dirname, resolve } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
+import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from '../agents.ts';
 import * as state from '../state.ts';
-import { listSessions } from '../tmux.ts';
+import * as tmux from '../tmux.ts';
 import { getAddresses } from '../net.ts';
 
 function readDaemonVersion(): string {
@@ -28,6 +29,8 @@ function readDaemonVersion(): string {
   return 'unknown';
 }
 
+const DAEMON_VERSION = readDaemonVersion();
+
 export interface ServeOptions {
   port: number;
   host: string;
@@ -41,67 +44,328 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function pickerPage(): string {
+interface SessionView {
+  name: string;
+  agent: string;
+  cwd: string;
+  createdAt: string;
+  parent: string | null;
+  status: 'running' | 'exited';
+}
+
+function listSessionViews(): SessionView[] {
   const tracked = state.list();
-  const live = new Set(listSessions().map((s) => s.name));
-  const rows = tracked
-    .map((s) => {
-      const status = live.has(s.name) ? 'running' : 'exited';
-      const link = `<a href="/session/${encodeURIComponent(s.name)}">${escapeHtml(s.name)}</a>`;
-      const cls = status === 'running' ? 'ok' : 'dim';
-      return `<tr class="${cls}"><td>${link}</td><td>${escapeHtml(s.agent)}</td><td>${status}</td><td><code>${escapeHtml(s.cwd)}</code></td></tr>`;
-    })
-    .join('\n');
-  const body = tracked.length
-    ? `<table><thead><tr><th>name</th><th>agent</th><th>state</th><th>cwd</th></tr></thead><tbody>${rows}</tbody></table>`
-    : `<p class="dim">no sessions — run <code>llmuxd spawn &lt;agent&gt; --name &lt;name&gt;</code> first.</p>`;
+  const live = new Set(tmux.listSessions().map((s) => s.name));
+  return tracked.map((s) => ({
+    name: s.name,
+    agent: s.agent,
+    cwd: s.cwd,
+    createdAt: s.createdAt,
+    parent: s.parent,
+    status: live.has(s.name) ? 'running' : 'exited',
+  }));
+}
+
+// ---------- pages ----------
+
+function pickerPage(): string {
+  const sessions = listSessionViews();
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>llmuxd — sessions</title>
 <style>
+  :root{color-scheme:dark}
   html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px}
-  body{padding:24px;max-width:980px;margin:0 auto}
-  h1{font-size:18px;margin:0 0 18px}
+  body{padding:18px 16px 80px;max-width:980px;margin:0 auto}
+  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  h1{font-size:18px;margin:0}
+  #meta{color:#7a7f87;font-size:11px;display:flex;gap:10px;align-items:center}
+  #refresh-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ee787;transition:background .25s;box-shadow:0 0 6px #7ee78766}
+  #refresh-dot.stale{background:#9aa0a6;box-shadow:none}
+  #refresh-dot.error{background:#f85149;box-shadow:0 0 6px #f8514966}
   table{border-collapse:collapse;width:100%}
-  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #1f2329}
-  th{font-weight:500;color:#9aa0a6;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-  a{color:#7cc4ff;text-decoration:none}
-  a:hover{text-decoration:underline}
-  .dim{color:#7a7f87}
-  .ok td:nth-child(3){color:#7ee787}
-  code{color:#c9d1d9}
+  thead{display:table-header-group}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid #1f2329;vertical-align:middle}
+  th{font-weight:500;color:#9aa0a6;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  a.session-link{color:#7cc4ff;text-decoration:none}
+  a.session-link:hover{text-decoration:underline}
+  .name{font-weight:600}
+  .state-running{color:#7ee787}
+  .state-exited{color:#7a7f87}
+  .cwd{color:#c9d1d9;font-size:12px;word-break:break-all}
+  .actions{text-align:right;white-space:nowrap}
+  .actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 9px;font:12px ui-monospace,monospace;cursor:pointer;margin-left:4px}
+  .actions button:hover{background:#252b34;border-color:#3a414b}
+  .actions button.respawn{color:#7cc4ff;border-color:#2d4a66}
+  .actions button.kill{color:#f85149;border-color:#4a2329}
+  .actions button:disabled{opacity:.5;cursor:wait}
+  .empty{color:#7a7f87;padding:18px;text-align:center;border:1px dashed #1f2329;border-radius:8px}
+  .empty code{color:#c9d1d9;background:#11141a;padding:2px 6px;border-radius:4px}
+  footer{position:fixed;bottom:0;left:0;right:0;background:#0b0c10;border-top:1px solid #1f2329;padding:10px 16px;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;gap:10px}
+  footer .warn{color:#d29922}
+  #toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:#11141a;border:1px solid #1f2329;color:#e6e8eb;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}
+  #toast.show{opacity:1}
+  #toast.error{border-color:#4a2329;color:#f85149}
+  /* Mobile: hide cwd column, show under name */
+  @media (max-width: 600px){
+    body{padding:14px 12px 72px}
+    th.cwd-col,td.cwd-col{display:none}
+    .name-block .cwd{display:block;margin-top:3px}
+    th,td{padding:8px 6px;font-size:13px}
+  }
+  @media (min-width: 601px){
+    .name-block .cwd{display:none}
+  }
 </style></head>
-<body><h1>llmuxd — sessions</h1>${body}</body></html>`;
+<body>
+<header>
+  <h1>llmuxd — sessions</h1>
+  <div id="meta">
+    <span id="refresh-dot" title="updates every 3s"></span>
+    <span id="refresh-label">live</span>
+    <span>·</span>
+    <span>v${escapeHtml(DAEMON_VERSION)}</span>
+  </div>
+</header>
+<div id="list-container">${renderSessionTable(sessions)}</div>
+<div id="toast"></div>
+<footer>
+  <span>llmuxd v${escapeHtml(DAEMON_VERSION)}</span>
+  <span class="warn">⚠ no auth — anyone on the network can attach</span>
+</footer>
+<script>
+(function(){
+  const container = document.getElementById('list-container');
+  const dot = document.getElementById('refresh-dot');
+  const label = document.getElementById('refresh-label');
+  const toast = document.getElementById('toast');
+  let pollTimer = null;
+  let lastFetch = 0;
+
+  function showToast(msg, isError){
+    toast.textContent = msg;
+    toast.classList.toggle('error', !!isError);
+    toast.classList.add('show');
+    setTimeout(function(){ toast.classList.remove('show'); }, 2200);
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function rowHtml(s){
+    const cls = 'state-' + s.status;
+    const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
+    const respawnBtn = s.status === 'exited' ? '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '">↻ respawn</button>' : '';
+    return '<tr data-name="' + escapeHtml(s.name) + '">' +
+      '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span><span class="cwd"><code>' + escapeHtml(s.cwd) + '</code></span></td>' +
+      '<td>' + escapeHtml(s.agent) + '</td>' +
+      '<td class="' + cls + '">' + s.status + '</td>' +
+      '<td class="cwd cwd-col"><code>' + escapeHtml(s.cwd) + '</code></td>' +
+      '<td class="actions">' + respawnBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '">' + (s.status === 'running' ? '× kill' : '× remove') + '</button></td>' +
+      '</tr>';
+  }
+
+  function render(sessions){
+    if (!sessions || sessions.length === 0){
+      container.innerHTML = '<div class="empty">no sessions yet — spawn one from the CLI:<br><br><code>llmuxd spawn claude --name <em>name</em></code></div>';
+      return;
+    }
+    const rows = sessions.map(rowHtml).join('');
+    container.innerHTML = '<table><thead><tr><th>name</th><th>agent</th><th>state</th><th class="cwd-col">cwd</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  async function poll(){
+    if (document.hidden) return;
+    try {
+      const r = await fetch('/api/sessions', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const data = await r.json();
+      render(data);
+      dot.classList.remove('stale','error');
+      label.textContent = 'live';
+      lastFetch = Date.now();
+    } catch(e){
+      dot.classList.add('error');
+      dot.classList.remove('stale');
+      label.textContent = 'offline';
+    }
+  }
+
+  function staleCheck(){
+    if (lastFetch && Date.now() - lastFetch > 8000 && !dot.classList.contains('error')){
+      dot.classList.add('stale');
+      label.textContent = 'stale';
+    }
+  }
+
+  async function action(name, kind, btn){
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = kind === 'respawn' ? '…' : '…';
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(name) + '/' + kind, { method: 'POST' });
+      const body = await r.json().catch(function(){ return {}; });
+      if (!r.ok || body.ok === false) throw new Error(body.error || 'request failed');
+      showToast(kind === 'respawn' ? 'respawned ' + name : (body.status === 'running' ? 'killed ' + name : 'removed ' + name));
+      poll();
+    } catch(e){
+      showToast(kind + ' failed: ' + (e.message || e), true);
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
+  container.addEventListener('click', function(e){
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    e.preventDefault();
+    const name = btn.dataset.name;
+    const kind = btn.dataset.action;
+    action(name, kind, btn);
+  });
+
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden) poll();
+  });
+
+  poll();
+  pollTimer = setInterval(poll, 3000);
+  setInterval(staleCheck, 1000);
+})();
+</script>
+</body></html>`;
+}
+
+function renderSessionTable(sessions: SessionView[]): string {
+  if (sessions.length === 0) {
+    return `<div class="empty">no sessions yet — spawn one from the CLI:<br><br><code>llmuxd spawn claude --name <em>name</em></code></div>`;
+  }
+  const rows = sessions
+    .map((s) => {
+      const cls = `state-${s.status}`;
+      const linkOpen = `<a class="session-link" href="/session/${encodeURIComponent(s.name)}">`;
+      const respawnBtn =
+        s.status === 'exited'
+          ? `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}">↻ respawn</button>`
+          : '';
+      const killLabel = s.status === 'running' ? '× kill' : '× remove';
+      return `<tr data-name="${escapeHtml(s.name)}">
+  <td class="name-block"><span class="name">${linkOpen}${escapeHtml(s.name)}</a></span><span class="cwd"><code>${escapeHtml(s.cwd)}</code></span></td>
+  <td>${escapeHtml(s.agent)}</td>
+  <td class="${cls}">${s.status}</td>
+  <td class="cwd cwd-col"><code>${escapeHtml(s.cwd)}</code></td>
+  <td class="actions">${respawnBtn}<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}">${killLabel}</button></td>
+</tr>`;
+    })
+    .join('\n');
+  return `<table><thead><tr><th>name</th><th>agent</th><th>state</th><th class="cwd-col">cwd</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function deadSessionPage(s: SessionView): string {
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(s.name)} — exited</title>
+<style>
+  :root{color-scheme:dark}
+  html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px}
+  body{padding:24px;max-width:560px;margin:0 auto}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:#7a7f87;font-size:12px;margin-bottom:18px}
+  .card{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:18px}
+  dl{margin:0;display:grid;grid-template-columns:80px 1fr;gap:6px 12px;font-size:13px}
+  dt{color:#7a7f87}
+  dd{margin:0;color:#c9d1d9;word-break:break-all}
+  .row{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  button{flex:1 1 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:10px 14px;font:13px ui-monospace,monospace;cursor:pointer;min-width:120px}
+  button:hover{background:#252b34}
+  button.primary{color:#7cc4ff;border-color:#2d4a66}
+  button.danger{color:#f85149;border-color:#4a2329}
+  button.ghost{color:#9aa0a6}
+  button:disabled{opacity:.5;cursor:wait}
+  #status{margin-top:14px;font-size:12px;color:#9aa0a6;min-height:18px}
+  #status.error{color:#f85149}
+</style></head>
+<body>
+<h1>${escapeHtml(s.name)}</h1>
+<div class="sub">session is not running</div>
+<div class="card">
+  <dl>
+    <dt>agent</dt><dd>${escapeHtml(s.agent)}</dd>
+    <dt>cwd</dt><dd>${escapeHtml(s.cwd)}</dd>
+    <dt>created</dt><dd>${escapeHtml(s.createdAt)}</dd>
+    ${s.parent ? `<dt>parent</dt><dd>${escapeHtml(s.parent)}</dd>` : ''}
+  </dl>
+  <div class="row">
+    <button class="primary" id="btn-respawn">↻ respawn</button>
+    <button class="danger" id="btn-remove">× remove</button>
+    <button class="ghost" id="btn-back">← sessions</button>
+  </div>
+  <div id="status"></div>
+</div>
+<script>
+(function(){
+  const name = ${JSON.stringify(s.name)};
+  const status = document.getElementById('status');
+  function setStatus(msg, isError){
+    status.textContent = msg;
+    status.classList.toggle('error', !!isError);
+  }
+  async function call(kind){
+    const btns = document.querySelectorAll('button');
+    btns.forEach(function(b){ b.disabled = true; });
+    setStatus(kind === 'respawn' ? 'respawning…' : 'removing…');
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(name) + '/' + kind, { method: 'POST' });
+      const body = await r.json().catch(function(){ return {}; });
+      if (!r.ok || body.ok === false) throw new Error(body.error || 'request failed');
+      if (kind === 'respawn') location.href = '/session/' + encodeURIComponent(name);
+      else location.href = '/';
+    } catch(e){
+      setStatus(kind + ' failed: ' + (e.message || e), true);
+      btns.forEach(function(b){ b.disabled = false; });
+    }
+  }
+  document.getElementById('btn-respawn').addEventListener('click', function(){ call('respawn'); });
+  document.getElementById('btn-remove').addEventListener('click', function(){ call('kill'); });
+  document.getElementById('btn-back').addEventListener('click', function(){ location.href = '/'; });
+})();
+</script>
+</body></html>`;
 }
 
 function sessionPage(name: string): string {
   const escapedName = escapeHtml(name);
   const jsonName = JSON.stringify(name);
+  const jsonVersion = JSON.stringify(DAEMON_VERSION);
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <title>${escapedName} — llmuxd</title>
 <link rel="stylesheet" href="${XTERM_CSS}">
 <style>
-  :root{--bar-h:84px;--allkeys-h:0px}
+  :root{--bar-h:84px;--allkeys-h:0px;color-scheme:dark}
   html,body{margin:0;background:#0b0c10;color:#eee;font-family:ui-monospace,monospace;overscroll-behavior:none}
   html{height:100dvh}
   body{height:100dvh;min-height:100dvh}
   #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:8px 0;z-index:20;box-sizing:border-box}
   #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:0 0 auto;height:32px}
-  /* Row 1 — arrows (top, further from gboard) */
   #bar .row.arrows{justify-content:center}
-  /* Row 2 — chrome + modifiers + ⋯ (bottom, next to gboard) */
   #bar #back{flex:0 0 auto}
-  #title-block{flex:0 0 auto;display:inline-flex;align-items:center;padding:0 4px;color:#c9d1d9;font-size:11px}
-  #title-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s;cursor:pointer}
+  #title-block{flex:0 1 auto;display:inline-flex;align-items:center;gap:6px;padding:0 4px;color:#c9d1d9;font-size:11px;min-width:0}
+  #title-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s,box-shadow .2s;cursor:pointer}
   #title-dot[data-state="live"]{background:#7ee787;box-shadow:0 0 6px #7ee78766}
-  #title-dot[data-state="error"],#title-dot[data-state="closed"]{background:#f85149}
+  #title-dot[data-state="error"],#title-dot[data-state="closed"],#title-dot[data-state="reconnecting"]{background:#f85149}
+  #title-dot[data-state="reconnecting"]{animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
+  #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;margin-left:2px}
   #keys-row{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:6px;justify-content:flex-start}
   #bar #more{flex:0 0 auto;margin-left:auto}
-  #bar button{flex:0 0 auto;min-width:40px;height:30px;padding:0 10px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:13px ui-monospace,monospace;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
+  #bar button{flex:0 0 auto;min-width:40px;height:30px;padding:0 10px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:13px ui-monospace,monospace;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none;transition:background .15s,border-color .15s}
   #bar button:active{background:#252b34;border-color:#3a414b}
   #bar button[aria-pressed="true"]{background:#1e3a52;border-color:#2d5a85;color:#7cc4ff}
   #bar button[aria-pressed="locked"]{background:#2d5a85;border-color:#4a7fae;color:#fff}
+  #bar button.fail{background:#4a2329;border-color:#f85149;color:#f85149}
   #bar #back{font-size:18px;line-height:1;font-family:system-ui,sans-serif}
   #bar .sep{flex:0 0 auto;width:1px;height:20px;background:#262c34;margin:0 2px}
   #all-keys{position:fixed;bottom:var(--bar-h);left:0;right:0;background:#0e1116;border-top:1px solid #1f2329;display:none;padding:8px;z-index:19;max-height:40vh;overflow-y:auto;box-sizing:border-box}
@@ -113,7 +377,14 @@ function sessionPage(name: string): string {
   #all-keys button:active{background:#252b34;border-color:#3a414b}
   #term{position:fixed;top:0;left:0;right:0;bottom:var(--bar-h)}
   body.allkeys-open #term{bottom:calc(var(--bar-h) + var(--allkeys-h))}
-  /* Landscape with limited vertical space — compress bar */
+  #overlay{position:fixed;inset:0;background:rgba(11,12,16,.92);display:none;align-items:center;justify-content:center;z-index:30;padding:20px}
+  #overlay.show{display:flex}
+  #overlay .panel{background:#11141a;border:1px solid #1f2329;border-radius:10px;padding:20px;max-width:340px;width:100%;text-align:center}
+  #overlay h3{margin:0 0 6px;font-size:15px;color:#f85149}
+  #overlay p{margin:0 0 14px;font-size:13px;color:#c9d1d9;line-height:1.5}
+  #overlay .actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  #overlay button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:12px ui-monospace,monospace;cursor:pointer}
+  #overlay button.primary{color:#7cc4ff;border-color:#2d4a66}
   @media (orientation: landscape) and (max-height: 500px){
     :root{--bar-h:62px}
     #bar button{height:22px;min-width:36px;padding:0 8px;font-size:11px}
@@ -121,7 +392,7 @@ function sessionPage(name: string): string {
     #bar .row{gap:4px;height:24px}
     #all-keys{max-height:60vh}
     #all-keys button{height:24px;min-width:30px;padding:0 7px;font-size:11px}
-    #title-name{max-width:60px}
+    #title-name{max-width:80px}
   }
 </style></head>
 <body>
@@ -137,7 +408,7 @@ function sessionPage(name: string): string {
   </div>
   <div class="row">
     <button id="back" title="Back to sessions">⌂</button>
-    <span id="title-block"><span id="title-dot" data-state="connecting" title="${escapedName} — connecting…"></span></span>
+    <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span><span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span></span>
     <div id="keys-row">
       <button data-key="esc" title="Escape">Esc</button>
       <button data-key="tab" title="Tab">Tab</button>
@@ -205,47 +476,131 @@ function sessionPage(name: string): string {
   </div>
 </div>
 <div id="term"></div>
+<div id="overlay" aria-hidden="true">
+  <div class="panel">
+    <h3 id="overlay-title">session ended</h3>
+    <p id="overlay-body">The tmux session exited. You can respawn it from the picker.</p>
+    <div class="actions">
+      <button class="primary" id="overlay-respawn">↻ respawn</button>
+      <button id="overlay-back">← sessions</button>
+    </div>
+  </div>
+</div>
 <script src="${XTERM_JS}"></script>
 <script src="${XTERM_FIT_JS}"></script>
 <script>
 (function(){
   const name = ${jsonName};
+  const version = ${jsonVersion};
   const dot = document.getElementById('title-dot');
+  const titleName = document.getElementById('title-name');
   const termEl = document.getElementById('term');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlay-title');
+  const overlayBody = document.getElementById('overlay-body');
+
   function setStatus(state, label){
     dot.dataset.state = state;
     dot.title = name + ' — ' + label;
   }
+
+  function showOverlay(title, body, kind){
+    overlayTitle.textContent = title;
+    overlayBody.textContent = body;
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden', 'false');
+    overlay.dataset.kind = kind || '';
+  }
+  function hideOverlay(){
+    overlay.classList.remove('show');
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+
+  document.getElementById('overlay-back').addEventListener('click', function(){ location.href = '/'; });
+  document.getElementById('overlay-respawn').addEventListener('click', async function(){
+    const btn = this;
+    btn.disabled = true;
+    overlayBody.textContent = 'respawning…';
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(name) + '/respawn', { method: 'POST' });
+      const body = await r.json().catch(function(){ return {}; });
+      if (!r.ok || body.ok === false) throw new Error(body.error || 'request failed');
+      location.reload();
+    } catch(e){
+      overlayBody.textContent = 'respawn failed: ' + (e.message || e);
+      btn.disabled = false;
+    }
+  });
 
   const term = new Terminal({fontSize:14,fontFamily:'ui-monospace,monospace',theme:{background:'#0b0c10'},cursorBlink:true,scrollback:5000});
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(termEl);
 
-  // ---- WebSocket ----
+  // ---- WebSocket with exponential backoff ----
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = proto + '://' + location.host + '/ws/' + encodeURIComponent(name);
-  let ws;
+  let ws = null;
   let dataPiped = false;
+  let reconnectTimer = null;
+  let backoffMs = 1000;
+  const BACKOFF_CAP = 30000;
+  let everConnected = false;
+  let intentionallyClosed = false;
+
   function safeSend(data){
-    try {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
-    } catch(e){}
+    if (!ws || ws.readyState !== WebSocket.OPEN){
+      return false;
+    }
+    try { ws.send(data); return true; }
+    catch(e){ return false; }
   }
+
+  function clearReconnect(){
+    if (reconnectTimer){
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  }
+
+  function scheduleReconnect(){
+    if (intentionallyClosed) return;
+    clearReconnect();
+    setStatus('reconnecting', 'reconnecting in ' + Math.round(backoffMs/1000) + 's…');
+    reconnectTimer = setTimeout(function(){
+      reconnectTimer = null;
+      connect();
+    }, backoffMs);
+    backoffMs = Math.min(BACKOFF_CAP, backoffMs * 2);
+  }
+
   function ensureConnected(){
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    clearReconnect();
+    backoffMs = 1000;
     connect();
   }
+
   function connect(){
     setStatus('connecting', 'connecting…');
-    ws = new WebSocket(wsUrl);
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch(e){
+      scheduleReconnect();
+      return;
+    }
     ws.binaryType = 'arraybuffer';
     ws.onopen = function(){
       setStatus('live', 'live');
+      backoffMs = 1000;
+      everConnected = true;
+      hideOverlay();
       if (!dataPiped){
         // term.onData must only be wired once — repeat calls would
         // double-deliver every keystroke.
-        term.onData(function(d){ safeSend(consumeMods(d)); });
+        term.onData(function(d){
+          if (!safeSend(consumeMods(d))) flashDot();
+        });
         dataPiped = true;
       }
       scheduleResize();
@@ -255,9 +610,34 @@ function sessionPage(name: string): string {
       if (typeof ev.data === 'string') term.write(ev.data);
       else term.write(new Uint8Array(ev.data));
     };
-    ws.onclose = function(){ setStatus('closed', 'disconnected'); };
-    ws.onerror = function(){ setStatus('error', 'error'); };
+    ws.onclose = function(ev){
+      // Close code 1011/4040 from the server means the tmux session is gone —
+      // surface a session-ended overlay instead of reconnect-looping.
+      if (ev && (ev.code === 4040 || /pty exited/.test(ev.reason || ''))){
+        intentionallyClosed = true;
+        setStatus('closed', 'session ended');
+        showOverlay('session ended', 'The tmux session is no longer running.', 'ended');
+        return;
+      }
+      if (everConnected) setStatus('closed', 'disconnected — reconnecting');
+      scheduleReconnect();
+    };
+    ws.onerror = function(){
+      setStatus('error', 'connection error');
+    };
   }
+
+  let flashTimer = null;
+  function flashDot(){
+    dot.style.boxShadow = '0 0 8px #f85149';
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(function(){ dot.style.boxShadow = ''; }, 250);
+  }
+  function flashBtnFail(btn){
+    btn.classList.add('fail');
+    setTimeout(function(){ btn.classList.remove('fail'); }, 250);
+  }
+
   connect();
 
   // ---- Key sequence table ----
@@ -302,7 +682,7 @@ function sessionPage(name: string): string {
     return out.replace(/\\\\x([0-9a-f]{2})/gi, function(_,h){ return String.fromCharCode(parseInt(h,16)); });
   }
 
-  // ---- Layout / resize (visualViewport + dvh fallback) ----
+  // ---- Layout / resize ----
   let resizeTimer = null;
   const allKeysEl = document.getElementById('all-keys');
   function getAllKeysH(){
@@ -333,7 +713,6 @@ function sessionPage(name: string): string {
   try { fit.fit(); } catch(e){}
 
   // ---- Wire toolbar ----
-  // Make every bar button non-focusable so they never steal focus from xterm.
   document.querySelectorAll('#bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
 
   document.getElementById('back').addEventListener('click', function(e){ e.preventDefault(); location.href = '/'; });
@@ -352,7 +731,7 @@ function sessionPage(name: string): string {
     btn.addEventListener('click', function(e){
       e.preventDefault();
       const seq = KEYS[btn.dataset.key];
-      if (seq != null) safeSend(consumeMods(seq));
+      if (seq != null && !safeSend(consumeMods(seq))) flashBtnFail(btn);
       term.focus();
     });
   });
@@ -361,7 +740,7 @@ function sessionPage(name: string): string {
     btn.addEventListener('pointerdown', function(e){ e.preventDefault(); });
     btn.addEventListener('click', function(e){
       e.preventDefault();
-      safeSend(consumeMods(btn.dataset.char));
+      if (!safeSend(consumeMods(btn.dataset.char))) flashBtnFail(btn);
       term.focus();
     });
   });
@@ -384,18 +763,12 @@ function sessionPage(name: string): string {
   });
 
   // ---- Resize triggers ----
-  addEventListener('resize', function(){ scheduleResize('window-resize'); });
-  addEventListener('orientationchange', function(){ scheduleResize('orientationchange'); });
+  addEventListener('resize', function(){ scheduleResize(); });
+  addEventListener('orientationchange', function(){ scheduleResize(); });
   if (window.visualViewport){
-    // Soft keyboard show/hide fires visualViewport.resize on iOS + recent Android.
-    window.visualViewport.addEventListener('resize', function(){ scheduleResize('vv-resize'); });
-    window.visualViewport.addEventListener('scroll', function(){ scheduleResize('vv-scroll'); });
+    window.visualViewport.addEventListener('resize', function(){ scheduleResize(); });
+    window.visualViewport.addEventListener('scroll', function(){ scheduleResize(); });
   }
-  // Re-fit when the page becomes visible again. Re-focus is deferred until
-  // the next user touch — Android Chrome blocks programmatic focus() without
-  // a user-activation context, so calling term.focus() immediately on
-  // visibilitychange is silently no-op'd. Arm a one-shot listener; the next
-  // tap anywhere in the document re-focuses xterm, then unregisters itself.
   let pendingRefocus = false;
   function armRefocus(){
     if (pendingRefocus) return;
@@ -412,15 +785,14 @@ function sessionPage(name: string): string {
   document.addEventListener('visibilitychange', function(){
     if (!document.hidden){
       ensureConnected();
-      scheduleResize('visible');
+      scheduleResize();
       try { term.focus(); } catch(e){}
       armRefocus();
     }
   });
-  // pageshow covers the bfcache-restore path that visibilitychange misses.
   addEventListener('pageshow', function(){
     ensureConnected();
-    scheduleResize('pageshow');
+    scheduleResize();
     try { term.focus(); } catch(e){}
     armRefocus();
   });
@@ -428,6 +800,8 @@ function sessionPage(name: string): string {
 </script>
 </body></html>`;
 }
+
+// ---------- helpers ----------
 
 function sendHtml(res: ServerResponse, body: string, status = 200): void {
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
@@ -444,24 +818,111 @@ function sendJson(res: ServerResponse, body: unknown, status = 200): void {
   res.end(JSON.stringify(body));
 }
 
+// ---------- API actions ----------
+
+function buildAgentCommand(agent: AgentDefinition): string {
+  return agent.flags ? `${agent.cmd} ${agent.flags}` : agent.cmd;
+}
+
+function respawnSession(name: string): { ok: true; session: SessionView } | { ok: false; error: string } {
+  const session = state.get(name);
+  if (!session) return { ok: false, error: `no tracked session "${name}"` };
+  if (tmux.hasSession(name)) return { ok: false, error: `session "${name}" is still running` };
+  const agent = DEFAULT_AGENTS[session.agent];
+  if (!agent) return { ok: false, error: `unknown agent "${session.agent}"` };
+  if (!isAgentInstalled(agent)) return { ok: false, error: `agent "${session.agent}" is not installed` };
+  try {
+    tmux.newSession({
+      name: session.name,
+      command: buildAgentCommand(agent),
+      cwd: session.cwd,
+      env: { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent },
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  const refreshed = { ...session, createdAt: new Date().toISOString() };
+  state.record(refreshed);
+  return {
+    ok: true,
+    session: { name, agent: refreshed.agent, cwd: refreshed.cwd, createdAt: refreshed.createdAt, parent: refreshed.parent, status: 'running' },
+  };
+}
+
+function killSession(name: string): { ok: true; status: 'running' | 'exited' } | { ok: false; error: string } {
+  const session = state.get(name);
+  if (!session) return { ok: false, error: `no tracked session "${name}"` };
+  const wasRunning = tmux.hasSession(name);
+  try {
+    tmux.killSession(name);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  state.forget(name);
+  return { ok: true, status: wasRunning ? 'running' : 'exited' };
+}
+
+// ---------- server ----------
+
 export interface ServerHandle {
   port: number;
   stop: () => Promise<void>;
 }
 
+const RESPAWN_RE = /^\/api\/sessions\/([^/]+)\/respawn$/;
+const KILL_RE = /^\/api\/sessions\/([^/]+)\/kill$/;
+
 export function startServer(opts: ServeOptions): ServerHandle {
   const http = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const method = req.method ?? 'GET';
 
+    // ---- API ----
     if (url.pathname === '/health') {
-      return sendJson(res, { ok: true, sessions: state.list().length });
+      return sendJson(res, { ok: true, version: DAEMON_VERSION, sessions: state.list().length });
     }
+    if (url.pathname === '/api/version' && method === 'GET') {
+      return sendJson(res, { version: DAEMON_VERSION });
+    }
+    if (url.pathname === '/api/sessions' && method === 'GET') {
+      return sendJson(res, listSessionViews());
+    }
+    if (method === 'POST') {
+      const mRespawn = url.pathname.match(RESPAWN_RE);
+      if (mRespawn) {
+        const name = decodeURIComponent(mRespawn[1]!);
+        const result = respawnSession(name);
+        return sendJson(res, result, result.ok ? 200 : 400);
+      }
+      const mKill = url.pathname.match(KILL_RE);
+      if (mKill) {
+        const name = decodeURIComponent(mKill[1]!);
+        const result = killSession(name);
+        return sendJson(res, result, result.ok ? 200 : 400);
+      }
+    }
+
+    // ---- Pages ----
     if (url.pathname === '/') {
       return sendHtml(res, pickerPage());
     }
     if (url.pathname.startsWith('/session/')) {
       const name = decodeURIComponent(url.pathname.slice('/session/'.length));
-      if (!state.get(name)) return sendText(res, 'session not found', 404);
+      const session = state.get(name);
+      if (!session) return sendText(res, 'session not found', 404);
+      // If tmux doesn't have it, serve the dead-session page instead of the chat
+      // (which would immediately disconnect when pty.spawn('tmux attach …') fails).
+      if (!tmux.hasSession(name)) {
+        const view: SessionView = {
+          name: session.name,
+          agent: session.agent,
+          cwd: session.cwd,
+          createdAt: session.createdAt,
+          parent: session.parent,
+          status: 'exited',
+        };
+        return sendHtml(res, deadSessionPage(view));
+      }
       return sendHtml(res, sessionPage(name));
     }
     return sendText(res, 'not found', 404);
@@ -478,6 +939,11 @@ export function startServer(opts: ServeOptions): ServerHandle {
     const name = decodeURIComponent(url.pathname.slice('/ws/'.length));
     if (!state.get(name)) {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    if (!tmux.hasSession(name)) {
+      socket.write('HTTP/1.1 409 Conflict\r\n\r\n');
       socket.destroy();
       return;
     }
@@ -514,7 +980,7 @@ function attachSession(ws: WebSocket, sessionName: string): void {
       env,
     });
   } catch (err) {
-    ws.close(1011, `spawn failed: ${err instanceof Error ? err.message : String(err)}`);
+    ws.close(4040, `spawn failed: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
 
@@ -528,7 +994,9 @@ function attachSession(ws: WebSocket, sessionName: string): void {
 
   term.onExit(({ exitCode, signal }) => {
     try {
-      ws.close(1000, `pty exited code=${exitCode} signal=${signal ?? 'none'}`);
+      // 4040 is our app-level "session ended" signal (4xxx is application range)
+      // so the client distinguishes it from a transient network drop.
+      ws.close(4040, `pty exited code=${exitCode} signal=${signal ?? 'none'}`);
     } catch {
       // already closed
     }
@@ -558,7 +1026,7 @@ function attachSession(ws: WebSocket, sessionName: string): void {
 }
 
 export function printBanner(port: number): void {
-  console.log(`llmuxd v${readDaemonVersion()}\n`);
+  console.log(`llmuxd v${DAEMON_VERSION}\n`);
   for (const addr of getAddresses(port)) {
     console.log(`  ▸ ${addr.label.padEnd(10)}${addr.url}`);
   }
