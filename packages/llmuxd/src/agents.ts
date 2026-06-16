@@ -49,7 +49,11 @@ export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',             readyPrompt: '^agy>',  installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install' },
   gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',                                     readyPrompt: '^>',     installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli' },
   qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',                                     readyPrompt: '^>',     installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code' },
-  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     flags: '--dangerously-skip-permissions',             readyPrompt: '^>',     installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai' },
+  // OpenCode's --dangerously-skip-permissions only applies to `opencode run`
+  // (one-shot). The TUI default mode rejects it and exits — danger mode in
+  // the TUI is controlled via OPENCODE_PERMISSION='{"*":"allow"}' or
+  // OPENCODE_YOLO=1 env vars instead. Leave flags empty here.
+  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',                                                          readyPrompt: '^>',     installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai' },
   amp:      { key: 'amp',      displayName: 'Sourcegraph Amp',     cmd: 'amp',          flags: '--dangerously-allow-all',                    readyPrompt: '^>',     installHint: 'npm install -g @sourcegraph/amp',                 docsUrl: 'https://ampcode.com/manual' },
   grok:     { key: 'grok',     displayName: 'Grok Build CLI',      cmd: 'grok',         flags: '--always-approve',                           readyPrompt: '^grok>', installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',   docsUrl: 'https://x.ai/cli' },
   aider:    { key: 'aider',    displayName: 'Aider',               cmd: 'aider',        flags: '--yes-always --model claude-opus-4-6',       readyPrompt: '^> $',   installHint: 'python -m pip install aider-chat',                docsUrl: 'https://aider.chat' },
