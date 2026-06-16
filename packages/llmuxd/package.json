@@ -1,6 +1,6 @@
 {
   "name": "@cordfuse/llmuxd",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "tmux-based AI agent session manager daemon — REST API + web terminal",
   "license": "MIT",
   "type": "module",

@@ -38,8 +38,8 @@ const copilotInstalled = (): boolean => {
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   claude: { key: 'claude', cmd: 'claude', flags: '--dangerously-skip-permissions', readyPrompt: '^>' },
   codex: { key: 'codex', cmd: 'codex', readyPrompt: '^>' },
-  gemini: { key: 'gemini', cmd: 'gemini', readyPrompt: '^>' },
   agy: { key: 'agy', cmd: 'agy', flags: '--dangerously-skip-permissions', readyPrompt: '^agy>' },
+  gemini: { key: 'gemini', cmd: 'gemini', readyPrompt: '^>' },
   qwen: { key: 'qwen', cmd: 'qwen', readyPrompt: '^>' },
   opencode: { key: 'opencode', cmd: 'opencode', readyPrompt: '^>' },
   grok: { key: 'grok', cmd: 'grok', readyPrompt: '^grok>' },
