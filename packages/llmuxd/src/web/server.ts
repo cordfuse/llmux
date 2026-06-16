@@ -142,7 +142,7 @@ function sessionPage(name: string): string {
       <button data-key="tab" title="Tab">Tab</button>
       <button data-mod="ctrl"  title="Ctrl (tap then key, double-tap to lock)">Ctrl</button>
       <button data-mod="alt"   title="Alt (tap then key, double-tap to lock)">Alt</button>
-      <button data-mod="shift" title="Shift (next char uppercase)">⇧</button>
+      <button data-mod="shift" title="Shift (next char uppercase)">Shift</button>
     </div>
     <button id="more" title="All keys">⋯</button>
   </div>
@@ -224,9 +224,41 @@ function sessionPage(name: string): string {
 
   // ---- WebSocket ----
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(proto + '://' + location.host + '/ws/' + encodeURIComponent(name));
-  ws.binaryType = 'arraybuffer';
-  function safeSend(data){ try { ws.send(data); } catch(e){} }
+  const wsUrl = proto + '://' + location.host + '/ws/' + encodeURIComponent(name);
+  let ws;
+  let dataPiped = false;
+  function safeSend(data){
+    try {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+    } catch(e){}
+  }
+  function ensureConnected(){
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    connect();
+  }
+  function connect(){
+    setStatus('connecting', 'connecting…');
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = function(){
+      setStatus('live', 'live');
+      if (!dataPiped){
+        // term.onData must only be wired once — repeat calls would
+        // double-deliver every keystroke.
+        term.onData(function(d){ safeSend(consumeMods(d)); });
+        dataPiped = true;
+      }
+      scheduleResize();
+      term.focus();
+    };
+    ws.onmessage = function(ev){
+      if (typeof ev.data === 'string') term.write(ev.data);
+      else term.write(new Uint8Array(ev.data));
+    };
+    ws.onclose = function(){ setStatus('closed', 'disconnected'); };
+    ws.onerror = function(){ setStatus('error', 'error'); };
+  }
+  connect();
 
   // ---- Key sequence table ----
   const KEYS = {
@@ -351,20 +383,6 @@ function sessionPage(name: string): string {
     });
   });
 
-  // ---- WS lifecycle ----
-  ws.onopen = function(){
-    setStatus('live', 'live');
-    term.onData(function(d){ safeSend(consumeMods(d)); });
-    scheduleResize();
-    term.focus();
-  };
-  ws.onmessage = function(ev){
-    if (typeof ev.data === 'string') term.write(ev.data);
-    else term.write(new Uint8Array(ev.data));
-  };
-  ws.onclose = function(){ setStatus('closed', 'disconnected'); };
-  ws.onerror = function(){ setStatus('error', 'error'); };
-
   // ---- Resize triggers ----
   addEventListener('resize', function(){ scheduleResize('window-resize'); });
   addEventListener('orientationchange', function(){ scheduleResize('orientationchange'); });
@@ -393,6 +411,7 @@ function sessionPage(name: string): string {
   }
   document.addEventListener('visibilitychange', function(){
     if (!document.hidden){
+      ensureConnected();
       scheduleResize('visible');
       try { term.focus(); } catch(e){}
       armRefocus();
@@ -400,6 +419,7 @@ function sessionPage(name: string): string {
   });
   // pageshow covers the bfcache-restore path that visibilitychange misses.
   addEventListener('pageshow', function(){
+    ensureConnected();
     scheduleResize('pageshow');
     try { term.focus(); } catch(e){}
     armRefocus();
