@@ -45,10 +45,28 @@ jobs:
             cordfuse-llmux-*.tgz
           generate_release_notes: true
 
+      - name: Debug npm identity from runner
+        run: |
+          echo "=== npm version ==="
+          npm --version
+          echo "=== effective registry config ==="
+          npm config get registry
+          npm config get @cordfuse:registry || echo "(no scoped registry config)"
+          npm config get always-auth || echo "(always-auth not set)"
+          echo "=== .npmrc that setup-node wrote ==="
+          cat ~/.npmrc | sed 's|_authToken=.*|_authToken=<MASKED>|'
+          echo "=== npm whoami from runner ==="
+          npm whoami --registry=https://registry.npmjs.org && echo "AUTH_FROM_RUNNER: OK" || echo "AUTH_FROM_RUNNER: FAIL"
+          echo "=== npm access list packages for the authenticated user ==="
+          npm access list packages 2>&1 | head -20 || true
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish @cordfuse/llmuxd to npm
         if: ${{ env.NPM_TOKEN != '' }}
         working-directory: packages/llmuxd
-        run: npm publish --access public
+        run: npm publish --access public --loglevel=verbose
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -56,7 +74,7 @@ jobs:
       - name: Publish @cordfuse/llmux to npm
         if: ${{ env.NPM_TOKEN != '' }}
         working-directory: packages/llmux
-        run: npm publish --access public
+        run: npm publish --access public --loglevel=verbose
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
