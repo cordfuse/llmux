@@ -1,6 +1,6 @@
 {
   "name": "@cordfuse/llmuxd",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "tmux-based AI agent session manager daemon — REST API + web terminal",
   "license": "MIT",
   "type": "module",
@@ -21,7 +21,8 @@
   "scripts": {
     "start": "bun src/index.ts",
     "build": "bun build src/index.ts --target=node --outdir=dist --external yaml --external qrcode-terminal --external node-pty",
-    "prepublishOnly": "bun run build",
+    "prepublishOnly": "cp ../../README.md ../../LICENSE . && bun run build",
+    "postpublish": "rm -f README.md LICENSE",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
