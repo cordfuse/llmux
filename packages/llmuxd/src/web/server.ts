@@ -182,9 +182,9 @@ function pickerPage(): string {
     <div id="new-cwd-hint" class="hint" hidden>cwd changes take effect on next respawn (running sessions keep their original cwd)</div>
     <div class="field">
       <label for="new-flags">flags</label>
-      <input id="new-flags" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="(agent default)">
+      <input id="new-flags" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
     </div>
-    <div id="new-flags-hint" class="hint" hidden>flags changes take effect on next respawn. Leave empty to use the agent default.</div>
+    <div id="new-flags-hint" class="hint" hidden></div>
     <div class="actions">
       <button type="button" id="new-cancel">cancel</button>
       <button type="submit" class="primary" id="new-submit">spawn</button>
@@ -363,9 +363,11 @@ function pickerPage(): string {
     newAgent.disabled = false;
   }
 
-  function syncFlagsPlaceholder(){
-    const def = agentDefaultFlags(newAgent.value);
-    newFlags.placeholder = def ? '(default: ' + def + ')' : '(none)';
+  function syncFlagsHint(agentKey){
+    const def = agentDefaultFlags(agentKey);
+    newFlagsHint.textContent = def
+      ? 'agent default: ' + def + '. Clear the input to spawn with no flags. Takes effect on next respawn.'
+      : 'this agent has no default flags. Takes effect on next respawn.';
   }
 
   async function openNewForm(){
@@ -374,14 +376,16 @@ function pickerPage(): string {
     newSubmit.textContent = 'spawn';
     newName.value = '';
     newCwd.value = '';
-    newFlags.value = '';
     newAgent.disabled = false;
     newCwdHint.hidden = true;
-    newFlagsHint.hidden = true;
+    newFlagsHint.hidden = false;
     newForm.classList.add('open');
     newForm.setAttribute('aria-hidden', 'false');
     await loadAgents();
-    syncFlagsPlaceholder();
+    // Pre-fill flags with the selected agent's default so the operator can
+    // edit/clear from there. Empty = spawn with no flags.
+    newFlags.value = agentDefaultFlags(newAgent.value);
+    syncFlagsHint(newAgent.value);
     newAgent.focus();
   }
 
@@ -391,10 +395,6 @@ function pickerPage(): string {
     newSubmit.textContent = 'save';
     newName.value = row.name;
     newCwd.value = row.cwd || '';
-    // For edit, prefill flags with the persisted override if present, else
-    // leave blank so the input clearly represents "no override". The
-    // placeholder still shows the agent default for reference.
-    newFlags.value = row.flags || '';
     newCwdHint.hidden = false;
     newFlagsHint.hidden = false;
     newForm.classList.add('open');
@@ -404,13 +404,22 @@ function pickerPage(): string {
     // surface it as read-only so the user sees what they have.
     if (row.agent) newAgent.value = row.agent;
     newAgent.disabled = true;
-    syncFlagsPlaceholder();
+    // Pre-fill with the persisted override if present, else the agent default.
+    // Operator can edit either further or clear to spawn with no flags.
+    newFlags.value = row.flags !== undefined && row.flags !== ''
+      ? row.flags
+      : agentDefaultFlags(newAgent.value);
+    syncFlagsHint(newAgent.value);
     newName.focus();
     newName.select();
   }
 
   newAgent.addEventListener('change', function(){
-    if (formMode === 'new') syncFlagsPlaceholder();
+    if (formMode === 'new'){
+      // Reset flags to the new agent's default so the field reflects intent.
+      newFlags.value = agentDefaultFlags(newAgent.value);
+      syncFlagsHint(newAgent.value);
+    }
   });
 
   newBtn.addEventListener('click', function(){
@@ -430,8 +439,8 @@ function pickerPage(): string {
     try {
       if (formMode && formMode.edit){
         newSubmit.textContent = 'saving…';
-        // For edit, always send flags so empty input clears the override
-        // back to agent default. name/cwd still only sent if user typed.
+        // For edit, always send flags so the input value is canonical.
+        // name/cwd still only sent if user typed (so blank = no change).
         const body = { flags: flags };
         if (name) body.name = name;
         if (cwd) body.cwd = cwd;
@@ -450,8 +459,9 @@ function pickerPage(): string {
         const body = { agent };
         if (name) body.name = name;
         if (cwd) body.cwd = cwd;
-        // Only send flags if user typed something — otherwise server uses default.
-        if (flags.trim()) body.flags = flags;
+        // Always send flags as the input is pre-filled with the agent default;
+        // empty value = explicit "no flags".
+        body.flags = flags;
         const r = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -1288,10 +1298,11 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
   const cwd = (input.cwd && input.cwd.trim()) || process.env.HOME || process.cwd();
   if (!existsSync(cwd)) return { ok: false, error: `cwd does not exist: ${cwd}` };
 
-  // Blank flags string is treated as "use default" so an empty form field
-  // doesn't override the agent's intent. Non-empty after trim = override.
-  const flagsTrimmed = input.flags?.trim();
-  const flagsOverride = flagsTrimmed && flagsTrimmed.length > 0 ? flagsTrimmed : undefined;
+  // flags semantics:
+  //   input.flags === undefined → no override; use agent default at spawn, don't persist
+  //   input.flags === string    → explicit override, including empty string ("no flags")
+  const flagsOverride: string | undefined =
+    input.flags !== undefined ? input.flags.trim() : undefined;
 
   try {
     tmux.newSession({
@@ -1382,15 +1393,12 @@ function editSession(
     }
   }
 
-  // flags semantics:
-  //   patch.flags === undefined → no change (preserve existing override)
-  //   patch.flags === ''        → clear override (use agent default again)
-  //   patch.flags === '…'       → set override to the trimmed value
-  let nextFlags = session.flags;
-  if (patch.flags !== undefined) {
-    const trimmed = patch.flags.trim();
-    nextFlags = trimmed.length > 0 ? trimmed : undefined;
-  }
+  // flags semantics on patch:
+  //   patch.flags === undefined → no change (preserve existing)
+  //   patch.flags === string    → set as override (explicit, including '')
+  // The form always sends flags so users can save "no flags" by clearing the
+  // input. To revert to agent default, retype the default value.
+  const nextFlags = patch.flags !== undefined ? patch.flags.trim() : session.flags;
 
   const updated: state.SessionState = {
     name: renaming ? newName! : oldName,
