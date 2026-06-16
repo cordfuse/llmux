@@ -8,6 +8,7 @@ import type { IPty } from 'node-pty';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from '../agents.ts';
 import * as state from '../state.ts';
 import * as tmux from '../tmux.ts';
+import * as authStore from '../auth-store.ts';
 import { getAddresses } from '../net.ts';
 
 function readDaemonVersion(): string {
@@ -842,6 +843,163 @@ function sessionPage(name: string): string {
 </body></html>`;
 }
 
+// ---------- auth ----------
+
+const COOKIE_NAME = 'llmuxd_token';
+const COOKIE_RE = new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`);
+
+function isLocalhost(req: IncomingMessage): boolean {
+  const ra = req.socket.remoteAddress;
+  return ra === '127.0.0.1' || ra === '::1' || ra === '::ffff:127.0.0.1';
+}
+
+function extractToken(req: IncomingMessage): string | undefined {
+  const auth = req.headers['authorization'];
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+    return auth.slice('Bearer '.length).trim();
+  }
+  const cookie = req.headers['cookie'];
+  if (typeof cookie === 'string') {
+    const m = COOKIE_RE.exec(cookie);
+    if (m) return decodeURIComponent(m[1] ?? '');
+  }
+  return undefined;
+}
+
+function extractWsToken(req: IncomingMessage, urlSearch: URLSearchParams): string | undefined {
+  const fromQuery = urlSearch.get('token');
+  if (fromQuery) return fromQuery;
+  return extractToken(req);
+}
+
+function isAuthorized(req: IncomingMessage): boolean {
+  if (isLocalhost(req)) return true;
+  if (!authStore.authEnabled()) return true;
+  return authStore.validateAuthToken(extractToken(req));
+}
+
+function isWsAuthorized(req: IncomingMessage, urlSearch: URLSearchParams): boolean {
+  if (isLocalhost(req)) return true;
+  if (!authStore.authEnabled()) return true;
+  return authStore.validateAuthToken(extractWsToken(req, urlSearch));
+}
+
+function gatePage(reason: 'missing' | 'invalid'): string {
+  const message =
+    reason === 'invalid' ? 'Token rejected. Try again.' : 'This llmuxd instance requires a token.';
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>llmuxd — auth</title>
+<link rel="icon" href="${FAVICON_DATA_URL}">
+<style>
+  :root{color-scheme:dark}
+  html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px}
+  body{padding:24px;max-width:520px;margin:0 auto;min-height:100dvh;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}
+  h1{font-size:18px;margin:0 0 4px;display:flex;align-items:center;gap:8px}
+  h1 .brand{color:#7cc4ff;letter-spacing:.08em}
+  .sub{color:#7a7f87;font-size:12px;margin-bottom:18px}
+  .card{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:20px}
+  label{display:block;font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+  input{width:100%;box-sizing:border-box;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:10px;font:13px ui-monospace,monospace;outline:none}
+  input:focus{border-color:#2d4a66}
+  button{margin-top:14px;width:100%;background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:10px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  button:hover{background:#252b34}
+  button:disabled{opacity:.5;cursor:wait}
+  .msg{margin-top:12px;font-size:12px;color:#f85149;min-height:18px}
+  .hint{margin-top:18px;font-size:11px;color:#7a7f87;line-height:1.5}
+  .hint code{color:#c9d1d9;background:#0b0c10;padding:2px 5px;border-radius:3px}
+</style></head>
+<body>
+<h1><span class="brand">LLMUX</span> — auth required</h1>
+<div class="sub">${escapeHtml(message)}</div>
+<div class="card">
+  <form id="auth-form">
+    <label for="token">access token</label>
+    <input id="token" type="password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="sas_…" required>
+    <button type="submit">unlock</button>
+    <div class="msg" id="msg"></div>
+  </form>
+  <div class="hint">
+    Generate a token on the daemon host: <code>llmuxd token create</code><br>
+    The token is sent as a cookie after unlock. Localhost bypasses this gate.
+  </div>
+</div>
+<script>
+(function(){
+  const form = document.getElementById('auth-form');
+  const input = document.getElementById('token');
+  const msg = document.getElementById('msg');
+  form.addEventListener('submit', async function(e){
+    e.preventDefault();
+    const token = input.value.trim();
+    if (!token) return;
+    msg.textContent = '';
+    const btn = form.querySelector('button');
+    btn.disabled = true;
+    try {
+      const r = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(function(){ return {}; });
+        msg.textContent = body.error || 'token rejected';
+        btn.disabled = false;
+        input.focus();
+        input.select();
+        return;
+      }
+      // Cookie set by server; reload the originally requested URL so the
+      // user lands where they wanted, not at /.
+      location.href = location.pathname + location.search;
+    } catch(err){
+      msg.textContent = 'request failed: ' + (err.message || err);
+      btn.disabled = false;
+    }
+  });
+  input.focus();
+})();
+</script>
+</body></html>`;
+}
+
+function sendGate(res: ServerResponse, reason: 'missing' | 'invalid' = 'missing'): void {
+  res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' });
+  res.end(gatePage(reason));
+}
+
+function buildCookie(token: string): string {
+  // Session cookie — clears on browser exit. HttpOnly so JS can't lift it.
+  // SameSite=Lax so the cookie travels on normal navigations.
+  return `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax`;
+}
+
+async function readJsonBody(req: IncomingMessage, limit = 64 * 1024): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limit) {
+        req.destroy();
+        reject(new Error('body too large'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try {
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve(text ? JSON.parse(text) : {});
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
 // ---------- helpers ----------
 
 function sendHtml(res: ServerResponse, body: string, status = 200): void {
@@ -914,17 +1072,53 @@ const RESPAWN_RE = /^\/api\/sessions\/([^/]+)\/respawn$/;
 const KILL_RE = /^\/api\/sessions\/([^/]+)\/kill$/;
 
 export function startServer(opts: ServeOptions): ServerHandle {
-  const http = createServer((req: IncomingMessage, res: ServerResponse) => {
+  const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const method = req.method ?? 'GET';
 
-    // ---- API ----
+    // ---- Always-open endpoints (no auth required) ----
     if (url.pathname === '/health') {
-      return sendJson(res, { ok: true, version: DAEMON_VERSION, sessions: state.list().length });
+      return sendJson(res, {
+        ok: true,
+        version: DAEMON_VERSION,
+        sessions: state.list().length,
+        authEnabled: authStore.authEnabled(),
+      });
     }
     if (url.pathname === '/api/version' && method === 'GET') {
       return sendJson(res, { version: DAEMON_VERSION });
     }
+
+    // ---- Auth gate (POST /api/auth, no prior auth required) ----
+    if (url.pathname === '/api/auth' && method === 'POST') {
+      try {
+        const body = (await readJsonBody(req)) as { token?: unknown };
+        const candidate = typeof body.token === 'string' ? body.token : '';
+        if (!authStore.validateAuthToken(candidate)) {
+          return sendJson(res, { ok: false, error: 'invalid token' }, 401);
+        }
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'set-cookie': buildCookie(candidate),
+        });
+        return res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
+      }
+    }
+
+    // ---- Auth check for everything else ----
+    if (!isAuthorized(req)) {
+      // HTML routes get the gate page; API routes get 401 JSON.
+      const isApi = url.pathname.startsWith('/api/');
+      if (isApi) {
+        return sendJson(res, { ok: false, error: 'unauthorized' }, 401);
+      }
+      const hasInvalidToken = Boolean(extractToken(req));
+      return sendGate(res, hasInvalidToken ? 'invalid' : 'missing');
+    }
+
+    // ---- API ----
     if (url.pathname === '/api/sessions' && method === 'GET') {
       return sendJson(res, listSessionViews());
     }
@@ -974,6 +1168,11 @@ export function startServer(opts: ServeOptions): ServerHandle {
   http.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     if (!url.pathname.startsWith('/ws/')) {
+      socket.destroy();
+      return;
+    }
+    if (!isWsAuthorized(req, url.searchParams)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
@@ -1073,5 +1272,11 @@ export function printBanner(port: number): void {
   for (const addr of addrs) {
     console.log(`  ▸ ${addr.label.padEnd(width)}${addr.url}`);
   }
-  console.log(`\n  ⚠ running without auth — anyone on the network can attach to your tmux sessions\n`);
+  if (authStore.authEnabled()) {
+    const count = authStore.listAuthTokens().length;
+    console.log(`\n  ✓ auth required — ${count} active token${count === 1 ? '' : 's'} (localhost bypasses)\n`);
+  } else {
+    console.log(`\n  ⚠ running without auth — anyone on the network can attach.`);
+    console.log(`    create a token with \`llmuxd token create\` to enable auth.\n`);
+  }
 }

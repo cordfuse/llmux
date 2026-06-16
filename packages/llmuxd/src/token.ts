@@ -1,33 +1,13 @@
 import { randomBytes } from 'node:crypto';
-import { notImplemented } from './cli.ts';
 
-export interface TokenRecord {
-  token: string;
-  createdAt: string;
-  expiresAt?: string;
-}
+const TOKEN_PREFIX = 'sas_';
 
-/** 32-byte URL-safe token (44 chars). */
+/** Generate a fresh SAS token: `sas_<43-char-base64url>`. */
 export function generateToken(): string {
-  return randomBytes(32).toString('base64url');
+  return TOKEN_PREFIX + randomBytes(32).toString('base64url');
 }
 
-export function createToken(_expiry?: string): TokenRecord {
-  notImplemented('token.create');
-}
-
-export function refreshToken(): TokenRecord {
-  notImplemented('token.refresh');
-}
-
-export function revokeToken(): void {
-  notImplemented('token.revoke');
-}
-
-export function showToken(): TokenRecord | null {
-  notImplemented('token.show');
-}
-
-export function validateToken(_candidate: string): boolean {
-  notImplemented('token.validate');
+/** Stable short id for a token: 8 chars after the `sas_` prefix. */
+export function tokenId(token: string): string {
+  return token.startsWith(TOKEN_PREFIX) ? token.slice(TOKEN_PREFIX.length, TOKEN_PREFIX.length + 8) : token.slice(0, 8);
 }
