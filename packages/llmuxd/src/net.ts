@@ -9,16 +9,17 @@ export interface ReachableAddress {
 const TAILSCALE_CGNAT = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
 
 interface TailscaleServeConfig {
+  TCP?: Record<string, { HTTPS?: boolean; HTTP?: boolean }>;
   Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>;
 }
 
 /**
- * If the operator has run `tailscale serve --https=<port> http://localhost:<our-port>`,
- * Tailscale terminates TLS on the tailnet hostname and proxies to us. Detect that
- * config and surface the HTTPS URL. Returns undefined if Tailscale isn't installed,
- * the user hasn't opted in to HTTPS serve, or the serve config doesn't point at our port.
+ * Inspect `tailscale serve status --json` for any Web proxies pointing at our
+ * local port. Returns one ReachableAddress per matching proxy (could be HTTP
+ * and HTTPS both, if the operator has opted into both). Returns empty when
+ * Tailscale isn't installed, no serve config exists, or none match our port.
  */
-function detectTailscaleHttps(port: number): string | undefined {
+function detectTailscaleServe(port: number): ReachableAddress[] {
   try {
     const raw = execSync('tailscale serve status --json', {
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -26,29 +27,39 @@ function detectTailscaleHttps(port: number): string | undefined {
     })
       .toString()
       .trim();
-    if (!raw) return undefined;
+    if (!raw) return [];
     const config: TailscaleServeConfig = JSON.parse(raw);
     const targets = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
+    const out: ReachableAddress[] = [];
     for (const [hostPort, web] of Object.entries(config.Web ?? {})) {
       for (const handler of Object.values(web.Handlers ?? {})) {
-        if (handler.Proxy && targets.includes(handler.Proxy)) {
-          const [host, p] = hostPort.split(':');
-          if (!host) continue;
-          const portSuffix = p && p !== '443' ? `:${p}` : '';
-          return `https://${host}${portSuffix}`;
-        }
+        if (!handler.Proxy || !targets.includes(handler.Proxy)) continue;
+        const [host, p] = hostPort.split(':');
+        if (!host || !p) continue;
+        const tcp = (config.TCP ?? {})[p];
+        const isHttps = Boolean(tcp?.HTTPS);
+        const proto = isHttps ? 'https' : 'http';
+        const defaultPort = isHttps ? '443' : '80';
+        const portSuffix = p === defaultPort ? '' : `:${p}`;
+        out.push({
+          label: isHttps ? 'Tailscale HTTPS' : 'Tailscale HTTP',
+          url: `${proto}://${host}${portSuffix}`,
+        });
       }
     }
-  } catch {}
-  return undefined;
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 /** Build the address list shown on `llmuxd serve` startup. */
 export function getAddresses(port: number): ReachableAddress[] {
   const out: ReachableAddress[] = [];
-  const httpsUrl = detectTailscaleHttps(port);
-  if (httpsUrl) {
-    out.push({ label: 'Tailscale HTTPS', url: httpsUrl });
+  const tailscaleServe = detectTailscaleServe(port);
+  // HTTPS-first ordering: the friendliest URL for browsers comes first.
+  for (const a of tailscaleServe.sort((a, b) => (a.label === 'Tailscale HTTPS' ? -1 : 1))) {
+    out.push(a);
   }
   out.push({ label: 'Local', url: `http://localhost:${port}` });
   const nets = networkInterfaces();
