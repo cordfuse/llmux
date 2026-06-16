@@ -37,7 +37,7 @@ llmuxd spawn claude --name main --cwd ~/projects/myapp
 llmuxd send main "what does src/index.ts do?"
 
 # Or attach interactively (switch-client if you're already in tmux)
-llmuxd chat main
+llmuxd attach main
 
 # Or expose a browser-terminal — opens the session in any browser
 llmuxd serve

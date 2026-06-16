@@ -98,15 +98,32 @@ const broadcast: Command = {
 };
 broadcast.help = makeHelp('broadcast', broadcast.summary, broadcast.usage, broadcast.flags);
 
-const chat: Command = {
-  summary: 'Interactively attach to a session',
-  usage: 'llmuxd chat <session> [--browser] [-it]',
+const attach: Command = {
+  summary: 'Interactively attach to a session (tmux switch-client / attach-session)',
+  usage: 'llmuxd attach <session> [--browser] [-it]',
   flags: {
     browser: { kind: 'boolean', description: 'Open in browser web terminal (requires serve)' },
     it: { kind: 'boolean', description: 'Interactive picker when ambiguous' },
   },
   help: () => '',
   run: (args) => h.handleChat(args),
+};
+attach.help = makeHelp('attach', attach.summary, attach.usage, attach.flags);
+
+// Deprecated alias for `attach` — kept for one minor cycle.
+// The verb `chat` misled users into expecting a chat composer; the action
+// is a TTY takeover, so `attach` is the truer name.
+const chat: Command = {
+  summary: '[deprecated] Alias for `attach`',
+  usage: 'llmuxd chat <session> [--browser] [-it]',
+  flags: attach.flags,
+  help: () => '',
+  run: (args) => {
+    process.stderr.write(
+      "llmuxd: 'chat' is deprecated; use 'attach' instead. The verb attaches a TTY to a running session, not a chat composer.\n"
+    );
+    return h.handleChat(args);
+  },
 };
 chat.help = makeHelp('chat', chat.summary, chat.usage, chat.flags);
 
@@ -188,6 +205,7 @@ export const commands: Record<string, Command> = {
   spawn,
   send,
   broadcast,
+  attach,
   chat,
   kill,
   status,

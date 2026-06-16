@@ -83,8 +83,9 @@ function sessionPage(name: string): string {
   #bar .sep{flex:0 0 auto;width:1px;height:20px;background:#262c34;margin:0 2px}
   #all-keys{position:fixed;top:var(--bar-h);left:0;right:0;background:#0e1116;border-bottom:1px solid #1f2329;display:none;padding:8px;z-index:19;max-height:40vh;overflow-y:auto;box-sizing:border-box}
   #all-keys.open{display:block}
-  #all-keys h4{margin:6px 4px 4px;font:500 10px/1 ui-monospace,monospace;color:#7a7f87;text-transform:uppercase;letter-spacing:.06em}
-  #all-keys .row{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px}
+  #all-keys h4{margin:14px 4px 6px;font:500 10px/1 ui-monospace,monospace;color:#7a7f87;text-transform:uppercase;letter-spacing:.06em}
+  #all-keys h4:first-child{margin-top:4px}
+  #all-keys .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
   #all-keys button{flex:0 0 auto;min-width:36px;height:30px;padding:0 8px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:12px ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
   #all-keys button:active{background:#252b34;border-color:#3a414b}
   #term{position:fixed;top:var(--bar-h);left:0;right:0;bottom:0}
@@ -100,7 +101,7 @@ function sessionPage(name: string): string {
 </style></head>
 <body>
 <div id="bar">
-  <button id="back" title="Back to sessions">←</button>
+  <button id="back" title="Back to sessions">⌂</button>
   <span id="title-block"><span id="title-dot" data-state="connecting" title="${escapedName} — connecting…"></span></span>
   <div id="keys-scroll">
     <button data-key="esc" title="Escape">Esc</button>
