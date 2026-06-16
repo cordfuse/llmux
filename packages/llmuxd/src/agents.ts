@@ -38,16 +38,18 @@ const copilotInstalled = (): boolean => {
 };
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
-  claude:   { key: 'claude',   displayName: 'Claude Code',     cmd: 'claude',     flags: '--dangerously-skip-permissions', readyPrompt: '^>' },
-  codex:    { key: 'codex',    displayName: 'Codex CLI',       cmd: 'codex',                                              readyPrompt: '^>' },
-  agy:      { key: 'agy',      displayName: 'Antigravity CLI', cmd: 'agy',        flags: '--dangerously-skip-permissions', readyPrompt: '^agy>' },
-  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',      cmd: 'gemini',     flags: '--yolo',                         readyPrompt: '^>' },
-  qwen:     { key: 'qwen',     displayName: 'Qwen Code',       cmd: 'qwen',       flags: '--yolo',                         readyPrompt: '^>' },
-  opencode: { key: 'opencode', displayName: 'OpenCode',        cmd: 'opencode',                                           readyPrompt: '^>' },
-  grok:     { key: 'grok',     displayName: 'Grok CLI',        cmd: 'grok',                                               readyPrompt: '^grok>' },
-  aider:    { key: 'aider',    displayName: 'Aider',           cmd: 'aider',      flags: '--model claude-opus-4-6',        readyPrompt: '^> $' },
-  goose:    { key: 'goose',    displayName: 'Goose',           cmd: 'goose',                                              readyPrompt: 'Goose❯' },
-  copilot:  { key: 'copilot',  displayName: 'GitHub Copilot',  cmd: 'gh copilot',                                         readyPrompt: '●', detectInstalled: copilotInstalled },
+  claude:   { key: 'claude',   displayName: 'Claude Code',     cmd: 'claude',     flags: '--dangerously-skip-permissions',           readyPrompt: '^>' },
+  codex:    { key: 'codex',    displayName: 'Codex CLI',       cmd: 'codex',      flags: '--dangerously-bypass-approvals-and-sandbox', readyPrompt: '^>' },
+  agy:      { key: 'agy',      displayName: 'Antigravity CLI', cmd: 'agy',        flags: '--dangerously-skip-permissions',           readyPrompt: '^agy>' },
+  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',      cmd: 'gemini',     flags: '--yolo',                                   readyPrompt: '^>' },
+  qwen:     { key: 'qwen',     displayName: 'Qwen Code',       cmd: 'qwen',       flags: '--yolo',                                   readyPrompt: '^>' },
+  opencode: { key: 'opencode', displayName: 'OpenCode',        cmd: 'opencode',   flags: '--dangerously-skip-permissions',           readyPrompt: '^>' },
+  grok:     { key: 'grok',     displayName: 'Grok CLI',        cmd: 'grok',       flags: '--always-approve',                         readyPrompt: '^grok>' },
+  aider:    { key: 'aider',    displayName: 'Aider',           cmd: 'aider',      flags: '--yes-always --model claude-opus-4-6',     readyPrompt: '^> $' },
+  // goose has no equivalent CLI flag — auto-approve is controlled via the
+  // GOOSE_MODE=auto env var or permission.yaml config (not a launch arg).
+  goose:    { key: 'goose',    displayName: 'Goose',           cmd: 'goose',                                                         readyPrompt: 'Goose❯' },
+  copilot:  { key: 'copilot',  displayName: 'GitHub Copilot',  cmd: 'gh copilot',                                                    readyPrompt: '●', detectInstalled: copilotInstalled },
 };
 
 export function isAgentInstalled(agent: AgentDefinition): boolean {
