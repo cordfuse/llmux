@@ -50,6 +50,10 @@ interface SessionView {
   agent: string;
   cwd: string;
   cwdDisplay: string;
+  /** The launch-flags override stored on this session (undefined = inherits agent default). */
+  flags?: string;
+  /** The agent's default flags — included so the UI can prefill the edit form. */
+  defaultFlags: string;
   createdAt: string;
   parent: string | null;
   status: 'running' | 'exited';
@@ -67,15 +71,7 @@ function listSessionViews(): SessionView[] {
   const tracked = state.list();
   const live = new Set(tmux.listSessions().map((s) => s.name));
   return tracked
-    .map((s) => ({
-      name: s.name,
-      agent: s.agent,
-      cwd: s.cwd,
-      cwdDisplay: shortenCwd(s.cwd),
-      createdAt: s.createdAt,
-      parent: s.parent,
-      status: live.has(s.name) ? 'running' as const : 'exited' as const,
-    }))
+    .map((s) => viewOf(s, live.has(s.name)))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -184,6 +180,11 @@ function pickerPage(): string {
       <input id="new-cwd" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="(defaults to \$HOME on the daemon host)">
     </div>
     <div id="new-cwd-hint" class="hint" hidden>cwd changes take effect on next respawn (running sessions keep their original cwd)</div>
+    <div class="field">
+      <label for="new-flags">flags</label>
+      <input id="new-flags" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="(agent default)">
+    </div>
+    <div id="new-flags-hint" class="hint" hidden>flags changes take effect on next respawn. Leave empty to use the agent default.</div>
     <div class="actions">
       <button type="button" id="new-cancel">cancel</button>
       <button type="submit" class="primary" id="new-submit">spawn</button>
@@ -233,7 +234,7 @@ function pickerPage(): string {
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
     const respawnBtn = s.status === 'exited' ? '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '">↻ respawn</button>' : '';
-    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '">✎ edit</button>';
+    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '">✎ edit</button>';
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
     return '<tr data-name="' + escapeHtml(s.name) + '">' +
@@ -302,7 +303,7 @@ function pickerPage(): string {
     const name = btn.dataset.name;
     const kind = btn.dataset.action;
     if (kind === 'edit'){
-      openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd });
+      openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd, flags: btn.dataset.flags });
       return;
     }
     action(name, kind, btn);
@@ -316,12 +317,20 @@ function pickerPage(): string {
   const newAgent = document.getElementById('new-agent');
   const newName = document.getElementById('new-name');
   const newCwd = document.getElementById('new-cwd');
+  const newFlags = document.getElementById('new-flags');
   const newCwdHint = document.getElementById('new-cwd-hint');
+  const newFlagsHint = document.getElementById('new-flags-hint');
   const newCancel = document.getElementById('new-cancel');
   const newSubmit = document.getElementById('new-submit');
   let agentsLoaded = false;
+  let agentList = [];
   // mode: null (closed) | 'new' | { edit: <original-name> }
   let formMode = null;
+
+  function agentDefaultFlags(key){
+    const a = agentList.find(function(x){ return x.key === key; });
+    return (a && a.flags) || '';
+  }
 
   async function loadAgents(){
     if (agentsLoaded) return;
@@ -331,7 +340,9 @@ function pickerPage(): string {
       const list = await r.json();
       if (!Array.isArray(list) || list.length === 0){
         newAgent.innerHTML = '<option value="" disabled selected>no installed agents</option>';
+        agentList = [];
       } else {
+        agentList = list;
         newAgent.innerHTML = list.map(function(a){
           const label = a.displayName || a.key;
           return '<option value="' + escapeHtml(a.key) + '">' + escapeHtml(label) + '</option>';
@@ -350,17 +361,25 @@ function pickerPage(): string {
     newAgent.disabled = false;
   }
 
+  function syncFlagsPlaceholder(){
+    const def = agentDefaultFlags(newAgent.value);
+    newFlags.placeholder = def ? '(default: ' + def + ')' : '(none)';
+  }
+
   async function openNewForm(){
     formMode = 'new';
     newTitle.textContent = 'new session';
     newSubmit.textContent = 'spawn';
     newName.value = '';
     newCwd.value = '';
+    newFlags.value = '';
     newAgent.disabled = false;
     newCwdHint.hidden = true;
+    newFlagsHint.hidden = true;
     newForm.classList.add('open');
     newForm.setAttribute('aria-hidden', 'false');
     await loadAgents();
+    syncFlagsPlaceholder();
     newAgent.focus();
   }
 
@@ -370,7 +389,12 @@ function pickerPage(): string {
     newSubmit.textContent = 'save';
     newName.value = row.name;
     newCwd.value = row.cwd || '';
+    // For edit, prefill flags with the persisted override if present, else
+    // leave blank so the input clearly represents "no override". The
+    // placeholder still shows the agent default for reference.
+    newFlags.value = row.flags || '';
     newCwdHint.hidden = false;
+    newFlagsHint.hidden = false;
     newForm.classList.add('open');
     newForm.setAttribute('aria-hidden', 'false');
     await loadAgents();
@@ -378,9 +402,14 @@ function pickerPage(): string {
     // surface it as read-only so the user sees what they have.
     if (row.agent) newAgent.value = row.agent;
     newAgent.disabled = true;
+    syncFlagsPlaceholder();
     newName.focus();
     newName.select();
   }
+
+  newAgent.addEventListener('change', function(){
+    if (formMode === 'new') syncFlagsPlaceholder();
+  });
 
   newBtn.addEventListener('click', function(){
     if (newForm.classList.contains('open') && formMode === 'new'){ closeForm(); return; }
@@ -393,12 +422,15 @@ function pickerPage(): string {
     e.preventDefault();
     const name = newName.value.trim();
     const cwd = newCwd.value.trim();
+    const flags = newFlags.value;
     newSubmit.disabled = true;
     const originalLabel = newSubmit.textContent;
     try {
       if (formMode && formMode.edit){
         newSubmit.textContent = 'saving…';
-        const body = {};
+        // For edit, always send flags so empty input clears the override
+        // back to agent default. name/cwd still only sent if user typed.
+        const body = { flags: flags };
         if (name) body.name = name;
         if (cwd) body.cwd = cwd;
         const r = await fetch('/api/sessions/' + encodeURIComponent(formMode.edit), {
@@ -416,6 +448,8 @@ function pickerPage(): string {
         const body = { agent };
         if (name) body.name = name;
         if (cwd) body.cwd = cwd;
+        // Only send flags if user typed something — otherwise server uses default.
+        if (flags.trim()) body.flags = flags;
         const r = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -1214,13 +1248,28 @@ function sendJson(res: ServerResponse, body: unknown, status = 200): void {
 
 // ---------- API actions ----------
 
-function buildAgentCommand(agent: AgentDefinition): string {
-  return agent.flags ? `${agent.cmd} ${agent.flags}` : agent.cmd;
+function buildAgentCommand(agent: AgentDefinition, flagsOverride?: string): string {
+  const flags = flagsOverride !== undefined ? flagsOverride : (agent.flags ?? '');
+  return flags ? `${agent.cmd} ${flags}` : agent.cmd;
+}
+
+function viewOf(s: state.SessionState, live: boolean): SessionView {
+  return {
+    name: s.name,
+    agent: s.agent,
+    cwd: s.cwd,
+    cwdDisplay: shortenCwd(s.cwd),
+    ...(s.flags !== undefined ? { flags: s.flags } : {}),
+    defaultFlags: DEFAULT_AGENTS[s.agent]?.flags ?? '',
+    createdAt: s.createdAt,
+    parent: s.parent,
+    status: live ? 'running' : 'exited',
+  };
 }
 
 const SESSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-function createSession(input: { agent: string; name?: string; cwd?: string }):
+function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string }):
   | { ok: true; session: SessionView }
   | { ok: false; error: string } {
   if (!input.agent) return { ok: false, error: 'agent is required' };
@@ -1239,10 +1288,15 @@ function createSession(input: { agent: string; name?: string; cwd?: string }):
   const cwd = (input.cwd && input.cwd.trim()) || process.env.HOME || process.cwd();
   if (!existsSync(cwd)) return { ok: false, error: `cwd does not exist: ${cwd}` };
 
+  // Blank flags string is treated as "use default" so an empty form field
+  // doesn't override the agent's intent. Non-empty after trim = override.
+  const flagsTrimmed = input.flags?.trim();
+  const flagsOverride = flagsTrimmed && flagsTrimmed.length > 0 ? flagsTrimmed : undefined;
+
   try {
     tmux.newSession({
       name,
-      command: buildAgentCommand(agentDef),
+      command: buildAgentCommand(agentDef, flagsOverride),
       cwd,
       env: { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key },
     });
@@ -1250,20 +1304,18 @@ function createSession(input: { agent: string; name?: string; cwd?: string }):
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
-  const session = {
+  const session: state.SessionState = {
     name,
     agent: agentDef.key,
     cwd,
+    ...(flagsOverride !== undefined ? { flags: flagsOverride } : {}),
     createdAt: new Date().toISOString(),
     parent: null,
-    restart: 'on-failure' as const,
+    restart: 'on-failure',
   };
   state.record(session);
 
-  return {
-    ok: true,
-    session: { ...session, cwdDisplay: shortenCwd(session.cwd), status: 'running' },
-  };
+  return { ok: true, session: viewOf(session, true) };
 }
 
 function respawnSession(name: string): { ok: true; session: SessionView } | { ok: false; error: string } {
@@ -1276,24 +1328,21 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
   try {
     tmux.newSession({
       name: session.name,
-      command: buildAgentCommand(agent),
+      command: buildAgentCommand(agent, session.flags),
       cwd: session.cwd,
       env: { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent },
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-  const refreshed = { ...session, createdAt: new Date().toISOString() };
+  const refreshed: state.SessionState = { ...session, createdAt: new Date().toISOString() };
   state.record(refreshed);
-  return {
-    ok: true,
-    session: { name, agent: refreshed.agent, cwd: refreshed.cwd, cwdDisplay: shortenCwd(refreshed.cwd), createdAt: refreshed.createdAt, parent: refreshed.parent, status: 'running' },
-  };
+  return { ok: true, session: viewOf(refreshed, true) };
 }
 
 function editSession(
   oldName: string,
-  patch: { name?: string; cwd?: string },
+  patch: { name?: string; cwd?: string; flags?: string },
 ): { ok: true; session: SessionView } | { ok: false; error: string } {
   const session = state.get(oldName);
   if (!session) return { ok: false, error: `no tracked session "${oldName}"` };
@@ -1325,10 +1374,21 @@ function editSession(
     }
   }
 
+  // flags semantics:
+  //   patch.flags === undefined → no change (preserve existing override)
+  //   patch.flags === ''        → clear override (use agent default again)
+  //   patch.flags === '…'       → set override to the trimmed value
+  let nextFlags = session.flags;
+  if (patch.flags !== undefined) {
+    const trimmed = patch.flags.trim();
+    nextFlags = trimmed.length > 0 ? trimmed : undefined;
+  }
+
   const updated: state.SessionState = {
     name: renaming ? newName! : oldName,
     agent: session.agent,
     cwd: newCwd !== undefined && newCwd.length > 0 ? newCwd : session.cwd,
+    ...(nextFlags !== undefined ? { flags: nextFlags } : {}),
     createdAt: session.createdAt,
     parent: session.parent,
     restart: session.restart,
@@ -1338,18 +1398,7 @@ function editSession(
   state.record(updated);
 
   const live = tmux.listSessions().some((s) => s.name === updated.name);
-  return {
-    ok: true,
-    session: {
-      name: updated.name,
-      agent: updated.agent,
-      cwd: updated.cwd,
-      cwdDisplay: shortenCwd(updated.cwd),
-      createdAt: updated.createdAt,
-      parent: updated.parent,
-      status: live ? 'running' : 'exited',
-    },
-  };
+  return { ok: true, session: viewOf(updated, live) };
 }
 
 function killSession(name: string): { ok: true; status: 'running' | 'exited' } | { ok: false; error: string } {
@@ -1453,16 +1502,17 @@ export function startServer(opts: ServeOptions): ServerHandle {
     if (url.pathname === '/api/agents' && method === 'GET') {
       const installed = Object.entries(DEFAULT_AGENTS)
         .filter(([, def]) => isAgentInstalled(def))
-        .map(([key, def]) => ({ key, displayName: def.displayName, cmd: def.cmd }));
+        .map(([key, def]) => ({ key, displayName: def.displayName, cmd: def.cmd, flags: def.flags ?? '' }));
       return sendJson(res, installed);
     }
     if (url.pathname === '/api/sessions' && method === 'POST') {
       try {
-        const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown };
+        const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown; flags?: unknown };
         const result = createSession({
           agent: typeof body.agent === 'string' ? body.agent : '',
           ...(typeof body.name === 'string' ? { name: body.name } : {}),
           ...(typeof body.cwd === 'string' ? { cwd: body.cwd } : {}),
+          ...(typeof body.flags === 'string' ? { flags: body.flags } : {}),
         });
         return sendJson(res, result, result.ok ? 200 : 400);
       } catch (err) {
@@ -1488,10 +1538,11 @@ export function startServer(opts: ServeOptions): ServerHandle {
       if (mEdit) {
         const name = decodeURIComponent(mEdit[1]!);
         try {
-          const body = (await readJsonBody(req)) as { name?: unknown; cwd?: unknown };
+          const body = (await readJsonBody(req)) as { name?: unknown; cwd?: unknown; flags?: unknown };
           const result = editSession(name, {
             ...(typeof body.name === 'string' ? { name: body.name } : {}),
             ...(typeof body.cwd === 'string' ? { cwd: body.cwd } : {}),
+            ...(typeof body.flags === 'string' ? { flags: body.flags } : {}),
           });
           return sendJson(res, result, result.ok ? 200 : 400);
         } catch (err) {
@@ -1511,16 +1562,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
       // If tmux doesn't have it, serve the dead-session page instead of the chat
       // (which would immediately disconnect when pty.spawn('tmux attach …') fails).
       if (!tmux.hasSession(name)) {
-        const view: SessionView = {
-          name: session.name,
-          agent: session.agent,
-          cwd: session.cwd,
-          cwdDisplay: shortenCwd(session.cwd),
-          createdAt: session.createdAt,
-          parent: session.parent,
-          status: 'exited',
-        };
-        return sendHtml(res, deadSessionPage(view));
+        return sendHtml(res, deadSessionPage(viewOf(session, false)));
       }
       return sendHtml(res, sessionPage(name));
     }

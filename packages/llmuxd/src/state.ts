@@ -6,6 +6,8 @@ export interface SessionState {
   name: string;
   agent: string;
   cwd: string;
+  /** Override of the agent definition's default flags. undefined = use default. */
+  flags?: string;
   createdAt: string;
   parent: string | null;
   restart: 'always' | 'on-failure' | 'never';
