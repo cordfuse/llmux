@@ -5,6 +5,28 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-06-16
+
+### Changed
+
+- **README restructured problem-first.** Opens on the pain (window-juggling
+  N agent CLIs, no broadcast, no phone access) and pays off with the outcome
+  before any architecture. Install + quickstart moved above the two-binary
+  table — value-before-architecture.
+- **Status line corrected.** Previous wording (`scaffold — Phase 1 in
+  progress`) was two minors stale. Now reads `v0.2.2 — Phases 0/1/4 shipped;
+  Phases 2/3/5–7 pending` and the build-phases list uses `[x]`/`[ ]`
+  checkboxes with version numbers so a first-time reader can tell what's
+  real today.
+- `ccmux` reference dropped from the lede — inside-baseball framing for a
+  first-impression doc.
+
+### Note
+
+Code-equivalent to v0.2.1 — patch release exists so the npm package
+listing picks up the new README. `npmjs.com` renders the README from
+the published tarball, not from `main`.
+
 ## [0.2.1] — 2026-06-16
 
 ### Added — Phase 4 mobile UX
