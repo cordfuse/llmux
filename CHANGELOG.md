@@ -5,6 +5,25 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.8] — 2026-06-16
+
+### Changed
+
+- **Mobile "All keys" overlay breathes.** Section header `margin-top`
+  bumped from 6px to 14px, inter-button `gap` 4 → 8px, row
+  `margin-bottom` 4 → 8px. Sections now visually separate instead of
+  butting against each other. Overlay stays capped at 40vh with internal
+  scroll; the terminal beneath gets the same usable area as before.
+- **Back-to-sessions button glyph** `←` → `⌂`. The previous arrow
+  collided with the keyboard left-arrow that sits in the same toolbar.
+  House icon reads unambiguously as "go home" with no semantic conflict.
+- **`llmuxd attach <session>` is the new canonical verb** for
+  interactively taking over a TTY. `llmuxd chat` is kept as a deprecated
+  alias for one minor cycle and prints a deprecation warning to stderr
+  on use. The verb `chat` primed users to expect a chat composer; the
+  action is a TTY takeover, so `attach` is the truer name. Quickstart
+  README updated to `attach`.
+
 ## [0.2.7] — 2026-06-16
 
 ### Fixed
