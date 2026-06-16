@@ -357,7 +357,8 @@ function sessionPage(name: string): string {
   #title-dot[data-state="reconnecting"]{animation:pulse 1s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;margin-left:auto;padding-left:8px}
+  #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;margin-left:auto;padding-left:8px}
+  #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;padding-left:6px}
   #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:8px 0;z-index:20;box-sizing:border-box}
   #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:0 0 auto;height:32px}
   #bar .row.arrows{justify-content:center}
@@ -390,7 +391,8 @@ function sessionPage(name: string): string {
     #topbar{padding:0 6px;gap:6px}
     #topbar #back{height:20px;width:30px;font-size:13px}
     #title-block{font-size:11px}
-    #title-version{font-size:9px}
+    #title-brand{font-size:10px;padding-left:6px}
+    #title-version{font-size:9px;padding-left:4px}
     #bar button{height:22px;min-width:36px;padding:0 8px;font-size:11px}
     #bar{padding:4px 0;gap:4px}
     #bar .row{gap:4px;height:24px}
@@ -402,6 +404,7 @@ function sessionPage(name: string): string {
 <div id="topbar">
   <button id="back" title="Back to sessions">⌂</button>
   <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span></span>
+  <span id="title-brand">LLMUX</span>
   <span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span>
 </div>
 <div id="bar">
