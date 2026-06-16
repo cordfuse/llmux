@@ -951,8 +951,13 @@ function gatePage(reason: 'missing' | 'invalid'): string {
         return;
       }
       // Cookie set by server; reload the originally requested URL so the
-      // user lands where they wanted, not at /.
-      location.href = location.pathname + location.search;
+      // user lands where they wanted, not at /. Strip any stale ?token= from
+      // the URL — if we left it, the canonical-url rule on the next request
+      // would invalidate the cookie we just set (infinite gate loop).
+      const params = new URLSearchParams(location.search);
+      params.delete('token');
+      const query = params.toString();
+      location.href = location.pathname + (query ? '?' + query : '');
     } catch(err){
       msg.textContent = 'request failed: ' + (err.message || err);
       btn.disabled = false;
