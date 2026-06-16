@@ -5,6 +5,24 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-06-16
+
+### Changed (CI debug-only)
+
+- **Release workflow has a debug job** that runs `npm whoami`,
+  `npm config get registry`, `npm access list packages`, and dumps the
+  effective `~/.npmrc` (token masked) before the publish steps. This is
+  diagnostic instrumentation for the recurring CI publish 404 — same
+  `NPM_TOKEN` works for `npm whoami` from cachy as user `cordfuse` and
+  for `npm publish --dry-run`, but every CI Release run returns
+  `404 Not Found - PUT registry.npmjs.org/@cordfuse%2fllmuxd`. The debug
+  output identifies whether the runner-side issue is auth (whoami fails)
+  or write authorization (whoami succeeds, publish 404).
+- `npm publish` steps now run with `--loglevel=verbose` so the full HTTP
+  exchange is visible in the log if write authz is the actual issue.
+
+No code changes. Debug steps revert after the CI mystery is solved.
+
 ## [0.2.4] — 2026-06-16
 
 ### Fixed
