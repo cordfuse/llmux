@@ -5,6 +5,26 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-06-16
+
+### Fixed
+
+- **Published tarballs now include README and LICENSE.** Both
+  `@cordfuse/llmuxd` and `@cordfuse/llmux` previously shipped tarballs
+  containing only `bin/`, `dist/`, `src/`, and `package.json` — npm only
+  packs files that exist in the package directory, and the project's
+  single README + LICENSE live at the repo root. Result: every npmjs.com
+  page since v0.0.1 showed "No README found." The v0.2.2 patch release
+  (intended to refresh the README on npm) silently shipped no README at
+  all.
+
+  Fix: each package's `prepublishOnly` now copies `../../README.md` and
+  `../../LICENSE` into the package directory before build; a matching
+  `postpublish` removes them. `packages/*/README.md` and
+  `packages/*/LICENSE` are `.gitignore`d as a safety net if publish
+  fails mid-flight. Symlinks deliberately not used — Windows clones
+  break them.
+
 ## [0.2.2] — 2026-06-16
 
 ### Changed
