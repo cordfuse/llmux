@@ -97,6 +97,81 @@ function listSessionViews(): SessionView[] {
 const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#0b0c10"/><rect x="5" y="5" width="9" height="9" fill="#7cc4ff"/><rect x="18" y="5" width="9" height="9" fill="#7cc4ff"/><rect x="5" y="18" width="9" height="9" fill="#7cc4ff"/><rect x="18" y="18" width="9" height="9" fill="#7cc4ff"/></svg>`;
 const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`;
 
+// ---------- PWA assets ----------
+// Manifest + service worker + icon SVGs served from always-open routes so
+// the browser can discover them before the auth gate. The SW caches the
+// app shell once the user is authed (the SW's fetch carries cookies).
+
+const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" fill="#0b0c10"/><rect x="30" y="30" width="58" height="58" rx="6" fill="#7cc4ff"/><rect x="104" y="30" width="58" height="58" rx="6" fill="#7cc4ff"/><rect x="30" y="104" width="58" height="58" rx="6" fill="#7cc4ff"/><rect x="104" y="104" width="58" height="58" rx="6" fill="#7cc4ff"/></svg>`;
+
+const PWA_MANIFEST = JSON.stringify({
+  name: 'llmux',
+  short_name: 'llmux',
+  description: 'tmux-based AI agent dispatcher — drive every CLI from your phone',
+  start_url: '/',
+  scope: '/',
+  display: 'standalone',
+  orientation: 'any',
+  background_color: '#0b0c10',
+  theme_color: '#0b0c10',
+  icons: [
+    { src: '/icon-192.svg', sizes: '192x192', type: 'image/svg+xml', purpose: 'any' },
+    { src: '/icon-512.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
+  ],
+});
+
+// Minimal service worker — network-first (this is a live dashboard, not a
+// static site), cache fallback for the shell so the installed app opens
+// even on flaky transit. Bumping CACHE_VERSION on schema-affecting changes
+// will purge older caches on next activate.
+const SW_CACHE_VERSION = 'llmux-v1';
+const PWA_SW_JS = `// llmux service worker (auto-registered from the picker page)
+const CACHE = '${SW_CACHE_VERSION}';
+const SHELL = ['/', '/manifest.webmanifest'];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL).catch(() => {})));
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))),
+    ),
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url);
+  // Skip non-GET, WebSocket, and same-origin API/WS paths — they need fresh
+  // server state and the SW must not interpose.
+  if (e.request.method !== 'GET') return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws/')) return;
+  e.respondWith(
+    fetch(e.request)
+      .then((r) => {
+        if (r.ok && (url.pathname === '/' || url.pathname === '/manifest.webmanifest')) {
+          const copy = r.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        }
+        return r;
+      })
+      .catch(() => caches.match(e.request).then((m) => m || new Response('offline', { status: 503 }))),
+  );
+});
+`;
+
+const PWA_HEAD_TAGS = `<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b0c10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="llmux">
+<meta name="application-name" content="llmux">
+<script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){})})}</script>`;
+
 // ---------- pages ----------
 
 function pickerPage(): string {
@@ -106,6 +181,7 @@ function pickerPage(): string {
 <title>LLMUX: Sessions</title>
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
+${PWA_HEAD_TAGS}
 <style>
   :root{color-scheme:dark}
   html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px;overflow-x:hidden}
@@ -1982,6 +2058,30 @@ export function startServer(opts: ServeOptions): ServerHandle {
     }
     if (url.pathname === '/api/version' && method === 'GET') {
       return sendJson(res, { version: DAEMON_VERSION });
+    }
+    // PWA discovery — manifest, service worker, icons. All must be reachable
+    // before the auth gate so the browser can install the app.
+    if (url.pathname === '/manifest.webmanifest' && method === 'GET') {
+      res.writeHead(200, {
+        'content-type': 'application/manifest+json; charset=utf-8',
+        'cache-control': 'public, max-age=3600',
+      });
+      return res.end(PWA_MANIFEST);
+    }
+    if (url.pathname === '/sw.js' && method === 'GET') {
+      res.writeHead(200, {
+        'content-type': 'application/javascript; charset=utf-8',
+        'cache-control': 'no-cache',
+        'service-worker-allowed': '/',
+      });
+      return res.end(PWA_SW_JS);
+    }
+    if ((url.pathname === '/icon-192.svg' || url.pathname === '/icon-512.svg') && method === 'GET') {
+      res.writeHead(200, {
+        'content-type': 'image/svg+xml; charset=utf-8',
+        'cache-control': 'public, max-age=86400',
+      });
+      return res.end(PWA_ICON_SVG);
     }
 
     // ---- Auth gate (POST /api/auth, no prior auth required) ----

@@ -46,10 +46,11 @@ when a token expires — phone in, click through, phone out.
 That's the same surface you get for everyday driving: pick an agent on
 your phone over LTE, type a prompt into a real xterm with a soft-keyboard
 toolbar (Esc / Tab / Ctrl / arrows / shell chars), watch tool calls
-stream in. No "mobile app" — it's the same daemon serving a real
-terminal over a WebSocket.
+stream in. **The picker is a PWA** — "Add to Home Screen" in Chrome or
+Safari and it launches standalone (no browser chrome, splash screen, OS
+task-switcher entry). Same daemon, same WebSocket, just feels native.
 
-> **Status:** v0.13.7 — daemon + CLI client consolidated into one binary
+> **Status:** v0.14.0 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 

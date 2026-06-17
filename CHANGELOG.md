@@ -5,6 +5,41 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-16
+
+### Added — picker is now a PWA
+
+The browser picker is installable as a Progressive Web App. "Add to
+Home Screen" in Chrome (Android) or Safari (iOS) and llmux launches
+standalone — no browser chrome, splash screen, OS task-switcher entry,
+status-bar theming.
+
+**Endpoints added** (all unauthenticated so the browser can discover
+them before the auth gate):
+
+- `GET /manifest.webmanifest` — full PWA manifest (name, scope,
+  start_url, theme/background colors, icons array with `any` and
+  `maskable` purposes).
+- `GET /sw.js` — minimal service worker. Network-first for everything,
+  caches the picker shell + manifest for offline-fallback shell loads.
+  Skips `/api/*` and `/ws/*` paths so live daemon state never gets
+  served stale.
+- `GET /icon-192.svg`, `GET /icon-512.svg` — vector icons (same 2×2
+  grid as the favicon, repainted for adaptive-icon padding so Android's
+  squircle/circle masks don't crop).
+
+**HTML head tags added** to the picker page only (chat / gate pages
+don't need them — they're sub-routes of the installed app):
+
+- `<link rel="manifest">`
+- `<meta name="theme-color">`, `application-name`, `mobile-web-app-capable`
+- Apple-specific: `apple-mobile-web-app-capable`,
+  `-status-bar-style`, `-title`
+- Inline SW registration `<script>` (load event, no-op on failure)
+
+No code changes outside `web/server.ts`. All existing flows
+(authentication, WebSocket attach, REST API, deep-link auth) unchanged.
+
 ## [0.13.7] — 2026-06-16
 
 ### Documentation
