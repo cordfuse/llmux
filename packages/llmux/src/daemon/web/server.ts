@@ -1057,6 +1057,14 @@ function sessionPage(name: string): string {
     #all-keys{max-height:60vh}
     #all-keys button{height:24px;min-width:30px;padding:0 7px;font-size:11px}
   }
+  /* Desktop / mouse-primary devices have a real keyboard — hide the
+     soft-keyboard bar + expanded-keys panel + collapse the layout. The
+     "fine pointer + hover" combo is the standard CSS test for
+     "operator has a mouse." Mobile / touch devices keep the bar. */
+  @media (pointer: fine) and (hover: hover){
+    :root{--bar-h:0px;--allkeys-h:0px}
+    #bar, #all-keys{display:none}
+  }
 </style></head>
 <body>
 <div id="topbar">

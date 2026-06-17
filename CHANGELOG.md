@@ -5,6 +5,21 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.1] — 2026-06-17
+
+### Changed
+
+- Soft-keyboard bar (the bottom toolbar with Esc / Tab / Ctrl /
+  arrows / more-keys panel) now hides on desktop browsers. Detected
+  via `@media (pointer: fine) and (hover: hover)` — the standard CSS
+  test for "operator has a mouse and a real keyboard." When the bar
+  is hidden the `--bar-h` and `--allkeys-h` CSS vars collapse to 0
+  so the xterm viewport claims the full vertical space.
+- Mobile / touch-primary devices keep the bar exactly as before. No
+  JS changes — the layout JS already reads `--bar-h` from
+  `getComputedStyle()` so the media-query swap flows through to
+  fit/resize calls automatically.
+
 ## [0.17.0] — 2026-06-17
 
 ### Added — pinch-to-zoom font size in the web terminal
