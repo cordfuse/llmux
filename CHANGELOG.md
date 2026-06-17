@@ -5,6 +5,42 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-17
+
+### Documentation — README pivot
+
+Dropped the explicit `claude -p` comparison subsection from the README
+opener and the orchestration paragraph that framed llmux as a scriptable
+alternative to the upstream agents' headless modes. The new structure
+leads with operational benefits — multi-session driving, mobile PWA,
+OAuth-on-headless, addressable surface for higher-level patterns —
+without naming or implicitly contrasting against any provider's
+programmatic billing surface.
+
+Why: comparing against `-p`-style modes invites the kind of pedantic
+"this is just X with extra steps" pushback that derails the substance,
+and any framing that reads as "use llmux to avoid provider billing" is
+needless reputational/abuse-team risk. The peer project in this niche
+(ccmux) walks the same operational-only path and the category appears
+stable under that framing. No code paths changed — just framing.
+
+### Documentation — gif hero
+
+Replaced the three static phone screenshots with two real gif
+recordings against the live daemon:
+
+- `docs/demo/cli.gif` — 23 s CLI tour (version, agent catalog,
+  session list, no-LLM prompt, JSON surface). Recorded via `vhs`
+  against `localhost:3030`.
+- `docs/demo/mobile.gif` — 14 s mobile PWA flow (picker → tap row
+  → attached xterm with soft-keyboard toolbar). Recorded via Playwright
+  driving Chromium with Pixel 7 device emulation against the live
+  picker (auth via SAS deep-link).
+
+Both embedded via absolute `raw.githubusercontent.com` URLs so the npm
+package README page renders the same as GitHub. Old static screenshots
+left in `docs/screenshots/` for now — no harm, may be repurposed.
+
 ## [0.14.1] — 2026-06-17
 
 ### Changed — proper brand mark

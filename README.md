@@ -6,65 +6,60 @@
 [![node](https://img.shields.io/node/v/@cordfuse/llmux.svg?label=node)](./packages/llmux/package.json)
 
 Run every AI agent CLI under a single daemon. Each spawn is its own named
-tmux session — own cwd, own flags, own conversation. Run three claude
-sessions across three different repos side-by-side, or one each of claude
-/ codex / gemini, or fifteen of each — there's no per-agent cap and no
-shared state. Drive any of them from a terminal (`llmux session attach`),
-a REST or WebSocket API, or a phone browser over Tailscale. Sessions
-survive daemon restarts; attach is raw-TTY (`Ctrl+]` to detach).
+tmux session — own cwd, own flags, own conversation. Run three `claude`
+sessions across three different repos side-by-side, or one each of
+`claude` / `codex` / `gemini`, or fifteen of each — there's no per-agent
+cap and no shared state. Drive any of them from a terminal (`llmux
+session attach`), a REST or WebSocket API, or a phone browser over
+Tailscale. Sessions survive daemon restarts; attach is raw-TTY (`Ctrl+]`
+to detach).
 
-### Headless ≠ `claude -p`
-
-The obvious way to script Claude Code is `claude -p "prompt"` (and similar
-non-interactive modes in codex, gemini, etc.). Each call spawns a fresh
-short-lived child — no shared conversation, no in-session OAuth, no
-`/commands`, no persistent tool state, no MCP context.
-
-llmux drives the **interactive** agent process — the same TUI a human
-launches — over `tmux send-keys`. Spawn `claude` once, fire prompts at the
-same live agent forever from any client (CLI, REST, WebSocket, web).
-The agent runs unmodified and doesn't know it's being driven headlessly.
-Tool state persists across prompts. Conversations are resumable from any
-client.
-
-That same surface is the substrate higher-level orchestration sits on top
-of — spec-driven development (SDD) pipelines, multi-agent chains,
-scheduled jobs, evals harnessed against live agents — all just `llmux
-session prompt <name> "..."` calls. No special agent build, no headless
-SDK, no mode flag. If a human can drive the agent, llmux can drive it
-the same way.
-
-### OAuth from your phone, on a headless box
-
-A consequence of driving real interactive agents: **OAuth works even when
-the daemon host has no browser.** Spawn `claude` (or `codex`, `gemini`,
-`agy`) on a headless server, open the picker on your phone over Tailscale
-HTTPS, tap the row to attach, complete the browser OAuth flow on your
-phone, detach. The session stays authed forever. Same trick for re-auth
-when a token expires — phone in, click through, phone out.
-
-That's the same surface you get for everyday driving: pick an agent on
-your phone over LTE, type a prompt into a real xterm with a soft-keyboard
-toolbar (Esc / Tab / Ctrl / arrows / shell chars), watch tool calls
-stream in. **The picker is a PWA** — "Add to Home Screen" in Chrome or
-Safari and it launches standalone (no browser chrome, splash screen, OS
-task-switcher entry). Same daemon, same WebSocket, just feels native.
-
-> **Status:** v0.14.1 — daemon + CLI client consolidated into one binary
-> (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
-> history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
+> **Status:** v0.15.0 — daemon + CLI client consolidated into one binary
+> (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
+> Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/sessions.jpg" width="32%" alt="mobile sessions picker — 5 agents running, respawn/edit/kill per row">
-  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/edit.jpg" width="32%" alt="edit session form — agent, name, cwd, flags, env vars">
-  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/chat.jpg" width="32%" alt="phone chat — xterm.js with soft-keyboard toolbar attached to an OpenCode session">
+  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/cli.gif" width="85%" alt="CLI tour — version, installed agents, session list, JSON output">
 </p>
 
-> Above: picker, edit form, and attached terminal — phone, over Tailscale
-> HTTPS. The same surfaces are available from any terminal via
-> **`llmux session attach <name>`** (raw TTY pass-through over WebSocket;
-> Ctrl+] to detach). Pick whichever fits the task — the browser is for
-> drive-by phone use, the terminal is for everything else.
+<p align="center"><em>CLI tour against a live daemon — version, agent catalog, session list, JSON surface.</em></p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/mobile.gif" width="30%" alt="Mobile PWA picker, attach into an opencode session, soft-keyboard toolbar visible">
+</p>
+
+<p align="center"><em>Phone — picker → tap session → attached xterm with soft-keyboard toolbar (Esc / Tab / Ctrl / arrows / shell chars). Pixel 7 emulation.</em></p>
+
+### One persistent process per agent
+
+Each `llmux session start <agent>` launches the agent's interactive TUI
+inside a named tmux session and keeps it running. Tool state,
+conversation, `/commands`, and MCP context all persist across prompts
+and across clients. Spawn once, send keystrokes from a CLI, a REST call,
+a WebSocket attach, or the browser picker — the live process is the
+source of truth and every client sees the same state.
+
+### Mobile, by design
+
+The web picker is an installable PWA reachable over Tailscale HTTPS.
+Open it from your phone — including over LTE — and you get the same
+xterm.js terminal a desktop browser shows, with a soft-keyboard toolbar
+that surfaces the chars gboard hides (Esc / Tab / Ctrl / arrows /
+shell chars). "Add to Home Screen" in Chrome or Safari and llmux
+launches standalone — no browser chrome, splash screen, OS
+task-switcher entry. Same daemon, same WebSocket, just feels native.
+
+A consequence: **first-run OAuth on a headless box just works.** Spawn
+an agent on a browserless server, attach from your phone, click through
+the browser OAuth flow there, detach. The session stays authed for
+re-attaches forever.
+
+### One addressable surface, many use cases
+
+Because each session is reachable by name from any client, llmux is the
+substrate higher-level patterns sit on — spec-driven development (SDD)
+pipelines, multi-agent chains, scheduled jobs, evals harnessed against
+live agents.
 
 ## Install
 
