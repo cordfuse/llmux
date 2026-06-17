@@ -118,11 +118,14 @@ Session verbs (local by default; pass --server <url> to target a remote daemon):
   session history <name>                        list past conversations for the session's cwd
 
 Server verbs (always local):
-  server start [--port N] [--no-qr]             run the HTTP/WS daemon (formerly: llmuxd serve)
+  server start [--port N] [--no-qr]             run the HTTP/WS daemon. By default,
+               [--qr-endpoint <label>]          creates a pairing token and prints
+               [--qr-name N] [--qr-expiry ISO]  a QR; --no-qr to suppress.
 
 Token verbs (always local — managing the daemon-host's auth store):
   token create [--name N] [--expiry ISO] [--qr] [--qr-endpoint <label>]
   token list                                    show active tokens
+  token rename <id> --name <label>              rename a token (pass --name "" to clear)
   token revoke <id>                             revoke a token by id
 
 Agent verbs:
@@ -280,7 +283,10 @@ async function dispatchServer(verb: string | undefined, args: string[]): Promise
   const parsed = parseArgs(args, {
     config: { kind: 'string', description: 'Path to .llmux.yaml' },
     port: { kind: 'string', description: 'Listen port' },
-    'no-qr': { kind: 'boolean', description: 'Suppress QR codes' },
+    'no-qr': { kind: 'boolean', description: 'Suppress pairing-QR output' },
+    'qr-endpoint': { kind: 'string', description: 'endpoint label for the pairing QR (e.g. tailscale-https)' },
+    'qr-name': { kind: 'string', description: 'pairing-token name (default: server-start-<ISO date>)' },
+    'qr-expiry': { kind: 'string', description: 'ISO-8601 expiry for the pairing token' },
   });
   switch (verb) {
     case 'start':
@@ -314,6 +320,9 @@ async function dispatchToken(verb: string | undefined, args: string[]): Promise<
       return;
     case 'revoke':
       h.handleTokenRevoke(parsed);
+      return;
+    case 'rename':
+      h.handleTokenRename(parsed);
       return;
     default:
       throw new Error(`unknown token verb "${verb}"`);

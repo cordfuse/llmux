@@ -5,6 +5,33 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-06-17
+
+### Added — `server start` prints a pairing QR by default
+
+`llmux server start` now auto-creates a pairing token and prints a scannable
+QR code immediately after the address banner. Default endpoint priority is
+**tailscale-https → tailscale-http → lan → local**, so the QR Just Works on
+the phone-on-tailnet path most operators want. Token is named
+`server-start-<ISO date>` unless overridden.
+
+New flags:
+
+- `--no-qr` — suppress the pairing QR (banner only, no token mutation)
+- `--qr-endpoint <label>` — override auto-select (e.g. `lan`, `tailscale-http`)
+- `--qr-name <label>` — name the pairing token
+- `--qr-expiry <ISO-8601>` — give the pairing token a TTL
+
+The `--no-qr` flag was previously declared but inert — this release wires it
+to actual behavior.
+
+### Added — `token rename <id> --name <label>`
+
+New verb to relabel an existing token without revoke + recreate. Closes the
+gap operators hit when they forget `--name` on the original `token create`.
+Pass `--name ""` to clear an existing name. Also exposed via the in-process
+`auth-store.renameAuthToken(idPrefix, newName)` API.
+
 ## [0.20.4] — 2026-06-17
 
 ### Fixed — pinch-to-zoom still broken after v0.20.3 (onSelectionChange regression)
