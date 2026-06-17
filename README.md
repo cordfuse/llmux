@@ -37,7 +37,7 @@ trick for token refresh.
 like, `tmux attach -t <name>` still works exactly as you'd expect —
 llmux just adds the unified surface on top.)
 
-> **Status:** v0.16.1 — daemon + CLI client consolidated into one binary
+> **Status:** v0.16.2 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -234,10 +234,48 @@ either `Authorization: Bearer <sas>` (CLI / curl) or the `llmuxd_token`
 cookie set by the browser gate. Localhost stays open so local CLI use needs
 no token.
 
-If `tailscale serve --https=443 http://localhost:<port>` is configured on the
-host, the server-start banner surfaces the HTTPS hostname URL above the
-http endpoints. The browser picker is a clean TLS surface; CLI `attach`
-currently speaks ws:// only.
+## Tailscale serve fronting
+
+To reach llmux's web picker from another tailnet device (phone, laptop, …)
+over HTTPS, front the daemon with `tailscale serve`. Tailscale terminates
+TLS at the tailnet edge; llmux stays plain HTTP behind it.
+
+**Why a custom port, not 443?** Tailscale serve allows exactly one mapping
+per `host:port`. If you run more than one Cordfuse PWA on the same machine
+(llmux + vyzr + …), they can't all claim port 443 — adding a second app on
+443 silently kicks the first one off. The Cordfuse convention is to give
+each PWA its own custom HTTP/HTTPS port pair so they coexist without
+collision. **llmux's convention is `3080` (HTTP) / `3443` (HTTPS).**
+
+```bash
+tailscale serve --bg --https=3443 http://localhost:3030
+tailscale serve --bg --http=3080  http://localhost:3030
+```
+
+The server-start banner picks up the mapping automatically (any port, not
+just 3443/3080) and surfaces the resulting URLs:
+
+```
+llmux v0.16.x
+
+  ▸ Tailscale HTTPS  https://<host>.tailnet.ts.net:3443
+  ▸ Tailscale HTTP   http://<host>.tailnet.ts.net:3080
+  ▸ Local            http://localhost:3030
+  ▸ LAN              http://192.168.x.x:3030
+```
+
+The browser picker is a clean TLS surface, installable as a PWA. CLI
+`attach` currently speaks `ws://` only — point it at the LAN or local
+HTTP URL.
+
+**Cordfuse PWA port conventions:**
+
+| PWA | HTTP port | HTTPS port |
+|---|---|---|
+| llmux | `3080` | `3443` |
+| vyzr  | `4080` | `4443` |
+
+(Pick non-overlapping ports for any additional Cordfuse PWA you front.)
 
 ## Config (`.llmux.yaml`)
 

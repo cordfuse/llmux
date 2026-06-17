@@ -5,6 +5,21 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.2] — 2026-06-17
+
+### Documentation
+
+- Added a "Tailscale serve fronting" section to the README documenting
+  the canonical Cordfuse port convention for multi-PWA hosts: each PWA
+  uses its OWN custom HTTP/HTTPS port pair (llmux on `3080` / `3443`,
+  vyzr on `4080` / `4443`, etc.) instead of competing for the standard
+  80 / 443 — `tailscale serve` only allows one mapping per `host:port`
+  and adding a second app on 443 silently kicks the first off.
+- Added a port-conventions table parallel to vyzr's, so operators of
+  both apps see the same mapping in either README.
+- No code change. The address-detection logic in `daemon/net.ts`
+  already handles arbitrary ports correctly.
+
 ## [0.16.1] — 2026-06-17
 
 ### Fixed
