@@ -5,6 +5,16 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-06-16
+
+### Documentation
+
+- Added shield badges to the README header: npm version, monthly
+  downloads, license, minimum node engine. All four read directly from
+  the npm registry / package metadata via shields.io — no VERSION file
+  to maintain, no drift risk, single source of truth stays in
+  `packages/llmux/package.json` (mirrored to npm on publish).
+
 ## [0.13.0] — 2026-06-16
 
 ### Added — `.llmux.yaml` actually does something
