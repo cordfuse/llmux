@@ -5,6 +5,44 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-06-17
+
+### Added — Copy button + desktop auto-copy
+
+After multiple failed attempts at Termux-style mobile selection (see
+v0.18.x history and the feat/termux-selection branch for the trail of
+debugging), we landed on the pragmatic answer:
+
+  - **Top-bar Copy button** (⎘) — one tap copies the visible viewport
+    of the terminal to the clipboard. Brief "✓ copied" toast confirms;
+    the button itself flashes green for 600 ms. Trims trailing blank
+    lines so the copy ends on real content.
+  - **Desktop auto-copy** — xterm's onSelectionChange fires when the
+    user mouse-drags a selection. We write the selected text to the
+    clipboard automatically (ttyd's well-known pattern,
+    tsl0922/ttyd ~12k stars). No keyboard shortcut needed; just drag
+    and the selection is already in the clipboard.
+
+### Removed — granular mobile selection
+
+We're not going to ship granular long-press + drag-handle selection
+in the web picker. The browser-over-xterm.js stack fights the platform
+at every layer (z-index, hit-testing, Android's WebApk text-selection
+model, xterm's helper-textarea catching touches) and 10+ iterations
+didn't land it. Per the project's framing — the web picker is for
+drive-by phone use; deep terminal work is `llmux session attach` in a
+real terminal where native shell selection works.
+
+The full failed-attempt code stays preserved on the
+`feat/termux-selection` branch as the architectural-lessons record. If
+a future iteration finds a clean implementation path it has the prior
+work as a reference.
+
+### Bump
+
+Minor (0.19 → 0.20). New user-visible Copy button surface;
+backwards-compatible.
+
 ## [0.19.0] — 2026-06-17
 
 ### Removed — mobile text-selection / long-press copy

@@ -1015,8 +1015,11 @@ function sessionPage(name: string): string {
   #title-dot[data-state="reconnecting"]{animation:pulse 1s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;margin-left:auto;padding-left:8px}
+  #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;padding-left:8px}
   #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;padding-left:6px}
+  #copy-buf{flex:0 0 auto;background:#1c2128;color:#7ee787;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:11px ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none;margin-left:auto;margin-right:6px}
+  #copy-buf:active{background:#252b34;border-color:#3a414b}
+  #copy-buf.copied{color:#0b0c10;background:#7ee787;border-color:#7ee787}
   #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:6px 0 14px;z-index:20;box-sizing:border-box}
   #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:0 0 auto;height:32px}
   #bar .row.arrows{justify-content:center}
@@ -1070,6 +1073,7 @@ function sessionPage(name: string): string {
 <div id="topbar">
   <button id="back" title="Back to sessions">⌂</button>
   <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span></span>
+  <button id="copy-buf" title="Copy visible terminal text" aria-label="copy">⎘</button>
   <span id="title-brand">LLMUX</span>
   <span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span>
 </div>
@@ -1489,6 +1493,79 @@ function sessionPage(name: string): string {
   document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
 
   document.getElementById('back').addEventListener('click', function(e){ e.preventDefault(); location.href = '/'; });
+
+  // --- copy-to-clipboard helpers (shared by the Copy button + the
+  //     desktop mouse-drag auto-copy path below) ---
+  function _showCopyToast(msg){
+    let toast = document.getElementById('copy-toast');
+    if (!toast){
+      toast = document.createElement('div');
+      toast.id = 'copy-toast';
+      toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#11141a;color:#7ee787;border:1px solid #1f4528;padding:10px 18px;border-radius:8px;font:13px ui-monospace,monospace;z-index:99999;pointer-events:none;opacity:0;transition:opacity .2s';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = msg || '✓ copied';
+    toast.style.opacity = '1';
+    setTimeout(function(){ toast.style.opacity = '0'; }, 1200);
+  }
+  function _writeClipboard(text){
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){ _showCopyToast(); }, function(){
+        _writeClipboardFallback(text);
+      });
+    } else {
+      _writeClipboardFallback(text);
+    }
+  }
+  function _writeClipboardFallback(text){
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      _showCopyToast();
+    } catch(_){}
+  }
+
+  // --- Copy button: copies the visible terminal viewport to clipboard.
+  //     Mobile-primary affordance — power users use \`llmux session attach\`
+  //     for granular selection in a real terminal. ---
+  const copyBufBtn = document.getElementById('copy-buf');
+  copyBufBtn.addEventListener('click', function(e){
+    e.preventDefault();
+    if (!term.buffer || !term.buffer.active){ return; }
+    const buf = term.buffer.active;
+    const top = buf.viewportY;
+    const lines = [];
+    for (let r = top; r < top + term.rows; r++){
+      const line = buf.getLine(r);
+      if (line) lines.push(line.translateToString(true));
+    }
+    // Trim trailing blank lines so the copy ends at the last real content.
+    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    const text = lines.join('\\n');
+    if (!text){ _showCopyToast('nothing to copy'); return; }
+    _writeClipboard(text);
+    // Brief visual on the button itself.
+    copyBufBtn.classList.add('copied');
+    setTimeout(function(){ copyBufBtn.classList.remove('copied'); }, 600);
+  });
+
+  // --- Desktop: auto-copy on xterm selection change (ttyd's pattern). ---
+  //     On desktop, mouse-drag triggers xterm's internal selection, which
+  //     fires onSelectionChange. We write to clipboard on any non-empty
+  //     change. Dedupe so a single selection doesn't write repeatedly.
+  let _lastSelText = '';
+  term.onSelectionChange(function(){
+    const text = term.getSelection();
+    if (!text || text === _lastSelText) return;
+    _lastSelText = text;
+    _writeClipboard(text);
+  });
 
   document.getElementById('reset-term').addEventListener('click', function(e){
     e.preventDefault();
