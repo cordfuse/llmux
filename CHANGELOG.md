@@ -5,6 +5,45 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.3] — 2026-06-17
+
+### Removed — PWA install surface
+
+Dropped llmux's PWA install support. Chrome on Android bundles each
+installed PWA into a WebAPK whose package name is derived from the
+hostname only — port is ignored. Multiple Cordfuse PWAs hosted on the
+same tailnet machine can't coexist as installs; the second one always
+fails with "Open <other-app>" instead of an Install prompt. Rather
+than spend infrastructure on per-app subdomains to dodge this, the
+Cordfuse pattern is to ship llmux + vyzr as plain web apps over
+Tailscale HTTPS. Chrome's "Add to Home Screen" still gives you a
+quick-launch shortcut; it just opens in a tab instead of standalone.
+
+### What was removed
+
+- `/manifest.webmanifest` endpoint
+- `/sw.js` service worker endpoint
+- `/icon-192.svg` and `/icon-512.svg` endpoints
+- `<link rel="manifest">`, `<meta name="apple-mobile-web-app-*">`,
+  `<meta name="application-name">`, and the inline service-worker
+  registration `<script>` in the picker head
+
+### What survived
+
+- `BRAND_SVG` still serves as the browser-tab favicon (`<link rel="icon">`,
+  `<link rel="apple-touch-icon">`)
+- `<meta name="theme-color" content="#0b0c10">` kept so the browser
+  chrome still picks up the dark navy on Android
+
+### README
+
+"installable PWA" / "Add to Home Screen launches standalone" copy
+replaced with "reachable over Tailscale HTTPS from any browser." The
+Cordfuse port-convention table now says "App" instead of "PWA."
+
+(mighty-ai-qr-web's PWA stays as-is — it's publicly hosted on its own
+dedicated origin so the hostname-collision doesn't apply.)
+
 ## [0.16.2] — 2026-06-17
 
 ### Documentation

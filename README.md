@@ -19,7 +19,7 @@ agent CLI the same way.
 
 llmux is that layer. One daemon, each agent CLI in its own named tmux
 session, every session reachable by name from a CLI, a REST/WebSocket
-API, or a browser picker that's an installable PWA over Tailscale HTTPS.
+API, or a browser picker reachable over Tailscale HTTPS.
 SDD pipelines, multi-agent chains, scheduled jobs, and evals all reduce
 to plain `llmux session prompt <name> "..."` calls — the same surface
 drives the human terminal and the script.
@@ -37,7 +37,7 @@ trick for token refresh.
 like, `tmux attach -t <name>` still works exactly as you'd expect —
 llmux just adds the unified surface on top.)
 
-> **Status:** v0.16.2 — daemon + CLI client consolidated into one binary
+> **Status:** v0.16.3 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -64,13 +64,12 @@ source of truth and every client sees the same state.
 
 ### Mobile, by design
 
-The web picker is an installable PWA reachable over Tailscale HTTPS.
+The web picker is reachable over Tailscale HTTPS from any browser.
 Open it from your phone — including over LTE — and you get the same
 xterm.js terminal a desktop browser shows, with a soft-keyboard toolbar
 that surfaces the chars gboard hides (Esc / Tab / Ctrl / arrows /
-shell chars). "Add to Home Screen" in Chrome or Safari and llmux
-launches standalone — no browser chrome, splash screen, OS
-task-switcher entry. Same daemon, same WebSocket, just feels native.
+shell chars). Chrome's "Add to Home Screen" creates a quick-launch
+shortcut for it.
 
 A consequence: **first-run OAuth on a headless box just works.** Spawn
 an agent on a browserless server, attach from your phone, click through
@@ -264,13 +263,14 @@ llmux v0.16.x
   ▸ LAN              http://192.168.x.x:3030
 ```
 
-The browser picker is a clean TLS surface, installable as a PWA. CLI
-`attach` currently speaks `ws://` only — point it at the LAN or local
-HTTP URL.
+The browser picker is a clean TLS surface — open it in Chrome / Safari
+on any tailnet device. CLI `attach` currently speaks `ws://` only —
+point it at the LAN or local HTTP URL.
 
-**Cordfuse PWA port conventions:**
+**Cordfuse port conventions** (each app fronted on its own pair so
+multiple tools can share one tailnet host):
 
-| PWA | HTTP port | HTTPS port |
+| App | HTTP port | HTTPS port |
 |---|---|---|
 | llmux | `3080` | `3443` |
 | vyzr  | `4080` | `4443` |
