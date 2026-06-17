@@ -5,6 +5,30 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-06-17
+
+### Documentation
+
+- **Problem / Solution opener.** Replaced the dense lede paragraph with
+  an explicit `## Problem` / `## Solution` pair, framed entirely around
+  operational pain (multi-terminal alt-tabbing, no phone access, no
+  remote attach, OAuth on headless servers) and operational fix (named
+  tmux sessions exposed over REST/WS/PWA, phone as first-class client,
+  attach-from-phone OAuth). Zero billing / `-p` references.
+- **CLI gif now includes a real attach demo.** The vhs tape was
+  extended with a final `llmux session attach codex` segment that
+  shows the Codex TUI taking over the screen (banner, model picker,
+  prompt buffer) and then a clean `Ctrl-b d` detach back to the
+  shell prompt. ~30 s total. Needed a `unset TMUX TMUX_PANE` in the
+  hidden setup block because vhs itself runs inside tmux and the
+  inherited `TMUX` env had been pushing the local handler into
+  `switch-client` mode instead of `attach-session`.
+- **Mobile gif now shows tap markers.** Pulsing blue rings appear at
+  each tap location to signal user intent (mobile-emulated browsers
+  have no cursor). Markers are burned in via `ffmpeg overlay` filter
+  in post — in-browser CSS markers rendered fine in Playwright
+  screenshots but were eaten by Chromium's video-recording pipeline.
+
 ## [0.15.0] — 2026-06-17
 
 ### Documentation — README pivot

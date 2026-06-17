@@ -5,16 +5,31 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![node](https://img.shields.io/node/v/@cordfuse/llmux.svg?label=node)](./packages/llmux/package.json)
 
-Run every AI agent CLI under a single daemon. Each spawn is its own named
-tmux session — own cwd, own flags, own conversation. Run three `claude`
-sessions across three different repos side-by-side, or one each of
-`claude` / `codex` / `gemini`, or fifteen of each — there's no per-agent
-cap and no shared state. Drive any of them from a terminal (`llmux
-session attach`), a REST or WebSocket API, or a phone browser over
-Tailscale. Sessions survive daemon restarts; attach is raw-TTY (`Ctrl+]`
-to detach).
+## Problem
 
-> **Status:** v0.15.0 — daemon + CLI client consolidated into one binary
+You're a developer running Claude Code, Codex, Gemini, OpenCode, and a
+handful of other AI agent CLIs at the same time. Each one lives in its
+own terminal window, each tied to whichever machine launched it, each
+requiring you to physically alt-tab to send a prompt. There's no way to
+drive them from your phone. There's no way to attach remotely. First-run
+OAuth on a headless server is a circus.
+
+## Solution
+
+llmux is a daemon that hosts every agent CLI in its own named tmux
+session and exposes them by name over a REST/WebSocket API and a browser
+picker. Spawn `claude` once and it keeps running — fire prompts at the
+same live process forever from any client. The picker is an installable
+PWA reachable over Tailscale HTTPS, so your phone is a first-class
+client. First-run OAuth on a headless box works by attaching from the
+phone, clicking through the flow there, and detaching.
+
+Each spawn is its own named tmux session — own cwd, own flags, own
+conversation. Run three `claude` sessions across three different repos
+side-by-side, or one each of `claude` / `codex` / `gemini`, or fifteen
+of each — there's no per-agent cap and no shared state.
+
+> **Status:** v0.15.1 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -22,13 +37,13 @@ to detach).
   <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/cli.gif" width="85%" alt="CLI tour — version, installed agents, session list, JSON output">
 </p>
 
-<p align="center"><em>CLI tour against a live daemon — version, agent catalog, session list, JSON surface.</em></p>
+<p align="center"><em>CLI tour against a live daemon — version, agent catalog, session list, JSON surface, then a real tmux attach into a running Codex session and a clean detach.</em></p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/mobile.gif" width="30%" alt="Mobile PWA picker, attach into an opencode session, soft-keyboard toolbar visible">
 </p>
 
-<p align="center"><em>Phone — picker → tap session → attached xterm with soft-keyboard toolbar (Esc / Tab / Ctrl / arrows / shell chars). Pixel 7 emulation.</em></p>
+<p align="center"><em>Phone — picker → tap session → attached xterm with soft-keyboard toolbar (Esc / Tab / Ctrl / arrows / shell chars). Blue rings mark each tap. Pixel 7 emulation.</em></p>
 
 ### One persistent process per agent
 
