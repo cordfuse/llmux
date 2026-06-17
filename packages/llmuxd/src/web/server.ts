@@ -1939,6 +1939,7 @@ export interface ServerHandle {
 const RESPAWN_RE = /^\/api\/sessions\/([^/]+)\/respawn$/;
 const KILL_RE = /^\/api\/sessions\/([^/]+)\/kill$/;
 const RESUME_RE = /^\/api\/sessions\/([^/]+)\/resume$/;
+const SEND_RE = /^\/api\/sessions\/([^/]+)\/send$/;
 const CONVERSATIONS_RE = /^\/api\/sessions\/([^/]+)\/conversations$/;
 const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
 
@@ -2067,6 +2068,27 @@ export function startServer(opts: ServeOptions): ServerHandle {
         const name = decodeURIComponent(mKill[1]!);
         const result = killSession(name);
         return sendJson(res, result, result.ok ? 200 : 400);
+      }
+      const mSend = url.pathname.match(SEND_RE);
+      if (mSend) {
+        const name = decodeURIComponent(mSend[1]!);
+        try {
+          const body = (await readJsonBody(req)) as { prompt?: unknown; enter?: unknown };
+          if (typeof body.prompt !== 'string' || body.prompt.length === 0) {
+            return sendJson(res, { ok: false, error: 'prompt required' }, 400);
+          }
+          if (!state.get(name)) return sendJson(res, { ok: false, error: `no tracked session "${name}"` }, 404);
+          if (!tmux.hasSession(name)) return sendJson(res, { ok: false, error: `session "${name}" is not running` }, 409);
+          const enter = body.enter !== false; // default true; explicitly false to suppress
+          try {
+            tmux.sendKeys(name, body.prompt, { enter });
+          } catch (err) {
+            return sendJson(res, { ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+          return sendJson(res, { ok: true });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
+        }
       }
       const mResume = url.pathname.match(RESUME_RE);
       if (mResume) {
