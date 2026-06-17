@@ -5,6 +5,38 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-06-17
+
+### Added — pinch-to-zoom font size in the web terminal
+
+Two-finger pinch / spread gestures on the xterm canvas now scale the
+terminal's font size live, with the viewport re-fitting and the
+backend pty receiving the new cols/rows immediately. Clamped to 8–32
+px so the gesture can't shrink the terminal to nothing or blow up
+past readability.
+
+The chosen size persists in `localStorage` under
+`llmux.term.fontSize` — reload the chat page and your last zoom
+level comes back.
+
+Implementation:
+
+  - `touchstart` with 2 touches captures the initial finger distance
+    and current font size; preventDefault stops the browser from
+    page-zooming the entire viewport.
+  - `touchmove` rAF-throttles the update so font changes only run
+    once per frame instead of once per touch event.
+  - On each frame the new distance / start distance ratio scales the
+    starting font size; the result is clamped and applied via
+    `term.options.fontSize`, then `fit.fit()` recomputes cols/rows
+    and a `resize` JSON message is sent over the WebSocket so the
+    underlying pty matches.
+  - `touchend` / `touchcancel` snapshot the final size to
+    localStorage.
+
+Desktop browsers / single-touch interactions are untouched. Existing
+keyboard shortcuts and toolbar buttons unchanged.
+
 ## [0.16.3] — 2026-06-17
 
 ### Removed — PWA install surface

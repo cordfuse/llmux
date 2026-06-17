@@ -37,7 +37,7 @@ trick for token refresh.
 like, `tmux attach -t <name>` still works exactly as you'd expect —
 llmux just adds the unified surface on top.)
 
-> **Status:** v0.16.3 — daemon + CLI client consolidated into one binary
+> **Status:** v0.17.0 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 

@@ -1382,6 +1382,66 @@ function sessionPage(name: string): string {
   applyLayout();
   try { fit.fit(); } catch(e){}
 
+  // ---- Pinch-to-zoom on the terminal canvas ----
+  // Two-finger gesture changes xterm.options.fontSize, fits the viewport,
+  // and resyncs cols/rows with the backend pty. preventDefault blocks the
+  // browser's page-level pinch zoom so only the terminal scales.
+  // Selected font size persists per-session in localStorage.
+  const FONT_MIN = 8;
+  const FONT_MAX = 32;
+  const FONT_KEY = 'llmux.term.fontSize';
+  try {
+    const saved = parseInt(localStorage.getItem(FONT_KEY) || '', 10);
+    if (saved >= FONT_MIN && saved <= FONT_MAX) {
+      term.options.fontSize = saved;
+      try { fit.fit(); } catch(_){}
+    }
+  } catch(_){}
+
+  let pinchState = null;            // { startDist, startSize, lastApplied }
+  let pinchRafPending = false;
+  function _touchDist(t0, t1){
+    const dx = t0.clientX - t1.clientX;
+    const dy = t0.clientY - t1.clientY;
+    return Math.hypot(dx, dy);
+  }
+  termEl.addEventListener('touchstart', function(e){
+    if (e.touches.length === 2){
+      pinchState = {
+        startDist: _touchDist(e.touches[0], e.touches[1]),
+        startSize: term.options.fontSize,
+        lastApplied: term.options.fontSize,
+      };
+      e.preventDefault();
+    }
+  }, { passive: false });
+  termEl.addEventListener('touchmove', function(e){
+    if (e.touches.length !== 2 || !pinchState) return;
+    e.preventDefault();
+    if (pinchRafPending) return;
+    pinchRafPending = true;
+    const d = _touchDist(e.touches[0], e.touches[1]);
+    const ratio = d / pinchState.startDist;
+    const target = Math.round(pinchState.startSize * ratio);
+    const clamped = Math.max(FONT_MIN, Math.min(FONT_MAX, target));
+    requestAnimationFrame(function(){
+      pinchRafPending = false;
+      if (!pinchState) return;
+      if (clamped === pinchState.lastApplied) return;
+      pinchState.lastApplied = clamped;
+      term.options.fontSize = clamped;
+      try { fit.fit(); } catch(_){}
+      safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
+    });
+  }, { passive: false });
+  function _pinchEnd(){
+    if (!pinchState) return;
+    try { localStorage.setItem(FONT_KEY, String(term.options.fontSize)); } catch(_){}
+    pinchState = null;
+  }
+  termEl.addEventListener('touchend',    function(e){ if (e.touches.length < 2) _pinchEnd(); }, { passive: true });
+  termEl.addEventListener('touchcancel', _pinchEnd, { passive: true });
+
   // ---- Wire toolbar ----
   document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
 
