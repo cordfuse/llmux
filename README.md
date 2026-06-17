@@ -13,20 +13,23 @@ shared state. Drive any of them from a terminal (`llmux session attach`),
 a REST or WebSocket API, or a phone browser over Tailscale. Sessions
 survive daemon restarts; attach is raw-TTY (`Ctrl+]` to detach).
 
-### Headless ≠ `claude -p`
+### `claude -p` is metered. llmux isn't.
 
-The obvious way to script Claude Code is `claude -p "prompt"` (and similar
-non-interactive modes in codex, gemini, etc.). That spawns a fresh
-short-lived child per call: no shared conversation, no in-session OAuth,
-no `/commands`, no persistent tool state, no MCP context. Each call
-starts cold.
+Every major agent CLI ships a one-shot mode — `claude -p "prompt"` and
+the codex / gemini / qwen / amp equivalents. The catch: even when you
+authed via OAuth on a flat-rate subscription (Claude Pro/Max, ChatGPT
+Plus, Gemini Advanced, …), `-p`-style calls now route to the **metered
+API billing bucket** — real per-token dollars on top of your monthly
+subscription. Script a few hundred `-p` calls a day and the subscription
+stops mattering.
 
 llmux drives the **interactive** agent process — the same TUI a human
-launches — over `tmux send-keys`. Spawn `claude` once, fire prompts at the
-same live agent forever from any client (CLI, REST, WebSocket, web).
-The agent runs unmodified and doesn't know it's being driven headlessly.
-Tool state persists across prompts. Conversations are resumable from any
-client.
+launches — over `tmux send-keys`. Interactive use stays on the
+subscription billing path: same OAuth, same flat rate, no per-token API
+surcharge. Spawn `claude` once, fire prompts at the same live agent
+forever from any client (CLI, REST, WebSocket, web). The agent runs
+unmodified and doesn't know it's being driven headlessly. Tool state and
+conversation persist across prompts; resume from any client.
 
 ### OAuth from your phone, on a headless box
 
@@ -43,7 +46,7 @@ toolbar (Esc / Tab / Ctrl / arrows / shell chars), watch tool calls
 stream in. No "mobile app" — it's the same daemon serving a real
 terminal over a WebSocket.
 
-> **Status:** v0.13.4 — daemon + CLI client consolidated into one binary
+> **Status:** v0.13.5 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 

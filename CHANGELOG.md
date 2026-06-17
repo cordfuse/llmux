@@ -5,6 +5,23 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.5] — 2026-06-16
+
+### Documentation
+
+- Rewrote the "Headless ≠ claude -p" section to lead with the **real**
+  differentiator: cost. v0.13.3 framed it as a state-and-mechanics
+  story ("each call starts cold, no /commands, no MCP context"). The
+  actual reason llmux exists is billing: even OAuth-authed `-p`-style
+  calls now route to the metered API bucket on every major provider
+  (Claude Pro/Max, ChatGPT Plus, Gemini Advanced, …), so scripting
+  with `-p` tacks per-token dollars onto your flat subscription.
+  Interactive use stays on the subscription billing path; llmux is the
+  bridge that lets you script the interactive process. The state
+  benefits are now a one-line addendum rather than the headline.
+- Section title swapped to a direct claim ("`claude -p` is metered.
+  llmux isn't.") instead of a vague comparison.
+
 ## [0.13.4] — 2026-06-16
 
 ### Documentation
