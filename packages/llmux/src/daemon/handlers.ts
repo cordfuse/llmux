@@ -7,7 +7,7 @@ import { loadConfig } from './config.ts';
 import * as state from './state.ts';
 import * as tmux from './tmux.ts';
 import * as authStore from './auth-store.ts';
-import { startServer, printBanner } from './web/server.ts';
+import { startServer, printBanner, buildAgentCommand, parseEnvText, mergeSpawnEnv } from './web/server.ts';
 import { getAddresses } from './net.ts';
 import type { ParsedArgs } from '../cli.ts';
 
@@ -43,10 +43,6 @@ function expandAgentList(spec: string): AgentDefinition[] {
     out.push(def);
   }
   return out;
-}
-
-function buildCommand(agent: AgentDefinition): string {
-  return agent.flags ? `${agent.cmd} ${agent.flags}` : agent.cmd;
 }
 
 function resolveCwd(input: string | undefined): string {
@@ -87,10 +83,25 @@ export function handleSpawn(args: ParsedArgs): void {
   const cwd = resolveCwd(args.flags.cwd as string | undefined);
   if (name && prefix) throw new Error('--name and --prefix are mutually exclusive');
 
+  // Per-spawn overrides — semantics mirror POST /api/sessions:
+  //   undefined   = no override (use agent defaults at spawn, don't persist)
+  //   string      = explicit override (persisted on the session record)
+  // resumeFrom only sticks when the agent has a history adapter; silently
+  // dropped otherwise so `--all`-style spawns don't error on mixed agents.
+  const flagsOverride = args.flags.flags as string | undefined;
+  const envOverride =
+    args.flags.env !== undefined
+      ? parseEnvText(args.flags.env as string)
+      : undefined;
+  const resumeFrom = args.flags['resume-from'] as string | undefined;
+
   const agents = expandAgentList(spec);
 
   if (name && agents.length > 1) {
     throw new Error('--name is only valid with a single agent');
+  }
+  if (resumeFrom !== undefined && agents.length > 1) {
+    throw new Error('--resume-from is only valid with a single agent');
   }
 
   const parent = process.env.LLMUX_SESSION ?? null;
@@ -101,16 +112,20 @@ export function handleSpawn(args: ParsedArgs): void {
     if (state.get(sessionName) || tmux.hasSession(sessionName)) {
       throw new Error(`session "${sessionName}" already exists`);
     }
+    const effectiveResume = resumeFrom && agent.history ? resumeFrom : undefined;
     tmux.newSession({
       name: sessionName,
-      command: buildCommand(agent),
+      command: buildAgentCommand(agent, flagsOverride, effectiveResume),
       cwd,
-      env: { LLMUX_SESSION: sessionName, LLMUX_AGENT: agent.key },
+      env: mergeSpawnEnv(agent, envOverride, { LLMUX_SESSION: sessionName, LLMUX_AGENT: agent.key }),
     });
     state.record({
       name: sessionName,
       agent: agent.key,
       cwd,
+      ...(flagsOverride !== undefined ? { flags: flagsOverride } : {}),
+      ...(envOverride !== undefined ? { env: envOverride } : {}),
+      ...(effectiveResume !== undefined ? { resumeFrom: effectiveResume } : {}),
       createdAt: new Date().toISOString(),
       parent,
       restart: 'on-failure',
@@ -168,8 +183,9 @@ export function handleSend(args: ParsedArgs): void {
   if (!tmux.hasSession(session.name)) {
     throw new Error(`session "${session.name}" is in state but not live in tmux (exited?). Try \`llmux session restart ${session.name}\`.`);
   }
-  tmux.sendKeys(session.name, prompt, { enter: true });
-  console.log(`sent ${prompt.length} bytes → ${session.name}`);
+  const enter = !args.flags['no-enter'];
+  tmux.sendKeys(session.name, prompt, { enter });
+  console.log(`sent ${prompt.length} bytes → ${session.name}${enter ? '' : ' (no-enter)'}`);
 }
 
 export function handleBroadcast(args: ParsedArgs): void {
@@ -213,7 +229,8 @@ export function handleChat(args: ParsedArgs): void {
 
 export async function handleServe(args: ParsedArgs): Promise<void> {
   tmux.requireTmux();
-  const cfg = loadConfig();
+  const explicitConfig = args.flags.config as string | undefined;
+  const cfg = loadConfig(explicitConfig ? { explicit: explicitConfig } : {});
   // Precedence: CLI --port > LLMUXD_PORT env > config.server.port (schema
   // default already 3000 when no YAML present).
   const portRaw =
@@ -438,7 +455,7 @@ export async function handleTokenRevoke(args: ParsedArgs): Promise<void> {
   // Accept the id at positional[0] (new flat dispatcher) OR positional[1] (legacy
   // `llmuxd token revoke <id>` form where positional[0] was "revoke").
   const idPrefix = args.positional[0] === 'revoke' ? args.positional[1] : args.positional[0];
-  if (!idPrefix) throw new Error('token revoke requires an <id> (the 8-char prefix shown by `token show`), or --all to revoke every token');
+  if (!idPrefix) throw new Error('token revoke requires an <id> (the 8-char prefix shown by `token list`), or --all to revoke every token');
   const ok = authStore.revokeAuthToken(idPrefix);
   if (!ok) throw new Error(`no token with id "${idPrefix}"`);
   console.log(`revoked ${idPrefix}`);
@@ -479,9 +496,9 @@ export function handleRespawn(args: ParsedArgs): void {
 
   tmux.newSession({
     name: session.name,
-    command: buildCommand(agent),
+    command: buildAgentCommand(agent, session.flags, session.resumeFrom),
     cwd: session.cwd,
-    env: { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent },
+    env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent }),
   });
   state.record({ ...session, createdAt: new Date().toISOString() });
   console.log(`respawned ${target} (agent: ${session.agent}, cwd: ${session.cwd})`);

@@ -37,7 +37,7 @@ trick for token refresh.
 like, `tmux attach -t <name>` still works exactly as you'd expect —
 llmux just adds the unified surface on top.)
 
-> **Status:** v0.21.1 — daemon + CLI client consolidated into one binary
+> **Status:** v0.21.2 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -255,7 +255,7 @@ The server-start banner picks up the mapping automatically (any port, not
 just 3443/3080) and surfaces the resulting URLs:
 
 ```
-llmux v0.16.x
+llmux v0.21.2
 
   ▸ Tailscale HTTPS  https://<host>.tailnet.ts.net:3443
   ▸ Tailscale HTTP   http://<host>.tailnet.ts.net:3080
@@ -344,8 +344,8 @@ A bare `llmux server start` from any cwd containing this file binds to
 
 The schema includes `agents.<key>.readyPrompt`, `server.token`,
 `server.tokenExpiry`, `server.noQr`, and `sessions[]` (auto-spawn list).
-These are reserved for future wiring — setting them has no effect in
-v0.13.x. If you need any of these surfaces, file an issue and they can be
+These are reserved for future wiring — setting them has no effect yet.
+If you need any of these surfaces, file an issue and they can be
 prioritised.
 
 ## Environment

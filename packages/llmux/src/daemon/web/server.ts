@@ -1869,7 +1869,7 @@ function sendJson(res: ServerResponse, body: unknown, status = 200): void {
 
 // ---------- API actions ----------
 
-function buildAgentCommand(
+export function buildAgentCommand(
   agent: AgentDefinition,
   flagsOverride?: string,
   resumeFrom?: string,
@@ -1913,7 +1913,7 @@ function viewOf(s: state.SessionState, live: boolean): SessionView {
  * Skips blank lines and comments (lines starting with #). Trims whitespace
  * around the key. Value is kept verbatim after the first `=`.
  */
-function parseEnvText(text: string): Record<string, string> {
+export function parseEnvText(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
@@ -1936,7 +1936,7 @@ function serializeEnv(env: Record<string, string>): string {
 }
 
 /** Merge order: agent defaults < session override < the LLMUX_* internals. */
-function mergeSpawnEnv(agent: AgentDefinition, sessionEnv: Record<string, string> | undefined, llmuxEnv: Record<string, string>): Record<string, string> {
+export function mergeSpawnEnv(agent: AgentDefinition, sessionEnv: Record<string, string> | undefined, llmuxEnv: Record<string, string>): Record<string, string> {
   return { ...(agent.envDefaults ?? {}), ...(sessionEnv ?? {}), ...llmuxEnv };
 }
 

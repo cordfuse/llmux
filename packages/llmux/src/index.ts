@@ -7,7 +7,6 @@ import { parseArgs, type ParsedArgs } from './cli.ts';
 import * as h from './daemon/handlers.ts';
 import * as state from './daemon/state.ts';
 import * as tmux from './daemon/tmux.ts';
-import * as authStore from './daemon/auth-store.ts';
 import { DEFAULT_AGENTS, isAgentInstalled } from './daemon/agents.ts';
 import { clientCommands } from './client/client.ts';
 
@@ -269,6 +268,7 @@ function sessionLocalFlags() {
     cascade: { kind: 'boolean' as const, description: 'cascade kill to children' },
     conversation: { kind: 'string' as const, description: 'conversation id (resume)' },
     latest: { kind: 'boolean' as const, description: 'resume the most recent conversation' },
+    'resume-from': { kind: 'string' as const, description: 'native conversation id to resume at spawn time' },
     'no-enter': { kind: 'boolean' as const, description: 'do not append Enter to prompt' },
     browser: { kind: 'boolean' as const, description: 'open in web browser (attach)' },
     it: { kind: 'boolean' as const, description: 'interactive (attach)' },
