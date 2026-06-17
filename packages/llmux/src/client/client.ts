@@ -603,6 +603,9 @@ const attach: ClientCommand = {
       stdin.removeAllListeners('data');
       process.removeAllListeners('SIGWINCH');
       ws?.close();
+      // Release stdin from holding the event loop open.
+      stdin.pause();
+      try { stdin.unref(); } catch {}
     }
 
     function sendResize(): void {

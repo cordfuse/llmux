@@ -5,6 +5,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.4] — 2026-06-16
+
+### Fixed
+
+- `llmux session attach <name>` over `--server` no longer hangs after
+  Ctrl+]. The detach handler closed the WS and reset raw mode but didn't
+  pause or unref stdin, so Node's event loop stayed alive on a TTY that
+  was still actively listening — operator would see `[detached]` and
+  then have to Ctrl+C to get their shell back. `teardown()` now calls
+  `stdin.pause()` + `stdin.unref()` after closing the socket; detach lag
+  measured 0.01 s post-fix versus the prior ~5 s hang.
+
 ## [0.12.3] — 2026-06-16
 
 ### Documentation
