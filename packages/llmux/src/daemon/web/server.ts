@@ -452,7 +452,9 @@ ${PWA_HEAD_TAGS}
     const respawnBtn = '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '" title="' + respawnTitle + '" aria-label="' + respawnText + '"><span class="icon">↻</span><span class="label">' + respawnText + '</span></button>';
     const toggleText = s.status === 'running' ? 'stop' : 'start';
     const toggleAction = s.status === 'running' ? 'stop' : 'respawn';
-    const toggleIcon = s.status === 'running' ? '⏹' : '▶';
+    // Outline glyphs (□ ▷) to match the visual weight of the line-stroke
+    // icons next to them (☰ ↻ ✎ ✕). The filled ⏹ ▶ variants render too heavy.
+    const toggleIcon = s.status === 'running' ? '□' : '▷';
     const toggleTitle = s.status === 'running' ? 'stop the agent (keep config; can start again from the same record)' : 'start the agent from the persisted config';
     const toggleBtn = '<button class="toggle" data-action="' + toggleAction + '" data-status="' + s.status + '" data-name="' + escapeHtml(s.name) + '" title="' + toggleTitle + '" aria-label="' + toggleText + '"><span class="icon">' + toggleIcon + '</span><span class="label">' + toggleText + '</span></button>';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" title="edit name, cwd, flags, or env" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
@@ -973,7 +975,7 @@ function renderSessionTable(sessions: SessionView[]): string {
       const respawnBtn = `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}" aria-label="${respawnText}"><span class="icon">↻</span><span class="label">${respawnText}</span></button>`;
       const toggleText = s.status === 'running' ? 'stop' : 'start';
       const toggleAction = s.status === 'running' ? 'stop' : 'respawn';
-      const toggleIcon = s.status === 'running' ? '⏹' : '▶';
+      const toggleIcon = s.status === 'running' ? '□' : '▷';
       const toggleBtn = `<button class="toggle" data-action="${toggleAction}" data-status="${s.status}" data-name="${escapeHtml(s.name)}" aria-label="${toggleText}"><span class="icon">${toggleIcon}</span><span class="label">${toggleText}</span></button>`;
       const editBtn = `<button class="edit" data-action="edit" data-name="${escapeHtml(s.name)}" data-cwd="${escapeHtml(s.cwd)}" data-agent="${escapeHtml(s.agent)}" data-flags="${escapeHtml(s.flags || '')}" data-env="${escapeHtml(JSON.stringify(s.env || {}))}" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>`;
       const resumeBtn = (s.hasHistory && s.conversationCount > 0)

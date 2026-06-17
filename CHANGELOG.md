@@ -5,6 +5,17 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-06-17
+
+### Fixed
+
+- Visual weight mismatch on the new stop/start toggle button. v0.16.0
+  used the filled glyphs `⏹` (stop) and `▶` (start), which Android
+  Chrome rendered noticeably larger and heavier than the line-stroke
+  icons next to them (`☰ ↻ ✎ ✕`). Swapped to outline equivalents
+  `□` (stop) and `▷` (start) — visually consistent with the rest of
+  the row.
+
 ## [0.16.0] — 2026-06-17
 
 ### Added — stop/start toggle button per session row
