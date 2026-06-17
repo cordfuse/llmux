@@ -5,6 +5,37 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-06-17
+
+### Added — long-press + drag to copy on mobile
+
+On the chat screen, single-finger long-press (450 ms hold, ≤ 8 px
+movement) anchors a text-selection. Dragging extends the selection;
+releasing copies the selected text to the clipboard and flashes a
+brief "✓ copied" toast in the middle of the screen.
+
+  - Pre-trigger move > 8 px cancels the timer, so swipe-to-scroll
+    stays intact.
+  - A second touch arriving cancels the timer too, so the existing
+    2-finger pinch-to-zoom keeps working without conflict.
+  - Visual feedback: a quick 15 ms haptic vibration on devices that
+    support it (Android), plus xterm's native selection highlight
+    on single-row selections.
+  - Multi-row selections work — the text is walked from
+    `term.buffer.active.getLine(r).translateToString()` for each
+    row in the range and joined with newlines. xterm's visual
+    highlight only renders single-row; multi-row selections release
+    cleanly to clipboard regardless.
+  - Clipboard write uses `navigator.clipboard.writeText` first with
+    an `execCommand('copy')` fallback for older Android Chrome.
+  - Desktop unchanged — xterm's existing mouse-drag selection still
+    works; the long-press path only fires on `touch*` events.
+
+### Bump
+
+Minor (0.17 → 0.18). New user-visible interaction surface on the
+chat page.
+
 ## [0.17.3] — 2026-06-17
 
 ### Re-ship of 0.17.2 (release CI rejected the broken tag)

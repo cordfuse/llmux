@@ -1485,6 +1485,141 @@ function sessionPage(name: string): string {
     });
   }, { passive: false });
 
+  // ---- Long-press + drag to copy on mobile ----
+  // Desktop selection already works via xterm's mouse-drag; this handles the
+  // mobile path where touch is the only input. Flow:
+  //   touchstart → 450 ms timer to distinguish from tap/swipe
+  //   timer fires → mark anchor cell, vibrate briefly, highlight via term.select()
+  //   touchmove   → extend selection (single-row uses term.select for visual;
+  //                 multi-row tracks without highlight, text reads from buffer)
+  //   touchend    → copy to clipboard, show "Copied" toast, clear selection
+  //
+  //   Pre-trigger move > 8 px or a second touch cancels the timer — keeps
+  //   single-finger swipe-to-scroll and 2-finger pinch-to-zoom intact.
+  const LP_DURATION_MS = 450;
+  const LP_MOVE_TOLERANCE = 8;
+  let lpTimer = null;
+  let lpStartX = 0, lpStartY = 0;
+  let lpAnchor = null;
+  let lpEnd = null;
+  let lpDragging = false;
+  function _cancelLongPress(){
+    if (lpTimer){ clearTimeout(lpTimer); lpTimer = null; }
+    lpDragging = false;
+    lpAnchor = null;
+    lpEnd = null;
+  }
+  function _cellFromPoint(clientX, clientY){
+    const rect = termEl.getBoundingClientRect();
+    const cellW = rect.width / Math.max(1, term.cols);
+    const cellH = rect.height / Math.max(1, term.rows);
+    const col = Math.max(0, Math.min(term.cols - 1, Math.floor((clientX - rect.left) / cellW)));
+    const visibleRow = Math.max(0, Math.min(term.rows - 1, Math.floor((clientY - rect.top) / cellH)));
+    const bufferRow = (term.buffer && term.buffer.active ? term.buffer.active.viewportY : 0) + visibleRow;
+    return { col: col, row: bufferRow, visibleRow: visibleRow };
+  }
+  function _extractText(a, b){
+    let s = a, e = b;
+    if (e.row < s.row || (e.row === s.row && e.col < s.col)){ s = b; e = a; }
+    if (!term.buffer || !term.buffer.active) return '';
+    let out = '';
+    for (let r = s.row; r <= e.row; r++){
+      const line = term.buffer.active.getLine(r);
+      if (!line) continue;
+      const full = line.translateToString(false);
+      const start = r === s.row ? s.col : 0;
+      const stop  = r === e.row ? Math.min(full.length, e.col + 1) : full.length;
+      out += full.slice(start, stop).replace(/\s+$/, '');
+      if (r < e.row) out += '\n';
+    }
+    return out;
+  }
+  function _showCopyToast(){
+    let toast = document.getElementById('copy-toast');
+    if (!toast){
+      toast = document.createElement('div');
+      toast.id = 'copy-toast';
+      toast.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#11141a;color:#7ee787;border:1px solid #1f4528;padding:10px 18px;border-radius:8px;font:13px ui-monospace,monospace;z-index:99;pointer-events:none;opacity:0;transition:opacity .2s';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = '✓ copied';
+    toast.style.opacity = '1';
+    setTimeout(function(){ toast.style.opacity = '0'; }, 1400);
+  }
+  function _copy(text){
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(_showCopyToast, function(){
+        _copyFallback(text);
+      });
+    } else {
+      _copyFallback(text);
+    }
+  }
+  function _copyFallback(text){
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      _showCopyToast();
+    } catch(_){}
+  }
+  termEl.addEventListener('touchstart', function(e){
+    if (e.touches.length !== 1){
+      _cancelLongPress();
+      return;
+    }
+    const t = e.touches[0];
+    lpStartX = t.clientX;
+    lpStartY = t.clientY;
+    lpTimer = setTimeout(function(){
+      lpTimer = null;
+      lpAnchor = _cellFromPoint(lpStartX, lpStartY);
+      lpDragging = true;
+      try { if (navigator.vibrate) navigator.vibrate(15); } catch(_){}
+      try { term.select(lpAnchor.col, lpAnchor.visibleRow, 1); } catch(_){}
+    }, LP_DURATION_MS);
+  }, { passive: true });
+  termEl.addEventListener('touchmove', function(e){
+    if (e.touches.length !== 1){
+      _cancelLongPress();
+      return;
+    }
+    const t = e.touches[0];
+    if (lpTimer){
+      const dx = t.clientX - lpStartX;
+      const dy = t.clientY - lpStartY;
+      if (dx*dx + dy*dy > LP_MOVE_TOLERANCE * LP_MOVE_TOLERANCE){
+        _cancelLongPress();
+      }
+    } else if (lpDragging && lpAnchor){
+      e.preventDefault();
+      const cell = _cellFromPoint(t.clientX, t.clientY);
+      lpEnd = cell;
+      if (cell.row === lpAnchor.row){
+        try {
+          const c1 = Math.min(lpAnchor.col, cell.col);
+          const c2 = Math.max(lpAnchor.col, cell.col);
+          term.select(c1, lpAnchor.visibleRow, c2 - c1 + 1);
+        } catch(_){}
+      }
+    }
+  }, { passive: false });
+  termEl.addEventListener('touchend', function(){
+    if (lpDragging && lpAnchor){
+      const end = lpEnd || lpAnchor;
+      const text = _extractText(lpAnchor, end);
+      if (text) _copy(text);
+      setTimeout(function(){ try { term.clearSelection(); } catch(_){} }, 1200);
+    }
+    _cancelLongPress();
+  }, { passive: true });
+  termEl.addEventListener('touchcancel', _cancelLongPress, { passive: true });
+
   // ---- Wire toolbar ----
   document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
 
