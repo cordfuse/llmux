@@ -5,6 +5,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.3] — 2026-06-17
+
+### Re-ship of 0.17.2 (release CI rejected the broken tag)
+
+Same fixes as 0.17.2 — the dark strip under the desktop terminal
+(`Number.isFinite(_bar)` instead of `parseInt('0px',10) || 42`) plus
+desktop trackpad pinch via `wheel` + `ctrlKey`. The 0.17.2 commit
+landed two raw backticks inside a comment that already lived inside
+a backtick-template literal, terminating the outer string mid-flight
+and breaking the tsc build. CI caught it before npm publish; 0.17.3
+is the same intent with the comment backticks stripped.
+
 ## [0.17.2] — 2026-06-17
 
 ### Fixed
