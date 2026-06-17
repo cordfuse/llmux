@@ -95,6 +95,6 @@ export function renderFlagHelp(specs: FlagSpecs): string {
 }
 
 export function notImplemented(commandPath: string): never {
-  console.error(`llmuxd ${commandPath}: not yet implemented (scaffold)`);
+  console.error(`llmux ${commandPath}: not yet implemented (scaffold)`);
   process.exit(70);
 }

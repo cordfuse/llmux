@@ -314,7 +314,7 @@ function pickerPage(): string {
   </div>
 </div>
 <footer>
-  <span>llmuxd v${escapeHtml(DAEMON_VERSION)}</span>
+  <span>llmux v${escapeHtml(DAEMON_VERSION)}</span>
   ${authStore.authEnabled()
     ? `<span class="ok">✓ auth required — ${authStore.listAuthTokens().length} active token${authStore.listAuthTokens().length === 1 ? '' : 's'}</span>`
     : `<span class="warn">⚠ no auth — anyone on the network can attach</span>`}
@@ -373,7 +373,7 @@ function pickerPage(): string {
 
   function render(sessions){
     if (!sessions || sessions.length === 0){
-      container.innerHTML = '<div class="empty">no sessions yet — spawn one from the CLI:<br><br><code>llmuxd spawn claude --name <em>name</em></code></div>';
+      container.innerHTML = '<div class="empty">no sessions yet — spawn one from the CLI:<br><br><code>llmux session start claude --name <em>name</em></code></div>';
       return;
     }
     const rows = sessions.map(rowHtml).join('');
@@ -851,7 +851,7 @@ function pickerPage(): string {
 
 function renderSessionTable(sessions: SessionView[]): string {
   if (sessions.length === 0) {
-    return `<div class="empty">no sessions yet — spawn one from the CLI:<br><br><code>llmuxd spawn claude --name <em>name</em></code></div>`;
+    return `<div class="empty">no sessions yet — spawn one from the CLI:<br><br><code>llmux session start claude --name <em>name</em></code></div>`;
   }
   const rows = sessions
     .map((s) => {
@@ -956,7 +956,7 @@ function sessionPage(name: string): string {
   const jsonVersion = JSON.stringify(DAEMON_VERSION);
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
-<title>${escapedName} — llmuxd</title>
+<title>${escapedName} — llmux</title>
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <link rel="stylesheet" href="${XTERM_CSS}">
@@ -1481,10 +1481,10 @@ function isWsAuthorized(req: IncomingMessage, urlSearch: URLSearchParams): boole
 
 function gatePage(reason: 'missing' | 'invalid'): string {
   const message =
-    reason === 'invalid' ? 'Token rejected. Try again.' : 'This llmuxd instance requires a token.';
+    reason === 'invalid' ? 'Token rejected. Try again.' : 'This llmux daemon requires a token.';
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>llmuxd — auth</title>
+<title>llmux — auth</title>
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <style>
   :root{color-scheme:dark}
@@ -1515,7 +1515,7 @@ function gatePage(reason: 'missing' | 'invalid'): string {
     <div class="msg" id="msg"></div>
   </form>
   <div class="hint">
-    Generate a token on the daemon host: <code>llmuxd token create</code><br>
+    Generate a token on the daemon host: <code>llmux token create</code><br>
     The token is sent as a cookie after unlock. Localhost bypasses this gate.
   </div>
 </div>
@@ -2261,7 +2261,7 @@ function attachSession(ws: WebSocket, sessionName: string): void {
 }
 
 export function printBanner(port: number): void {
-  console.log(`llmuxd v${DAEMON_VERSION}\n`);
+  console.log(`llmux v${DAEMON_VERSION}\n`);
   const addrs = getAddresses(port);
   const width = Math.max(10, ...addrs.map((a) => a.label.length + 2));
   for (const addr of addrs) {
@@ -2272,6 +2272,6 @@ export function printBanner(port: number): void {
     console.log(`\n  ✓ auth required — ${count} active token${count === 1 ? '' : 's'} (localhost bypasses)\n`);
   } else {
     console.log(`\n  ⚠ running without auth — anyone on the network can attach.`);
-    console.log(`    create a token with \`llmuxd token create\` to enable auth.\n`);
+    console.log(`    create a token with \`llmux token create\` to enable auth.\n`);
   }
 }

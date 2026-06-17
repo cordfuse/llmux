@@ -119,7 +119,7 @@ export function handleStatus(args: ParsedArgs): void {
   }
 
   if (tracked.length === 0) {
-    console.log('no llmuxd sessions');
+    console.log('no llmux sessions');
     return;
   }
 
@@ -146,7 +146,7 @@ export function handleSend(args: ParsedArgs): void {
   const prompt = promptParts.join(' ');
   const { session } = resolveTarget(target);
   if (!tmux.hasSession(session.name)) {
-    throw new Error(`session "${session.name}" is in state but not live in tmux (exited?). Try \`llmuxd respawn ${session.name}\`.`);
+    throw new Error(`session "${session.name}" is in state but not live in tmux (exited?). Try \`llmux session restart ${session.name}\`.`);
   }
   tmux.sendKeys(session.name, prompt, { enter: true });
   console.log(`sent ${prompt.length} bytes → ${session.name}`);
@@ -182,7 +182,7 @@ export function handleChat(args: ParsedArgs): void {
   const target = args.positional[0];
   if (!target) throw new Error('chat requires <session>');
   if (args.flags.browser) {
-    throw new Error('--browser requires `llmuxd serve` (Phase 4). Use `llmuxd chat` without --browser for now.');
+    throw new Error('--browser requires the web server (`llmux server start`). Without --browser, use `llmux session attach` for raw TTY pass-through.');
   }
   const { session } = resolveTarget(target);
   if (!tmux.hasSession(session.name)) {
@@ -236,7 +236,7 @@ function resolveQrEndpoint(selector: string, port: number): { label: string; url
   }
   if (matches.length > 1) {
     throw new Error(
-      `--qr-endpoint "${selector}" is ambiguous (${matches.length} matches). Use \`llmuxd token create --qr\` without an endpoint to pick interactively.`,
+      `--qr-endpoint "${selector}" is ambiguous (${matches.length} matches). Use \`llmux token create --qr\` without an endpoint to pick interactively.`,
     );
   }
   return matches[0]!;
@@ -320,7 +320,7 @@ export function handleTokenShow(args: ParsedArgs): void {
     return;
   }
   if (tokens.length === 0) {
-    console.log('no tokens — auth is disabled. Create one with `llmuxd token create`.');
+    console.log('no tokens — auth is disabled. Create one with `llmux token create`.');
     return;
   }
   const headers = ['ID', 'NAME', 'CREATED', 'EXPIRES'];

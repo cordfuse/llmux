@@ -5,366 +5,526 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-16
+
+### Changed — **package consolidation**
+
+- **Single package, single binary, noun-prefix CLI.** Daemon + client merged
+  into one `@cordfuse/llmux` package shipping one bin (`llmux`). The
+  `@cordfuse/llmuxd` package and the `llmuxd` binary are gone; `npm deprecate`
+  marks every published `llmuxd` version with a tombstone pointing at
+  `@cordfuse/llmux`. Code lives under
+  `packages/llmux/src/{daemon,client,shared}/`.
+- **Noun-prefix CLI surface.** `llmux session list/start/stop/restart/attach/
+  prompt/broadcast/resume/history`, `llmux server start`,
+  `llmux token create/list/revoke`, `llmux agent list`. Backward-compat shims
+  (`llmux serve`, `llmux ls`, `llmux status`, and the flat verb fallthrough)
+  kept one release.
+- **`--server <url>` flag** per-command routes session/agent verbs over HTTP
+  to a remote daemon. `LLMUX_SERVER`/`LLMUX_TOKEN` env vars work as
+  fallbacks. No environment-mode-switching — you can mix local and remote
+  invocations from the same shell.
+
+### Fixed
+
+- `handleRespawn` now kills the running tmux session first if alive (matches
+  the web API's `respawnSession` behavior so `session restart` works whether
+  the row is running or exited).
+- `handleTokenRevoke` accepts the id at `positional[0]` (new dispatcher) OR
+  `positional[1]` (legacy `token revoke <id>` form).
+- Daemon banner reads version from `@cordfuse/llmux` package.json.
+
+## [0.11.0] — 2026-06-16
+
+### Added — **headless CLI client**
+
+- Complete `llmux` client implementation. Commands: `ls`/`status`, `send`,
+  `spawn`, `kill`, `restart`, `resume`, `conversations`, `agents`, `attach`.
+  All accept `--json` for scripting. Bearer auth via `LLMUX_TOKEN` env, base
+  URL via `LLMUX_SERVER`.
+- New `POST /api/sessions/:name/send` server endpoint — body
+  `{prompt, enter?}`. Routes through `tmux.sendKeys`. 404 on unknown name,
+  409 if tmux session isn't running.
+- `llmux attach` — raw-TTY WebSocket pass-through. Ctrl+] to detach.
+  SIGWINCH forwards window resize. Hand-rolled WS client (no `ws` runtime
+  dep on the client side); ws:// only, wss:// not yet supported.
+
+### Notes
+
+- `broadcast` deferred until needed.
+
+## [0.10.5] — 2026-06-16
+
+### Changed
+
+- UI transitions across modals + form + buttons. Modals fade in/out with
+  150–220ms easing; form drawer slides via `max-height`; row buttons get a
+  subtle scale-pulse on `:active` (the missing `:hover` on mobile).
+
+## [0.10.4] — 2026-06-16
+
+### Fixed
+
+- Mobile row actions no longer overflow the viewport on rows with 4 buttons
+  (resume + restart + edit + kill). Body padding tightened, action button
+  min-width 32→28px, name-block clamped to 42vw; `overflow-x:hidden` as a
+  safety net.
+
+## [0.10.3] — 2026-06-16
+
+### Fixed
+
+- Kill icon vertical alignment: `×` (U+00D7 multiplication sign) sits high
+  in most monospace fonts; swapped to `✕` (U+2715) — the conventional close
+  glyph that centers properly. All action icons share a single
+  `vertical-align:middle` rule.
+
+## [0.10.2] — 2026-06-16
+
+### Fixed
+
+- Conversations modal: tapping a conversation now dismisses the picker
+  before showing the confirm dialog. `#confirm-modal` z-index bumped to 60
+  so it never renders behind another overlay.
+- "close" → "cancel" on the conversations picker for clearer affordance.
+
+## [0.10.1] — 2026-06-16
+
+### Changed
+
+- Resume button glyph 📜 → ☰ (monochrome, matches the other action icons).
+  Placed before respawn/restart in the row.
+
+## [0.10.0] — 2026-06-16
+
+### Added — **session resume**
+
+- `AgentDefinition.history?: AgentHistoryAdapter` with
+  `listConversations(cwd)` + `resumeFlag(id)`.
+- **Claude Code history adapter** — reads
+  `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`; titles parsed from the
+  first real user message; conversations sorted newest-first.
+- `SessionState.resumeFrom?` — persisted; respawn honors the binding.
+- `SessionView` adds `hasHistory`, `conversationCount`, `resumeFrom`.
+- API: `GET /api/sessions/:name/conversations`,
+  `POST /api/sessions/:name/resume` body `{conversationId}`.
+- Picker UI: `📜 N` row button (later `☰ N`); bottom-sheet modal listing
+  conversations newest-first; tap to confirm + relaunch with `--resume <id>`.
+- `buildAgentCommand(agent, flagsOverride?, resumeFrom?)` — single source of
+  truth for the launch command.
+
+## [0.9.3] — 2026-06-16
+
+### Fixed
+
+- Editing cwd on a running session auto kills + respawns it so the new
+  working directory takes effect immediately (was: silently persisted
+  metadata, no behavior change until manual respawn).
+
+## [0.9.2] — 2026-06-16
+
+### Fixed
+
+- OpenCode default model flag cleared. Earlier `-m ollama/qwen2.5-coder:14b`
+  override forced a slow CPU-bound path on operators with OpenRouter or
+  Anthropic configured. OpenCode now honours its own
+  `~/.config/opencode/opencode.json` default.
+
+## [0.9.1] — 2026-06-16
+
+### Changed
+
+- OpenCode default `-m ollama/qwen2.5-coder:14b` (later reverted in 0.9.2).
+
+## [0.9.0] — 2026-06-16
+
+### Added — **per-session env vars**
+
+- `SessionState.env?: Record<string, string>` + `AgentDefinition.envDefaults`.
+- `parseEnvText` / `serializeEnv` helpers (KEY=VALUE lines, `#` comments,
+  blanks ignored).
+- Spawn merge order: `agent.envDefaults < session.env < LLMUX_*` (internals
+  always win).
+- Spawn/edit form: new env textarea below flags. Pre-fills with the agent's
+  defaults on `+ new` and on agent-change; pre-fills with the session's
+  persisted override on edit.
+- OpenCode: `envDefaults: { OPENCODE_YOLO: '1' }` (TUI rejects the
+  `--dangerously-skip-permissions` flag).
+- Goose: `envDefaults: { GOOSE_MODE: 'auto' }`.
+
+## [0.8.6] — 2026-06-16
+
+### Fixed
+
+- OpenCode flags cleared — `--dangerously-skip-permissions` is on
+  `opencode run` (one-shot), not the default TUI; passing it made opencode
+  print help and exit.
+
+## [0.8.5] — 2026-06-16
+
+### Added
+
+- Agent help modal: `?` icon next to the AGENT label in the spawn form opens
+  a modal listing all 15 supported agents with installed/not-installed badges,
+  one-liner install commands, and docs links.
+- `AgentDefinition.installHint` + `docsUrl` fields. New `GET /api/agents/all`
+  endpoint returns the full catalog (not filtered by `isAgentInstalled`).
+
+## [0.8.4] — 2026-06-16
+
+### Changed
+
+- Picker header `llmuxd — sessions` → `LLMUX: Sessions` (matches chat top
+  navbar branding).
+
+## [0.8.3] — 2026-06-16
+
+### Added
+
+- Confirmation modal before kill/remove. Different copy for running
+  ("terminate the agent process — cannot be undone") vs exited
+  ("just removes the state record").
+
+## [0.8.2] — 2026-06-16
+
+### Fixed
+
+- `~` in cwd is now expanded before existsSync check. Spawn from the form
+  with `cwd=~/Repos` now resolves to `/home/<user>/Repos` instead of erroring
+  "cwd does not exist".
+
+## [0.8.1] — 2026-06-16
+
+### Changed
+
+- Row action buttons collapse to icons on mobile (<600px). Tab-index +
+  aria-label so the action surface stays accessible; long-press surfaces
+  the `title=` for label discovery.
+
+## [0.8.0] — 2026-06-16
+
+### Added — **agent catalog expansion**
+
+- Five new CLI agents: `amp`, `continue` (`cn`), `kiro` (`kiro-cli`),
+  `cursor` (`cursor-agent`), `plandex` — with per-agent danger-mode flags
+  verified via local `--help` or web search.
+- Copilot detection updated for the gh 2.92+ built-in (was checking the
+  deprecated `gh extension list`).
+
+## [0.7.4] — 2026-06-16
+
+### Fixed
+
+- Canonical danger-mode flags per agent: `codex` →
+  `--dangerously-bypass-approvals-and-sandbox`; `opencode` →
+  `--dangerously-skip-permissions`; `grok` → `--always-approve`; `aider`
+  combines `--yes-always` with the existing model flag.
+
+## [0.7.3] — 2026-06-16
+
+### Changed
+
+- Flags input is the canonical value. Pre-fills with the agent default on
+  new + on agent change; pre-fills with the session's override (or default)
+  on edit. Clear to spawn with no flags.
+
+## [0.7.2] — 2026-06-16
+
+### Added
+
+- Restart/respawn button always visible on every row. Running sessions get
+  `↻ restart` (kills + respawns with persisted config); exited get
+  `↻ respawn`.
+
+## [0.7.1] — 2026-06-16
+
+### Changed
+
+- gemini + qwen `envDefault` flag: `''` → `--yolo`.
+
+## [0.7.0] — 2026-06-16
+
+### Added — **flags override per session**
+
+- `SessionState.flags?: string` (override) + `defaultFlags` exposed in
+  `SessionView`. Spawn/edit form gets a `flags` text input pre-filled from
+  the agent default.
+
+## [0.6.1] — 2026-06-16
+
+### Changed
+
+- Picker cwd column truncated with `~` shorthand + left-side ellipsis
+  (`direction:rtl` trick). `title=` carries the full path.
+
+## [0.6.0] — 2026-06-16
+
+### Added
+
+- Row edit button (`✎`) — opens the spawn form pre-filled, dispatches to
+  `PATCH /api/sessions/:name`. Agent is read-only on edit. Live tmux rename
+  via `tmux rename-session -t`.
+- `AgentDefinition.displayName` field — picker dropdown renders human-readable
+  names ("Claude Code") instead of bare keys.
+
+## [0.5.2] — 2026-06-16
+
+### Fixed
+
+- Picker footer reflects actual `authStore.authEnabled()` state instead of
+  the hardcoded "no auth" warning.
+
+## [0.5.1] — 2026-06-16
+
+### Changed
+
+- DEFAULT_AGENTS order: claude / codex / agy / gemini / qwen / opencode
+  (canonical 6 first).
+
+## [0.5.0] — 2026-06-16
+
+### Added — **spawn-from-web**
+
+- `GET /api/agents` returns installed list. `POST /api/sessions` accepts
+  `{agent, name?, cwd?}` body. Picker gets `+ new session` button → inline
+  form (agent dropdown, name input, cwd input). Picker is now fully
+  self-sufficient for session lifecycle.
+
+## [0.4.3] — 2026-06-16
+
+### Fixed
+
+- `?token=` in URL is canonical for the request — invalid query token
+  clears the cookie + serves the gate. Prevents stale-cookie masquerade.
+
+## [0.4.2] — 2026-06-16
+
+### Added
+
+- `llmuxd token create --qr [--qr-endpoint <selector>]` — QR-code deep-link
+  for one-tap phone login. Interactive picker selects which endpoint URL to
+  encode; non-interactive form via label (`tailscale-https`, `local`, …).
+- Server endpoint accepts `?token=` on any HTML route. Valid → 302 +
+  Set-Cookie + clean redirect. Invalid → 401 gate.
+- Tailscale endpoint slot consolidation: one HTTP-tailscale row (hostname
+  via `tailscale serve` when configured, else IP+port direct).
+
+## [0.4.1] — 2026-06-16
+
+### Added
+
+- Banner surfaces `tailscale serve --http=80` URL too (had only `--https`).
+
+## [0.4.0] — 2026-06-16
+
+### Added — **SAS-token auth**
+
+- `llmuxd token create --name <X> --expiry <ISO>` mints
+  `sas_<43-char-base64url>`. Stored at `~/.local/state/llmuxd/auth.json`
+  (0600).
+- HTTP middleware enforces Bearer header or `llmuxd_token` cookie. WS
+  upgrade also accepts `?token=` query. Localhost (`127.0.0.1`/`::1`) always
+  bypasses.
+- Unauthorized HTML requests get an LLMUX-branded gate page; API requests
+  get 401 JSON.
+- `/health` JSON gains `authEnabled` field.
+
+## [0.3.4] — 2026-06-16
+
+### Added
+
+- CLI `--version` / `--help` read from package.json (was hardcoded
+  `VERSION='0.0.0'`).
+- Inline-SVG favicon on picker + chat pages.
+- Picker rows sort by `createdAt` desc + show `started Xm ago`.
+- Chat page: "Reset terminal" action button in the All Keys overlay.
+- Banner: surfaces `tailscale serve --https=443` URL when configured.
+- Banner: label column width computed from the widest label.
+
+## [0.3.3] — 2026-06-16
+
+### Fixed
+
+- Visible bottom padding below row 2 of the keyboard bar. `--bar-h` 74 → 92px
+  portrait, 54 → 64px landscape.
+
+## [0.3.2] — 2026-06-16
+
+### Added
+
+- `LLMUX` brand label in chat top navbar.
+
+## [0.3.1] — 2026-06-16
+
+### Added — **chat top navbar**
+
+- Back / status dot / session name / version split out of the bottom toolbar
+  into a fixed top navbar. Bottom bar is now keyboard-only.
+
+## [0.3.0] — 2026-06-16
+
+### Added — **iron-clad picker + chat**
+
+- Picker auto-polls `/api/sessions` every 3s (paused when tab hidden). Per-row
+  `↻ respawn` + `× kill/remove` actions. Mobile-responsive (cwd collapses
+  under name).
+- Chat: WS reconnect with exponential backoff. `4040` close code distinguishes
+  pty-exit from transient drops; pty-exit shows "session ended" overlay with
+  respawn CTA.
+- Dead-session page at `/session/<name>` when state has the record but tmux
+  doesn't. Respawn / remove buttons.
+- API: `POST /api/sessions/:name/respawn`, `POST /api/sessions/:name/kill`,
+  `GET /api/sessions`, `GET /api/version`.
+- `llmuxd respawn <session>` command actually implemented (was
+  `notImplemented`).
+
 ## [0.2.14] — 2026-06-16
 
 ### Changed
 
-- **Shift button moved from row 2 to row 1**, leftmost position. The
-  chords Shift most often participates in on mobile are cursor-range
-  selection (Shift+Home/End/arrow). Putting it next to those keys
-  shortens the chord-tap travel. Row 1 reads
-  `Shift Home ▲ ▼ ◀ ▶ End`; row 2 reads
-  `⌂ ● Esc Tab Ctrl Alt ⋯`.
+- Shift button moved from row 2 to row 1, leftmost position next to
+  cursor-movement keys it chords with most often.
 
 ## [0.2.13] — 2026-06-16
 
 ### Fixed
 
-- **WebSocket auto-reconnects on return from background.** Android
-  Chrome closes idle backgrounded sockets without always firing
-  `onclose` on the client side. Symptom: returning to the tab leaves
-  the toolbar visually responsive but `safeSend` silently swallows
-  send-on-closed errors — buttons do nothing, only a browser refresh
-  recovers. Fix: `visibilitychange visible` and `pageshow` now call
-  `ensureConnected()`, which checks `ws.readyState` and re-creates the
-  WebSocket from scratch if it's not `OPEN`/`CONNECTING`. `term.onData`
-  is gated by a `dataPiped` flag so the input pipe is wired exactly
-  once across reconnects.
+- WebSocket auto-reconnects on return from background (Android Chrome
+  closes idle backgrounded sockets without firing `onclose`).
 
 ### Changed
 
-- **Shift modifier renders as text `Shift`** instead of the `⇧`
-  Unicode glyph. `⇧` (U+21E7 "UPWARDS WHITE ARROW") visually reads as
-  another up-arrow; same disambiguation pattern as v0.2.12's
-  `⇥` → `Tab`.
+- Shift modifier renders as text `Shift` instead of `⇧`.
 
 ## [0.2.12] — 2026-06-16
 
-### Changed — toolbar polish
+### Changed
 
-- **Vertical padding around toolbar rows.** Bar grows 72→84px portrait,
-  52→62px landscape. Rows are fixed 32/24px and centered; explicit 8px
-  gap between rows. Buttons no longer touch row edges.
-- **Tab key renders as text `Tab`** instead of the `⇥` Unicode glyph.
-  `⇥` visually reads as a right-arrow with a bar, indistinguishable from
-  `→` to a first-time user. Plain text removes the ambiguity.
-- **Arrows switched to filled triangles** `▲ ▼ ◀ ▶` (Geometric Shapes
-  block). Unicode arrows (`↑↓←→`) render at inconsistent weights across
-  fonts — line-arrows in some glyphs, heavy in others. Triangles are
-  basic geometric primitives that render identically everywhere.
-- **`Home` and `End` added to the top toolbar row** alongside the
-  arrows. Line-start / line-end navigation is high-frequency in terminal
-  prompts; natural extension of the cursor-movement row. Row now reads:
-  `Home ▲ ▼ ◀ ▶ End`.
+- Toolbar polish: vertical padding around rows, Tab as text, filled-triangle
+  arrows, Home/End added to top row.
 
 ## [0.2.11] — 2026-06-16
 
-### Changed — mobile UX
+### Changed
 
-- **Toolbar is now two rows.** Top row: full `↑ ↓ ← →` arrow cluster
-  (no demoted ↓ — reverts the v0.2.10 split). Bottom row: chrome +
-  `Esc Tab Ctrl Alt ⇧` modifiers + `⋯`. Bar height grows from 42 → 72px
-  portrait, 34 → 52px landscape — trivial against gboard's ~250px
-  footprint. Net effect: every essential key fits without horizontal
-  scroll, modifiers stay next to gboard's letter row for fast chords,
-  arrows get their own row above.
-- **ARROWS section removed from the "All keys" overlay** (redundant
-  now that all 4 arrows are in the toolbar).
+- Toolbar is two rows: arrows on top, chrome + modifiers on bottom.
 
 ### Fixed
 
-- **Android tab-switch focus loss — real fix this time.** v0.2.9's
-  `setTimeout(term.focus, 120)` was no-op'd by Android Chrome's
-  user-activation policy (programmatic `focus()` blocked without a
-  recent user gesture). New approach: on `visibilitychange visible`
-  and `pageshow`, arm a one-shot capture-phase `touchstart`/`mousedown`
-  listener. Next tap anywhere in the document re-focuses xterm, then
-  unregisters itself. The optimistic immediate `term.focus()` still
-  runs for browsers that don't enforce the policy.
+- Android tab-switch focus loss (one-shot capture-phase `touchstart`/
+  `mousedown` re-focuses xterm).
 
 ## [0.2.10] — 2026-06-16
 
-### Changed — mobile UX
+### Changed
 
-- **Toolbar arrows reduced to `← →` only.** `↑ ↓` removed from the
-  bottom toolbar. Cursor-in-prompt left/right stays one-tap; history
-  scroll up/down becomes two-tap (open overlay, hit ↑ ↓ in the new
-  ARROWS section). Frequency-tiered: most prompts are horizontal
-  editing, history walks are intermittent.
-- **New `ARROWS` section at the top of the "All keys" overlay** —
-  full `↑ ↓ ← →` group. First section, so vertical nav is
-  discoverable in one tap of `⋯`.
+- Toolbar arrows reduced to `← →`; full `↑ ↓ ← →` group moves to "All keys"
+  overlay.
 
 ## [0.2.9] — 2026-06-16
 
-### Changed — mobile UX, batch
+### Changed
 
-- **Toolbar moved to the bottom of the viewport.** Matches Termux / Blink
-  convention. Puts the back-to-sessions button, status dot, modifiers,
-  arrows, and `⋯` in the same thumb zone as the soft keyboard. The
-  "All keys" overlay opens *upward* from the toolbar; terminal sits at
-  the top of the viewport and shrinks from the bottom as the overlay
-  opens.
-- **Shell chars `` ` ~ / \ | - _ `` moved out of the toolbar into a new
-  `SHELL` section at the top of the "All keys" overlay.** Net effect:
-  toolbar drops from ~17 hit targets to ~10 — fits without horizontal
-  scroll on a normal phone. Two taps to reach shell chars is acceptable
-  for a low-frequency tier.
-- **Toolbar buttons no longer get squeezed below content size.** Added
-  `flex: 0 0 auto` plus a `min-width` bump (34px → 40px in portrait,
-  32px → 36px in landscape). The default flex-shrink was letting Ctrl /
-  Esc / Alt text overflow their button borders when the row got
-  crowded.
+- Toolbar moved to the bottom of the viewport (matches Termux/Blink
+  convention). Shell chars (` ~ / \ | - _ \`) moved out of the toolbar into
+  a new `SHELL` section in the "All keys" overlay.
 
 ### Fixed
 
-- **Android tab-switch dead-key bug.** When the browser tab was
-  backgrounded and returned, the xterm hidden textarea stayed blurred
-  and keystrokes had no input target. Now `visibilitychange` (visible)
-  and `pageshow` both re-focus the terminal after the resize settles.
-- **Banner version is real.** `printBanner` was hardcoded to
-  `llmuxd v0.2.0` and shipped that string through every release.
-  Now reads from the daemon's own `package.json` at startup
-  (`@cordfuse/llmuxd` name guard, walks two directory levels to handle
-  both `src/` and `dist/` runs).
+- Android tab-switch dead-key bug. Banner version is real (was hardcoded
+  `llmuxd v0.2.0`).
 
 ## [0.2.8] — 2026-06-16
 
 ### Changed
 
-- **Mobile "All keys" overlay breathes.** Section header `margin-top`
-  bumped from 6px to 14px, inter-button `gap` 4 → 8px, row
-  `margin-bottom` 4 → 8px. Sections now visually separate instead of
-  butting against each other. Overlay stays capped at 40vh with internal
-  scroll; the terminal beneath gets the same usable area as before.
-- **Back-to-sessions button glyph** `←` → `⌂`. The previous arrow
-  collided with the keyboard left-arrow that sits in the same toolbar.
-  House icon reads unambiguously as "go home" with no semantic conflict.
-- **`llmuxd attach <session>` is the new canonical verb** for
-  interactively taking over a TTY. `llmuxd chat` is kept as a deprecated
-  alias for one minor cycle and prints a deprecation warning to stderr
-  on use. The verb `chat` primed users to expect a chat composer; the
-  action is a TTY takeover, so `attach` is the truer name. Quickstart
-  README updated to `attach`.
+- Mobile "All keys" overlay breathes. Back-to-sessions glyph `←` → `⌂`.
+  `llmuxd attach` is the canonical verb; `chat` deprecated.
 
 ## [0.2.7] — 2026-06-16
 
 ### Fixed
 
-- **Drop `child_process` + `shell: true` for agent-on-PATH detection.**
-  `isAgentInstalled` was running `command -v <cmd>` via `spawnSync` with
-  `shell: true`, which Node 25+ now flags with
-  `DeprecationWarning DEP0190`. Replaced with a pure-Node PATH walk
-  using `accessSync(join(dir, cmd), X_OK)`. No shell, no deprecation
-  warning, removes the (unused-but-present) shell-injection vector
-  along the path that was using a hardcoded agent name.
+- Drop `child_process` + `shell:true` for agent PATH detection. Pure-Node
+  PATH walk via `accessSync(join(dir, cmd), X_OK)`.
 
 ## [0.2.6] — 2026-06-16
 
 ### Changed
 
-- **Debug instrumentation removed from Release workflow.** The mystery
-  is solved: every CI Release run since v0.0.1 failed because the
-  `NPM_TOKEN` repo secret was set via `printf '%s' '<token>' |
-  gh secret set NPM_TOKEN -R cordfuse/llmux --body -` (stdin pipe).
-  Under fish shell on cachy, that pipe arrives empty at `gh secret set`,
-  so the stored secret value was an empty string. GitHub Actions then
-  set `NODE_AUTH_TOKEN=""` and `NPM_TOKEN=""` on every Release run, and
-  npm's registry returned 401 on `whoami` and 404 on `publish` (npm's
-  quirk: unauthenticated PUT to a scoped package returns 404, not 403).
-  The CI mystery wasn't account-2FA, IP allowlist, or token grants —
-  the secret was literally empty.
-- Fix: secret re-set with explicit `gh secret set NPM_TOKEN -R
-  cordfuse/llmux --body '<token>'` form. v0.2.5 was the first
-  successful CI publish in this repo's history.
-- Debug step + `--loglevel=verbose` from v0.2.5 reverted; workflow is
-  back to its clean shape.
+- CI debug instrumentation removed. Root cause of every prior failed
+  Release: `NPM_TOKEN` repo secret was set via stdin pipe under fish shell;
+  pipe arrived empty. v0.2.5 was the first successful CI publish.
 
 ## [0.2.5] — 2026-06-16
 
 ### Changed (CI debug-only)
 
-- **Release workflow has a debug job** that runs `npm whoami`,
-  `npm config get registry`, `npm access list packages`, and dumps the
-  effective `~/.npmrc` (token masked) before the publish steps. This is
-  diagnostic instrumentation for the recurring CI publish 404 — same
-  `NPM_TOKEN` works for `npm whoami` from cachy as user `cordfuse` and
-  for `npm publish --dry-run`, but every CI Release run returns
-  `404 Not Found - PUT registry.npmjs.org/@cordfuse%2fllmuxd`. The debug
-  output identifies whether the runner-side issue is auth (whoami fails)
-  or write authorization (whoami succeeds, publish 404).
-- `npm publish` steps now run with `--loglevel=verbose` so the full HTTP
-  exchange is visible in the log if write authz is the actual issue.
-
-No code changes. Debug steps revert after the CI mystery is solved.
+- Release workflow has a debug job (later reverted in 0.2.6).
 
 ## [0.2.4] — 2026-06-16
 
 ### Fixed
 
-- **CI publish now runs lifecycle scripts.** The Release workflow's
-  `npm publish` steps were running with `--ignore-scripts`, which skips
-  `prepublishOnly` — meaning even with auth working, CI-published
-  tarballs would not have included the README + LICENSE just wired up
-  in v0.2.3. Flag dropped; lifecycle hooks now fire as designed in CI.
-  No security regression — the only scripts in this repo are first-party
-  `prepublishOnly`/`postpublish` defined in the package.jsons under our
-  own control.
-
-### Note
-
-Co-shipped with a fresh `NPM_TOKEN` rotation in the
-`cordfuse/llmux` repo secrets (org-wide read+write, 2FA-disabled). Prior
-token had no access to the `@cordfuse/llmuxd` and `@cordfuse/llmux`
-packages, which made every Release workflow run since v0.0.1 fail with
-`404 Not Found` on `PUT registry.npmjs.org/@cordfuse%2fllmuxd` (npm's
-quirk: tokens without access return 404, not 403). This release is the
-first CI-published one if the new token takes.
+- CI publish runs lifecycle scripts (was using `--ignore-scripts`).
 
 ## [0.2.3] — 2026-06-16
 
 ### Fixed
 
-- **Published tarballs now include README and LICENSE.** Both
-  `@cordfuse/llmuxd` and `@cordfuse/llmux` previously shipped tarballs
-  containing only `bin/`, `dist/`, `src/`, and `package.json` — npm only
-  packs files that exist in the package directory, and the project's
-  single README + LICENSE live at the repo root. Result: every npmjs.com
-  page since v0.0.1 showed "No README found." The v0.2.2 patch release
-  (intended to refresh the README on npm) silently shipped no README at
-  all.
-
-  Fix: each package's `prepublishOnly` now copies `../../README.md` and
-  `../../LICENSE` into the package directory before build; a matching
-  `postpublish` removes them. `packages/*/README.md` and
-  `packages/*/LICENSE` are `.gitignore`d as a safety net if publish
-  fails mid-flight. Symlinks deliberately not used — Windows clones
-  break them.
+- Published tarballs include README + LICENSE via per-package
+  `prepublishOnly` copying from repo root.
 
 ## [0.2.2] — 2026-06-16
 
 ### Changed
 
-- **README restructured problem-first.** Opens on the pain (window-juggling
-  N agent CLIs, no broadcast, no phone access) and pays off with the outcome
-  before any architecture. Install + quickstart moved above the two-binary
-  table — value-before-architecture.
-- **Status line corrected.** Previous wording (`scaffold — Phase 1 in
-  progress`) was two minors stale. Now reads `v0.2.2 — Phases 0/1/4 shipped;
-  Phases 2/3/5–7 pending` and the build-phases list uses `[x]`/`[ ]`
-  checkboxes with version numbers so a first-time reader can tell what's
-  real today.
-- `ccmux` reference dropped from the lede — inside-baseball framing for a
-  first-impression doc.
-
-### Note
-
-Code-equivalent to v0.2.1 — patch release exists so the npm package
-listing picks up the new README. `npmjs.com` renders the README from
-the published tarball, not from `main`.
+- README restructured problem-first. Status line corrected to
+  `v0.2.2 — Phases 0/1/4 shipped`.
 
 ## [0.2.1] — 2026-06-16
 
 ### Added — Phase 4 mobile UX
 
-- **Floating top toolbar** on `/session/<name>`:
-  - `←` (back to picker) pinned left; status dot pinned with it.
-  - Esc, Tab, **Ctrl**, **Alt**, **Shift** modifier keys.
-  - `↑ ↓ ← →` arrow keys.
-  - Common shell/dev chars missing from Android `gboard`: `` ` ~ / \ | - _ ``
-  - `⋯ All keys` button pinned right.
-- **Modifier toggles** — tap once → next key gets the modifier and auto-releases (pending). Double-tap within 400ms → locked. Tap again → off. Visual states: faint blue (pending), solid blue (locked).
-- **"All keys" drop-down panel** — numbers `0-9`, brackets/quotes `( ) [ ] { } < > ' "`, operators `= + * & ^ % $ # @ ! ?`, punctuation `: ; , .`, navigation (Home/End/PgUp/PgDn/Del/Ins/Bsp/Enter), F1-F12.
-- **Status indicator** — single colored dot in the toolbar (green = live, amber = connecting, red = disconnected). Session name surfaces as a tooltip on the dot.
-
-### Added — viewport responsiveness
-
-- `<meta name="viewport" interactive-widget=resizes-content>` — Chrome Android shrinks the **layout viewport** when the soft keyboard appears (instead of overlaying it), so the terminal stays visible.
-- `html, body { height: 100dvh }` — dynamic viewport units, CSS-side responsiveness with no JS round-trip.
-- `visualViewport.resize` + `orientationchange` + `visibilitychange` listeners → debounced `fit.fit()` + WebSocket `resize` message to the backend; tmux reflows to the new pane dimensions in real time.
-- `@media (orientation: landscape) and (max-height: 500px)` — toolbar buttons compress to fit narrow landscape viewports.
+- Floating top toolbar on `/session/<name>` (Esc / Tab / Ctrl / Alt / Shift
+  modifiers, arrows, shell chars, `⋯ All keys`).
+- Modifier toggles (tap = pending, double-tap = locked).
+- "All keys" drop-down panel.
+- Status indicator (single colored dot in the toolbar).
+- Viewport responsiveness: `interactive-widget=resizes-content`,
+  `height:100dvh`, `visualViewport.resize` → `fit.fit()`.
 
 ### Fixed
 
-- Touch responsiveness on mobile — removed `touchstart preventDefault` (was blocking scroll/tap disambiguation inside the horizontally-scrollable middle band, causing dropped or random taps). Replaced with `pointerdown preventDefault` (keeps focus on the xterm without breaking scroll) and `touch-action: manipulation` on every button (kills the 300ms double-tap-zoom delay).
-- Soft keyboard dropping when toolbar buttons are tapped — every toolbar button now has `tabindex="-1"` so focus stays pinned to xterm's hidden textarea.
-- Mask-image gradient on the scroll container was visually dimming edge buttons (Tab, ↑) making them look disabled. Dropped the mask.
-- Title text was redundant (also in URL bar and tmux's bottom status line) and either truncated awkwardly (`agyde…`) or collapsed to zero width via flex shrink. Removed the text; status dot stays.
-
-### Changed
-
-- Toolbar layout switched from single scrolling row to **pinned ends + scrolling middle**: `←` + status pinned left, `⋯` pinned right, all keys in between in a horizontal scroller.
-- "Status badge" absolute element removed; status moved to the toolbar dot.
+- Touch responsiveness, soft-keyboard drop, mask-image dimming, redundant
+  title text.
 
 ## [0.2.0] — 2026-06-16
 
 ### Added
-- **Phase 4 (MVP)** — `llmuxd serve` boots an HTTP + WebSocket server.
-  Session picker at `/`, full-screen xterm.js terminal at `/session/<name>`,
-  WebSocket bridge at `/ws/<name>` pipes through `node-pty` attached to
-  `tmux attach -t <name>`.
-- Network discovery banner on `serve` startup: Local + LAN + Tailscale
-  CGNAT-detected addresses.
-- `/health` JSON endpoint (no auth) — `{ok, sessions}`.
-- xterm.js + addon-fit loaded via CDN — no asset bundling.
+
+- Phase 4 MVP: `llmuxd serve` boots HTTP + WebSocket server. Session picker
+  at `/`, xterm.js terminal at `/session/<name>`, WS bridge at `/ws/<name>`
+  through node-pty.
+- Network discovery banner. `/health` JSON endpoint.
 
 ### Changed
-- HTTP + WebSocket switched from `Bun.serve` to `node:http` + `ws`
-  package. Reason: `node-pty` prebuilds target Node, not Bun's V8 fork;
-  attaching to tmux through node-pty under Bun caused immediate SIGHUP.
-  Under Node the round-trip is rock-solid.
-- Build now externalises `node-pty` so the native module loads from
-  `node_modules/` at runtime (was being bundled and failing to resolve
-  its `.node` binary).
 
-### Out of scope (deferred to later phases)
-- SAS token auth — currently `serve` prints a "no auth" warning. Phase 3.
-- QR codes on the serve banner — Phase 5.
-- `llmux chat --browser` (client-side opener) — needs Phase 3 REST.
-
-### Notes
-- Manual smoke from cachy: `llmuxd spawn bash --name demo` →
-  `llmuxd serve` → browser at the printed Local URL → click `demo` →
-  full bash session under xterm.js. PTY input/output and resize work.
-- Headless WebSocket test (`/tmp/ws-smoke.ts`) PASS: sends
-  `echo SMOKE_OK_$$` and reads it back through the pty.
-- `phase4.smoke.test.ts` PASS 4/4 — picker / session page / 404 / health.
+- HTTP + WS switched from `Bun.serve` to `node:http` + `ws` package
+  (`node-pty` prebuilds target Node, not Bun).
 
 ## [0.1.0] — 2026-06-15
 
-### Added
-- **Phase 1** — real tmux integration. `spawn`, `send`, `broadcast`, `chat`,
-  `kill`, `status` now drive actual tmux sessions.
-- Session state file at `$XDG_STATE_HOME/llmuxd/sessions.json` (default
-  `~/.local/state/llmuxd/sessions.json`) with `0600` perms.
-- Session ownership via `LLMUX_SESSION` env injected into spawned sessions;
-  `kill --cascade` walks the parent → children tree.
-- `spawn`: single agent, comma list, `all` (installed agents only),
-  `--name` (single only), `--prefix`, `--cwd`. Conflicts and missing
-  installs surface as clean errors.
-- `send`/`chat`: target resolves session-name first, then unambiguous
-  agent-type; ambiguity surfaces both candidates.
-- `status`: reconciles tracked sessions against live tmux state; `--json`
-  for scripting.
-- `bun:test` smoke suite drives a real tmux session end-to-end (new →
-  send-keys → kill).
+### Added — Phase 1
 
-### Notes
-- CI `release.yml` first run for `v0.0.1` failed on npm `404 — package
-  does not exist` (the CI `NPM_TOKEN` couldn't create the scoped packages
-  from cold). Both packages were manually published from cachy to
-  bootstrap the scope. Subsequent CI releases for existing packages
-  publish cleanly.
+- Real tmux integration. `spawn`, `send`, `broadcast`, `chat`, `kill`,
+  `status` drive actual tmux sessions.
+- Session state file at `~/.local/state/llmuxd/sessions.json` (0600).
+- `LLMUX_SESSION` env injected; `kill --cascade` walks parent → children.
 
 ## [0.0.1] — 2026-06-15
 
 ### Added
-- Initial monorepo scaffold (`@cordfuse/llmuxd` + `@cordfuse/llmux`).
-- CLI dispatchers with all subcommand signatures stubbed.
-- Bun workspaces, strict TypeScript, MIT license.
-- GitHub Actions CI (typecheck + build + smoke) and tag-driven npm publish.
 
-### Notes
-- Phase 0 placeholder release — every subcommand prints help correctly but
-  exits with "not yet implemented" (exit 70) when invoked. Phase 1 lands
-  real `spawn`/`send`/`broadcast`/`chat`/`kill`/`status` next.
+- Initial monorepo scaffold. CLI dispatchers stubbed. MIT license.
+- GitHub Actions CI (typecheck + build + smoke) and tag-driven npm publish.
