@@ -1036,12 +1036,11 @@ function sessionPage(name: string): string {
   #all-keys button:active{background:#252b34;border-color:#3a414b}
   #term{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:var(--bar-h)}
   /* Suppress Android/iOS native text-selection popup on the terminal area.
-     xterm.js v5 renders rows as real span text nodes for a11y; Android's
-     long-press kicks in on any selectable DOM text, stealing the gesture
-     before our custom long-press handler can extend the selection. xterm's
-     own selection rendering (via term.select) is canvas-drawn and doesn't
-     depend on browser text-selection, so disabling user-select is safe. */
-  #term, #term *{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+     xterm.css ships user-select:text on .xterm-rows for a11y; we need to
+     override that with !important. The contextmenu handler in the JS adds
+     a second line of defense — Android also fires the popup off the
+     contextmenu event on long-press regardless of user-select state. */
+  #term, #term *{-webkit-touch-callout:none!important;-webkit-user-select:none!important;user-select:none!important}
   body.allkeys-open #term{bottom:calc(var(--bar-h) + var(--allkeys-h))}
   #overlay{position:fixed;inset:0;background:rgba(11,12,16,.92);display:none;align-items:center;justify-content:center;z-index:30;padding:20px}
   #overlay.show{display:flex}
@@ -1637,6 +1636,12 @@ function sessionPage(name: string): string {
     termEl.style.boxShadow = '';
     _cancelLongPress();
   }, { passive: true, capture: true });
+  // Android fires a contextmenu event right after long-press; that's what
+  // surfaces the OS selection popup (Cut/Copy/Paste/Select all). Suppress it
+  // unconditionally so our custom selection drives the gesture instead.
+  termEl.addEventListener('contextmenu', function(e){ e.preventDefault(); }, { capture: true });
+  // Belt-and-braces: if the OS still fires a selectstart event, kill it.
+  termEl.addEventListener('selectstart', function(e){ e.preventDefault(); }, { capture: true });
 
   // ---- Wire toolbar ----
   document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
