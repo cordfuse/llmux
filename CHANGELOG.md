@@ -5,6 +5,21 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.6] — 2026-06-16
+
+### Documentation
+
+- Reverted the v0.13.5 cost-framing of the "Headless ≠ `claude -p`"
+  section. Making cross-provider billing claims in the README invites
+  pedantic correction and dates fast — Anthropic's OAuth-vs-API
+  boundary has shifted multiple times, ChatGPT Plus and the OpenAI API
+  are already separate products, etc. Better to stick to mechanically
+  verifiable claims (state behavior, OAuth flow) than make claims about
+  someone else's billing model.
+- Restored the state-and-mechanics framing from v0.13.3, but dropped
+  the "Each call starts cold" line per the earlier objection — same
+  facts, less editorialised.
+
 ## [0.13.5] — 2026-06-16
 
 ### Documentation
