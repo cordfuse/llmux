@@ -5,6 +5,24 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-06-16
+
+### Documentation
+
+- Full README rewrite to match the consolidated single-package, noun-prefix
+  surface (`@cordfuse/llmux`, one binary, `llmux session …` / `llmux server
+  …` / `llmux token …` / `llmux agent …`). 15-agent catalog table refreshed
+  with danger-mode flags. Remote-mode (`--server` / `LLMUX_SERVER`) and
+  Tailscale-HTTPS sections added. Phase status block dropped.
+- CHANGELOG backfilled with every release between 0.3.0 and 0.12.0 (entries
+  had stalled at 0.2.14, leaving 50+ versions undocumented).
+- Operator-visible strings scrubbed of `llmuxd` references: daemon banner,
+  footer, picker empty-state hint, chat page title, gate page strings, auth
+  banner, and error/help text in `cli.ts`, `handlers.ts`, and `client.ts`.
+  Cookie name (`llmuxd_token`), state directory path (`~/.local/state/
+  llmuxd/`), and a single historical breadcrumb in `index.ts` help text
+  intentionally preserved for backward compatibility.
+
 ## [0.12.0] — 2026-06-16
 
 ### Changed — **package consolidation**

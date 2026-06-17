@@ -13,6 +13,7 @@ coverage/
 .idea/
 .vscode/
 *.swp
+*.tgz
 
 # Transient publish-time copies — prepublishOnly copies root README/LICENSE
 # into each package dir; postpublish removes them. .gitignored as a safety
