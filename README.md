@@ -1,18 +1,14 @@
 # llmux
 
-You have Claude Code in one terminal, Codex in another, Aider in a third, and
-OpenCode in a fourth. They're all live, all mid-conversation, all costing
-nothing to keep open. But to fire a prompt at one of them you have to find the
-right window, click in, and type. To do anything from your phone? Forget it.
+Run every AI agent CLI under a single daemon. One named tmux session per
+agent. Drive any of them from a terminal (`llmux session attach`), a REST or
+WebSocket API, or a phone browser over Tailscale.
 
-llmux turns every agent CLI into a named tmux session you can drive from
-anywhere. Spawn `claude`, `codex`, `agy`, `gemini`, `qwen`, `opencode`, `amp`,
-`grok`, `aider`, `continue`, `kiro`, `cursor`, `plandex`, `goose`, or
-`gh copilot` once. Then fire prompts at any of them — by name, from a CLI, from
-a REST call, or from a browser on your phone over Tailscale. Past
-conversations are browsable and resumable. The agents keep running.
+Each agent runs unmodified — llmux just brokers I/O. Sessions survive
+restarts, attach is raw-TTY, and Claude Code conversations are resumable
+from any client.
 
-> **Status:** v0.12.2 — daemon + CLI client consolidated into one binary
+> **Status:** v0.12.3 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -22,8 +18,11 @@ conversations are browsable and resumable. The agents keep running.
   <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/chat.jpg" width="32%" alt="phone chat — xterm.js with soft-keyboard toolbar attached to an OpenCode session">
 </p>
 
-> Browser picker, edit form, and attached terminal — all on a phone over
-> Tailscale HTTPS.
+> Above: picker, edit form, and attached terminal — phone, over Tailscale
+> HTTPS. The same surfaces are available from any terminal via
+> **`llmux session attach <name>`** (raw TTY pass-through over WebSocket;
+> Ctrl+] to detach). Pick whichever fits the task — the browser is for
+> drive-by phone use, the terminal is for everything else.
 
 ## Install
 
@@ -67,7 +66,7 @@ The same binary is the client. Set `--server` (or `LLMUX_SERVER` env) on any
 session/agent verb and it routes over HTTP instead of operating locally:
 
 ```bash
-export LLMUX_SERVER=http://100.105.221.46:3030
+export LLMUX_SERVER=http://192.0.2.10:3030  # or https://<host>.tailnet.ts.net
 export LLMUX_TOKEN=sas_…                    # mint with `llmux token create`
 
 llmux session list

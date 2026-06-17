@@ -5,6 +5,21 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.3] — 2026-06-16
+
+### Documentation
+
+- Tighter README opener — dropped the "you have N terminals" narrative
+  set-up and the agent-name laundry list (already in the catalog table
+  later). Lead now states what llmux is in two sentences.
+- Screenshot caption now surfaces `llmux session attach` as the parallel
+  to the browser surface, so terminal-first readers see the path that
+  fits their workflow without scrolling.
+- Scrubbed a leaked tailnet IP in the remote-operation example. Replaced
+  with `192.0.2.10` (RFC 5737 TEST-NET-1, reserved for documentation —
+  unambiguously a placeholder) plus a `<host>.tailnet.ts.net` HTTPS
+  alternative.
+
 ## [0.12.2] — 2026-06-16
 
 ### Documentation
