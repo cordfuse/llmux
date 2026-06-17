@@ -1488,16 +1488,20 @@ function sessionPage(name: string): string {
   // ---- Long-press + drag to copy on mobile ----
   // Desktop selection already works via xterm's mouse-drag; this handles the
   // mobile path where touch is the only input. Flow:
-  //   touchstart → 450 ms timer to distinguish from tap/swipe
-  //   timer fires → mark anchor cell, vibrate briefly, highlight via term.select()
+  //   touchstart → 400 ms timer to distinguish from tap/swipe
+  //   timer fires → mark anchor cell, flash a red border around the terminal
+  //                 (visible confirmation the gesture engaged), vibrate, and
+  //                 highlight the anchor cell via term.select()
   //   touchmove   → extend selection (single-row uses term.select for visual;
   //                 multi-row tracks without highlight, text reads from buffer)
   //   touchend    → copy to clipboard, show "Copied" toast, clear selection
   //
-  //   Pre-trigger move > 8 px or a second touch cancels the timer — keeps
+  //   Pre-trigger move > 18 px or a second touch cancels the timer — keeps
   //   single-finger swipe-to-scroll and 2-finger pinch-to-zoom intact.
-  const LP_DURATION_MS = 450;
-  const LP_MOVE_TOLERANCE = 8;
+  //   Listeners attach with capture:true so they fire before xterm's own
+  //   internal touch handling.
+  const LP_DURATION_MS = 400;
+  const LP_MOVE_TOLERANCE = 18;
   let lpTimer = null;
   let lpStartX = 0, lpStartY = 0;
   let lpAnchor = null;
@@ -1580,10 +1584,13 @@ function sessionPage(name: string): string {
       lpTimer = null;
       lpAnchor = _cellFromPoint(lpStartX, lpStartY);
       lpDragging = true;
+      // Visible armed indicator — red 2px border flashed on the term element.
+      // Confirms the gesture engaged even when vibration isn't supported.
+      termEl.style.boxShadow = 'inset 0 0 0 2px #f0883e';
       try { if (navigator.vibrate) navigator.vibrate(15); } catch(_){}
       try { term.select(lpAnchor.col, lpAnchor.visibleRow, 1); } catch(_){}
     }, LP_DURATION_MS);
-  }, { passive: true });
+  }, { passive: true, capture: true });
   termEl.addEventListener('touchmove', function(e){
     if (e.touches.length !== 1){
       _cancelLongPress();
@@ -1608,8 +1615,9 @@ function sessionPage(name: string): string {
         } catch(_){}
       }
     }
-  }, { passive: false });
+  }, { passive: false, capture: true });
   termEl.addEventListener('touchend', function(){
+    termEl.style.boxShadow = '';
     if (lpDragging && lpAnchor){
       const end = lpEnd || lpAnchor;
       const text = _extractText(lpAnchor, end);
@@ -1617,8 +1625,11 @@ function sessionPage(name: string): string {
       setTimeout(function(){ try { term.clearSelection(); } catch(_){} }, 1200);
     }
     _cancelLongPress();
-  }, { passive: true });
-  termEl.addEventListener('touchcancel', _cancelLongPress, { passive: true });
+  }, { passive: true, capture: true });
+  termEl.addEventListener('touchcancel', function(){
+    termEl.style.boxShadow = '';
+    _cancelLongPress();
+  }, { passive: true, capture: true });
 
   // ---- Wire toolbar ----
   document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
