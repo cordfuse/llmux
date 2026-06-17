@@ -5,6 +5,23 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.20.2] — 2026-06-17
+
+### Fixed — copy buttons rendered as ugly glyph boxes on Android
+
+v0.20.0/v0.20.1 used Unicode `⎘` (U+2398 NEXT PAGE) for the copy
+buttons. The glyph rendered as a broken outlined box on Android Chrome
+(no system font ships a matching shape; the browser falls back to a
+generic placeholder). Replaced with text labels:
+
+  - **Copy** — visible viewport
+  - **All**  — full scrollback
+
+Text reads at any size, doesn't depend on glyph availability, and the
+buttons remain small enough to fit the top bar without crowding. The
+title attributes (Copy visible / Copy full scrollback) clarify intent
+on hover.
+
 ## [0.20.1] — 2026-06-17
 
 ### Added — second Copy button for full scrollback

@@ -1017,7 +1017,7 @@ function sessionPage(name: string): string {
   #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;padding-left:8px}
   #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;padding-left:6px}
-  #copy-buf,#copy-all{flex:0 0 auto;background:#1c2128;color:#7ee787;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:11px ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none;margin-right:4px;letter-spacing:-1px}
+  #copy-buf,#copy-all{flex:0 0 auto;background:#1c2128;color:#7ee787;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:500 11px/1 ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none;margin-right:4px;transition:background .12s,border-color .12s,color .12s}
   #copy-buf{margin-left:auto}
   #copy-buf:active,#copy-all:active{background:#252b34;border-color:#3a414b}
   #copy-buf.copied,#copy-all.copied{color:#0b0c10;background:#7ee787;border-color:#7ee787}
@@ -1074,8 +1074,8 @@ function sessionPage(name: string): string {
 <div id="topbar">
   <button id="back" title="Back to sessions">⌂</button>
   <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span></span>
-  <button id="copy-buf" title="Copy visible terminal text" aria-label="copy visible">⎘</button>
-  <button id="copy-all" title="Copy full scrollback" aria-label="copy all">⎘⎘</button>
+  <button id="copy-buf" title="Copy visible terminal text" aria-label="copy visible">Copy</button>
+  <button id="copy-all" title="Copy full scrollback" aria-label="copy all">All</button>
   <span id="title-brand">LLMUX</span>
   <span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span>
 </div>
