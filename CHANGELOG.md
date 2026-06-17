@@ -5,6 +5,30 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-06-17
+
+### Removed — mobile text-selection / long-press copy
+
+Reverted the entire v0.18.x text-selection feature (long-press + drag
+handles + copy toast). The browser-over-xterm.js implementation kept
+hitting fundamental architectural mismatches: handles attached as
+children of the term element have their touch events bubble through
+the parent's listener (breaking handle-owned drag), and custom overlay
+highlights fight xterm's internal z-index stack. After studying
+Termux's source (cordfuse/termux-app reference) we confirmed the right
+model is (a) handles in their own touch-event scope with
+stopPropagation + setPointerCapture, and (b) selection highlight drawn
+by the terminal renderer itself (not a separate overlay) — both of
+which require a proper rewrite, not another patch.
+
+Reverted `packages/llmux/src/daemon/web/server.ts` to the state at
+v0.17.3 — pinch-to-zoom, desktop soft-keyboard hide, and the PWA
+removal all stay. The v0.18.x work is preserved on branch
+`feat/termux-selection` for the second swing.
+
+Bumped to v0.19.0 to signal the deliberate feature removal at minor
+granularity (npm doesn't allow republishing prior versions).
+
 ## [0.18.0] — 2026-06-17
 
 ### Added — long-press + drag to copy on mobile
