@@ -99,7 +99,7 @@ function listSessionViews(): SessionView[] {
 // Cordfuse PWA family ({Vz}, etc.) with llmux's own palette. Vector source
 // is shared by the favicon, apple-touch-icon, and the PWA install icons
 // (192/512) — browsers scale the SVG natively.
-const BRAND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="90" ry="90" fill="#0b0c10"/><rect x="1.5" y="1.5" width="509" height="509" rx="89" ry="89" fill="none" stroke="#7cc4ff" stroke-width="1.5" stroke-opacity="0.22"/><text x="256" y="236" text-anchor="middle" dominant-baseline="central" font-family="'Noto Sans Mono','Courier New',monospace" font-size="185" font-weight="700" fill="#7cc4ff" letter-spacing="-3">{Lm}</text></svg>`;
+const BRAND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="90" ry="90" fill="#0b0c10"/><rect x="1.5" y="1.5" width="509" height="509" rx="89" ry="89" fill="none" stroke="#7cc4ff" stroke-width="1.5" stroke-opacity="0.22"/><text x="256" y="236" text-anchor="middle" dominant-baseline="central" font-family="'Noto Sans Mono', 'Courier New', monospace" font-size="185" font-weight="700" fill="#7cc4ff" letter-spacing="-3">{Lm}</text></svg>`;
 const FAVICON_SVG = BRAND_SVG;
 const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`;
 

@@ -5,6 +5,16 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.6] — 2026-06-17
+
+### Changed
+
+- Normalised the `BRAND_SVG` font-family string to match vyzr's canonical
+  format (`'Noto Sans Mono', 'Courier New', monospace` — spaces after
+  commas). No visual change — browsers ignore whitespace in CSS
+  font-family lists — just keeps the Cordfuse PWA family source-level
+  consistent so future cross-repo audits don't flag a false positive.
+
 ## [0.15.5] — 2026-06-17
 
 ### Fixed — PWA identity collision with vyzr (and any other Cordfuse PWA)
