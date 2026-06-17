@@ -50,7 +50,7 @@ stream in. **The picker is a PWA** — "Add to Home Screen" in Chrome or
 Safari and it launches standalone (no browser chrome, splash screen, OS
 task-switcher entry). Same daemon, same WebSocket, just feels native.
 
-> **Status:** v0.14.0 — daemon + CLI client consolidated into one binary
+> **Status:** v0.14.1 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 

@@ -5,6 +5,26 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-06-17
+
+### Changed — proper brand mark
+
+Replaced the placeholder 2×2 blue-grid icon (favicon + PWA) with the
+**multiplex fan** mark: one larger anchor circle at top (the daemon)
+diverging into three lines to three smaller endpoint circles (the
+agents). Reads as "one dispatcher → many agents" — the product
+proposition in one glance.
+
+Both `FAVICON_SVG` and `PWA_ICON_SVG` updated. Geometry holds inside
+the central 80% of the viewBox so Android's adaptive-icon masks
+(circle, squircle) don't crop the anchor or endpoints. Same dark-navy
+backplate (#0b0c10) and sky-blue accent (#7cc4ff) as before, so
+nothing else in the UI needed to change.
+
+Verified by rendering both at 32×32 (favicon native) and 192×192
+(home-screen icon) via `rsvg-convert` — mark stays legible at both
+ends of the size range.
+
 ## [0.14.0] — 2026-06-16
 
 ### Added — picker is now a PWA
