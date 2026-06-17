@@ -1454,6 +1454,7 @@ function sessionPage(name: string): string {
       pinchState.lastApplied = clamped;
       term.options.fontSize = clamped;
       try { fit.fit(); } catch(_){}
+      try { term.refresh(0, term.rows - 1); } catch(_){}
       safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
     });
   }, { passive: false });
@@ -1490,6 +1491,7 @@ function sessionPage(name: string): string {
       if (target === current) return;
       term.options.fontSize = target;
       try { fit.fit(); } catch(_){}
+      try { term.refresh(0, term.rows - 1); } catch(_){}
       safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
       try { localStorage.setItem(FONT_KEY, String(target)); } catch(_){}
     });
@@ -1582,8 +1584,13 @@ function sessionPage(name: string): string {
   //     On desktop, mouse-drag triggers xterm's internal selection, which
   //     fires onSelectionChange. We write to clipboard on any non-empty
   //     change. Dedupe so a single selection doesn't write repeatedly.
+  //     Skip while a pinch gesture is active — xterm fires spurious
+  //     selection events during 2-finger touches, and writing to the
+  //     clipboard from inside that callback was clobbering the pinch
+  //     resize on Android (the regression introduced in v0.20.0).
   let _lastSelText = '';
   term.onSelectionChange(function(){
+    if (pinchState) return;
     const text = term.getSelection();
     if (!text || text === _lastSelText) return;
     _lastSelText = text;
