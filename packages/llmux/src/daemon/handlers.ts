@@ -408,11 +408,37 @@ export function handleTokenShow(args: ParsedArgs): void {
   for (const r of rows) console.log(r.map((c, i) => c.padEnd(widths[i]!)).join('  '));
 }
 
-export function handleTokenRevoke(args: ParsedArgs): void {
+export async function handleTokenRevoke(args: ParsedArgs): Promise<void> {
+  if (args.flags.all) {
+    const tokens = authStore.listAuthTokens();
+    if (tokens.length === 0) {
+      console.log('no tokens to revoke');
+      return;
+    }
+    const skipConfirm = Boolean(args.flags.yes);
+    if (!skipConfirm) {
+      if (!process.stdin.isTTY) {
+        throw new Error('--all without --yes requires an interactive terminal');
+      }
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = await new Promise<string>((resolve) =>
+        rl.question(`Revoke ALL ${tokens.length} token${tokens.length === 1 ? '' : 's'}? [y/N] `, (a) => resolve(a)),
+      );
+      rl.close();
+      if (!/^y(es)?$/i.test(answer.trim())) {
+        console.log('cancelled');
+        return;
+      }
+    }
+    const removed = authStore.revokeAllAuthTokens();
+    console.log(`revoked ${removed} token${removed === 1 ? '' : 's'}`);
+    console.log('No tokens remain — auth is now disabled.');
+    return;
+  }
   // Accept the id at positional[0] (new flat dispatcher) OR positional[1] (legacy
   // `llmuxd token revoke <id>` form where positional[0] was "revoke").
   const idPrefix = args.positional[0] === 'revoke' ? args.positional[1] : args.positional[0];
-  if (!idPrefix) throw new Error('token revoke requires an <id> (the 8-char prefix shown by `token show`)');
+  if (!idPrefix) throw new Error('token revoke requires an <id> (the 8-char prefix shown by `token show`), or --all to revoke every token');
   const ok = authStore.revokeAuthToken(idPrefix);
   if (!ok) throw new Error(`no token with id "${idPrefix}"`);
   console.log(`revoked ${idPrefix}`);

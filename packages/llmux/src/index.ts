@@ -127,6 +127,7 @@ Token verbs (always local — managing the daemon-host's auth store):
   token list                                    show active tokens
   token rename <id> --name <label>              rename a token (pass --name "" to clear)
   token revoke <id>                             revoke a token by id
+  token revoke --all [--yes]                    revoke every token (prompts unless --yes)
 
 Agent verbs:
   agent list [--all] [--installed] [--json]     list agents (default: installed-only)
@@ -308,6 +309,8 @@ async function dispatchToken(verb: string | undefined, args: string[]): Promise<
     expiry: { kind: 'string', description: 'ISO-8601 expiry' },
     qr: { kind: 'boolean', description: 'render QR for first-tap login' },
     'qr-endpoint': { kind: 'string', description: 'endpoint label or URL for QR target' },
+    all: { kind: 'boolean', description: 'with `revoke`: revoke every token' },
+    yes: { kind: 'boolean', description: 'with `revoke --all`: skip the interactive confirm prompt' },
     json: { kind: 'boolean', description: 'emit JSON' },
   });
   switch (verb) {
@@ -319,7 +322,7 @@ async function dispatchToken(verb: string | undefined, args: string[]): Promise<
       h.handleTokenShow(parsed);
       return;
     case 'revoke':
-      h.handleTokenRevoke(parsed);
+      await h.handleTokenRevoke(parsed);
       return;
     case 'rename':
       h.handleTokenRename(parsed);

@@ -5,6 +5,22 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.21.1] — 2026-06-17
+
+### Added — `token revoke --all` to wipe the auth store
+
+New flag on the existing `revoke` verb. Lists how many tokens will be
+removed and prompts `Revoke ALL N tokens? [y/N]` on an interactive
+terminal. Pass `--yes` to skip the confirm for scripted use; non-TTY
+without `--yes` errors out.
+
+Also exposed via the in-process `auth-store.revokeAllAuthTokens()` API,
+returning the count removed.
+
+Useful when the token list accumulates pairing tokens (e.g. from
+repeated `server start` runs on v0.21.0+) and you want a clean reset
+before re-pairing fresh.
+
 ## [0.21.0] — 2026-06-17
 
 ### Added — `server start` prints a pairing QR by default

@@ -69,6 +69,15 @@ export function revokeAuthToken(idPrefix: string): boolean {
   return true;
 }
 
+/** Revoke every token. Returns the count removed. */
+export function revokeAllAuthTokens(): number {
+  const file = load();
+  const removed = file.tokens.length;
+  file.tokens = [];
+  save(file);
+  return removed;
+}
+
 /**
  * Rename a token's display label. Empty string clears the name.
  * Returns the updated record or null if no token matches the id prefix.
