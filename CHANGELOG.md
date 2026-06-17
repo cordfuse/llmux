@@ -5,6 +5,31 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.5] — 2026-06-17
+
+### Fixed — PWA identity collision with vyzr (and any other Cordfuse PWA)
+
+Operators with vyzr (or any other Cordfuse PWA) already installed from
+the same tailnet origin couldn't install llmux as a separate PWA —
+Chrome's "Add to Home Screen" handler treated the second install as a
+reopen of the first app. Cause: neither manifest declared an explicit
+`id` field, so both fell back to the derived `id = start_url = "/"`,
+which collides at the (origin, id) level Chrome uses for app identity.
+
+Fix: add `id: "/?app=llmux"` to the manifest. Distinct from any
+other Cordfuse PWA's derived `/` id, doesn't change routing (the
+query is unused by the daemon), and the manifest is otherwise
+unchanged.
+
+Operators will need to **re-attempt the install** after the daemon
+upgrade — the browser caches the manifest mapping for already-failed
+installs.
+
+(Worth noting: vyzr's manifest also doesn't ship an `id`. Adding one
+there too — separate repo, separate change — would prevent future
+collisions with any *next* Cordfuse PWA. Out of scope for this
+patch.)
+
 ## [0.15.4] — 2026-06-17
 
 ### Changed — brand mark aligned to Cordfuse PWA family

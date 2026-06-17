@@ -115,6 +115,12 @@ const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`
 const PWA_ICON_SVG = BRAND_SVG;
 
 const PWA_MANIFEST = JSON.stringify({
+  // Explicit `id` so operators running multiple Cordfuse PWAs on the same
+  // tailnet origin (e.g. vyzr at `/` already installed) don't collide.
+  // Without an explicit id, browsers derive it from start_url — and every
+  // Cordfuse PWA defaulting to `start_url: "/"` gets fingerprinted as the
+  // *same* app on its second install attempt.
+  id: '/?app=llmux',
   name: 'llmux',
   short_name: 'llmux',
   description: 'tmux-based AI agent dispatcher — drive every CLI from your phone',
