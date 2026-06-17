@@ -5,6 +5,19 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.4] — 2026-06-16
+
+### Documentation
+
+- Fixed wrong claim in README opener. v0.13.3 said "One named tmux
+  session per agent" — implying a 1:1 mapping. The truth is each
+  spawn becomes its own named tmux session and you can run as many of
+  any agent as you want — three `claude` sessions in three different
+  repos, fifteen of each, no cap and no shared state across them.
+  Verified by spawning three claude sessions side-by-side and confirming
+  they live as independent tmux sessions with separate cwd / flags /
+  conversation.
+
 ## [0.13.3] — 2026-06-16
 
 ### Documentation

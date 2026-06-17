@@ -5,10 +5,13 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![node](https://img.shields.io/node/v/@cordfuse/llmux.svg?label=node)](./packages/llmux/package.json)
 
-Run every AI agent CLI under a single daemon. One named tmux session per
-agent. Drive any of them from a terminal (`llmux session attach`), a REST
-or WebSocket API, or a phone browser over Tailscale. Sessions survive
-daemon restarts; attach is raw-TTY (`Ctrl+]` to detach).
+Run every AI agent CLI under a single daemon. Each spawn is its own named
+tmux session — own cwd, own flags, own conversation. Run three claude
+sessions across three different repos side-by-side, or one each of claude
+/ codex / gemini, or fifteen of each — there's no per-agent cap and no
+shared state. Drive any of them from a terminal (`llmux session attach`),
+a REST or WebSocket API, or a phone browser over Tailscale. Sessions
+survive daemon restarts; attach is raw-TTY (`Ctrl+]` to detach).
 
 ### Headless ≠ `claude -p`
 
@@ -40,7 +43,7 @@ toolbar (Esc / Tab / Ctrl / arrows / shell chars), watch tool calls
 stream in. No "mobile app" — it's the same daemon serving a real
 terminal over a WebSocket.
 
-> **Status:** v0.13.3 — daemon + CLI client consolidated into one binary
+> **Status:** v0.13.4 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
