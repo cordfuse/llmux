@@ -23,7 +23,7 @@ function readDaemonVersion(): string {
     ]){
       try {
         const pkg = JSON.parse(readFileSync(candidate, 'utf8'));
-        if (pkg.name === '@cordfuse/llmuxd' && typeof pkg.version === 'string') return pkg.version;
+        if (pkg.name === '@cordfuse/llmux' && typeof pkg.version === 'string') return pkg.version;
       } catch {}
     }
   } catch {}

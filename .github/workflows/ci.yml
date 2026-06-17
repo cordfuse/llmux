@@ -22,13 +22,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build llmuxd
-        run: npm run build --workspace @cordfuse/llmuxd
-
-      - name: Build llmux
-        run: npm run build --workspace @cordfuse/llmux
+      - name: Build
+        run: npm run build
 
       - name: Smoke (--help)
         run: |
-          node packages/llmuxd/dist/index.js --help
           node packages/llmux/dist/index.js --help
+          node packages/llmux/dist/index.js --version

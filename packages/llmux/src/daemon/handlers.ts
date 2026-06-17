@@ -8,7 +8,7 @@ import * as tmux from './tmux.ts';
 import * as authStore from './auth-store.ts';
 import { startServer, printBanner } from './web/server.ts';
 import { getAddresses } from './net.ts';
-import type { ParsedArgs } from './cli.ts';
+import type { ParsedArgs } from '../cli.ts';
 
 // ---------- helpers ----------
 
@@ -331,7 +331,9 @@ export function handleTokenShow(args: ParsedArgs): void {
 }
 
 export function handleTokenRevoke(args: ParsedArgs): void {
-  const idPrefix = args.positional[1];
+  // Accept the id at positional[0] (new flat dispatcher) OR positional[1] (legacy
+  // `llmuxd token revoke <id>` form where positional[0] was "revoke").
+  const idPrefix = args.positional[0] === 'revoke' ? args.positional[1] : args.positional[0];
   if (!idPrefix) throw new Error('token revoke requires an <id> (the 8-char prefix shown by `token show`)');
   const ok = authStore.revokeAuthToken(idPrefix);
   if (!ok) throw new Error(`no token with id "${idPrefix}"`);
@@ -349,14 +351,16 @@ export function handleRespawn(args: ParsedArgs): void {
   const session = state.get(target);
   if (!session) throw new Error(`no tracked session "${target}"`);
 
-  if (tmux.hasSession(target)) {
-    throw new Error(`session "${target}" is still running — kill it first`);
-  }
-
   const agent = DEFAULT_AGENTS[session.agent];
   if (!agent) throw new Error(`unknown agent "${session.agent}" — cannot respawn`);
   if (!isAgentInstalled(agent)) {
     throw new Error(`agent "${session.agent}" is not installed (looked for: ${agent.cmd})`);
+  }
+
+  // If the session is still running, kill it first so respawn = restart
+  // with the persisted config (parity with the web API's respawnSession).
+  if (tmux.hasSession(target)) {
+    tmux.killSession(target);
   }
 
   tmux.newSession({

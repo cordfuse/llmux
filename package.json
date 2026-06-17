@@ -2,15 +2,14 @@
   "name": "llmux-monorepo",
   "private": true,
   "version": "0.0.0",
-  "description": "tmux-based AI agent session manager — dispatch to interactive agent CLIs via tmux send-keys",
+  "description": "tmux-based AI agent dispatcher — daemon + CLI client in one binary",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "llmuxd": "tsx packages/llmuxd/src/index.ts",
     "llmux": "tsx packages/llmux/src/index.ts",
-    "build": "npm run build --workspace @cordfuse/llmuxd && npm run build --workspace @cordfuse/llmux",
-    "typecheck": "npm run typecheck --workspace @cordfuse/llmuxd && npm run typecheck --workspace @cordfuse/llmux"
+    "build": "npm run build --workspace @cordfuse/llmux",
+    "typecheck": "npm run typecheck --workspace @cordfuse/llmux"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

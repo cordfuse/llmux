@@ -22,33 +22,20 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Build llmuxd
-        run: npm run build --workspace @cordfuse/llmuxd
+      - name: Build
+        run: npm run build
 
-      - name: Build llmux
-        run: npm run build --workspace @cordfuse/llmux
-
-      - name: Pack tarballs
+      - name: Pack tarball
         run: |
-          cd packages/llmuxd && npm pack && mv cordfuse-llmuxd-*.tgz ../../
-          cd ../llmux && npm pack && mv cordfuse-llmux-*.tgz ../../
+          cd packages/llmux && npm pack && mv cordfuse-llmux-*.tgz ../../
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            cordfuse-llmuxd-*.tgz
             cordfuse-llmux-*.tgz
           generate_release_notes: true
-
-      - name: Publish @cordfuse/llmuxd to npm
-        if: ${{ env.NPM_TOKEN != '' }}
-        working-directory: packages/llmuxd
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @cordfuse/llmux to npm
         if: ${{ env.NPM_TOKEN != '' }}
