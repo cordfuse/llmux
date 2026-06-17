@@ -5,6 +5,46 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-17
+
+### Added — stop/start toggle button per session row
+
+New per-row action in the web picker that lets an operator stop and
+restart an agent's tmux session **without losing the config**. Where
+the existing buttons fit:
+
+  - `↻ restart` (running) / `↻ respawn` (exited) — kill + relaunch,
+    end state always running.
+  - `✕ kill` (running) / `✕ remove` (exited) — kill tmux AND remove
+    the state record entirely. Terminal action.
+  - **New** `⏹ stop` (running) / `▶ start` (exited) — pause/resume.
+    Stop kills the tmux session but keeps the state record so the
+    same config (cwd, flags, env, resumeFrom) can be re-launched at
+    any time. Start re-creates the tmux session from the stored
+    record.
+
+### Added — `POST /api/sessions/:name/stop`
+
+Backs the new toggle. Idempotent — calling stop on an already-stopped
+session returns ok. Differs from `/kill` in that the state record
+survives, so the session can be started again from the same config.
+The toggle's "start" side reuses the existing `/respawn` endpoint
+(respawn-from-exited and start-from-stopped are mechanically the
+same: re-create tmux from stored state).
+
+### Visual
+
+Toggle button uses amber on the running side (warning — destructive of
+running process state) and green on the exited side (positive — start
+an idle agent). Distinct from the existing button palette so it reads
+clearly even at icon-only widths.
+
+### Bump
+
+Minor (0.15 → 0.16) because the stop endpoint is a new user-visible
+surface, not a fix or doc patch. Backwards-compatible — existing
+`/kill` and `/respawn` endpoints unchanged.
+
 ## [0.15.6] — 2026-06-17
 
 ### Changed

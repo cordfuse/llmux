@@ -230,6 +230,8 @@ ${PWA_HEAD_TAGS}
   .actions button.edit{color:#d29922;border-color:#574122}
   .actions button.kill{color:#f85149;border-color:#4a2329}
   .actions button.resume-btn{color:#a371f7;border-color:#3c2a59}
+  .actions button.toggle[data-status="running"]{color:#f0883e;border-color:#4a3019}
+  .actions button.toggle[data-status="exited"]{color:#7ee787;border-color:#1f4528}
   .actions button .icon{font-size:13px;line-height:1;display:inline-block;vertical-align:middle}
   .actions button:disabled{opacity:.5;cursor:wait}
   .empty{color:#7a7f87;padding:18px;text-align:center;border:1px dashed #1f2329;border-radius:8px}
@@ -448,6 +450,11 @@ ${PWA_HEAD_TAGS}
     const respawnText = s.status === 'running' ? 'restart' : 'respawn';
     const respawnTitle = s.status === 'running' ? 'kill + relaunch with the persisted config (use after edit)' : 'launch the agent again with the persisted config';
     const respawnBtn = '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '" title="' + respawnTitle + '" aria-label="' + respawnText + '"><span class="icon">↻</span><span class="label">' + respawnText + '</span></button>';
+    const toggleText = s.status === 'running' ? 'stop' : 'start';
+    const toggleAction = s.status === 'running' ? 'stop' : 'respawn';
+    const toggleIcon = s.status === 'running' ? '⏹' : '▶';
+    const toggleTitle = s.status === 'running' ? 'stop the agent (keep config; can start again from the same record)' : 'start the agent from the persisted config';
+    const toggleBtn = '<button class="toggle" data-action="' + toggleAction + '" data-status="' + s.status + '" data-name="' + escapeHtml(s.name) + '" title="' + toggleTitle + '" aria-label="' + toggleText + '"><span class="icon">' + toggleIcon + '</span><span class="label">' + toggleText + '</span></button>';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" title="edit name, cwd, flags, or env" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
     const resumeBtn = (s.hasHistory && s.conversationCount > 0)
       ? '<button class="resume-btn" data-action="resume" data-name="' + escapeHtml(s.name) + '" title="resume a past conversation for this agent + cwd" aria-label="resume"><span class="icon">☰</span><span class="label">' + s.conversationCount + '</span></button>'
@@ -459,7 +466,7 @@ ${PWA_HEAD_TAGS}
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
-      '<td class="actions">' + resumeBtn + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">✕</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
+      '<td class="actions">' + resumeBtn + toggleBtn + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">✕</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
       '</tr>';
   }
 
@@ -499,12 +506,25 @@ ${PWA_HEAD_TAGS}
   async function action(name, kind, btn){
     btn.disabled = true;
     const original = btn.textContent;
-    btn.textContent = kind === 'respawn' ? '…' : '…';
+    btn.textContent = '…';
     try {
       const r = await fetch('/api/sessions/' + encodeURIComponent(name) + '/' + kind, { method: 'POST' });
       const body = await r.json().catch(function(){ return {}; });
       if (!r.ok || body.ok === false) throw new Error(body.error || 'request failed');
-      showToast(kind === 'respawn' ? 'respawned ' + name : (body.status === 'running' ? 'killed ' + name : 'removed ' + name));
+      let msg;
+      if (kind === 'respawn') {
+        // The respawn endpoint is reused by both the "restart" and the
+        // "start" (toggle when exited) buttons. The button itself carries
+        // a data-status — exited means it was a start, running means a restart.
+        msg = btn.dataset.status === 'exited' ? 'started ' + name : 'respawned ' + name;
+      } else if (kind === 'stop') {
+        msg = 'stopped ' + name;
+      } else if (body.status === 'running') {
+        msg = 'killed ' + name;
+      } else {
+        msg = 'removed ' + name;
+      }
+      showToast(msg);
       poll();
     } catch(e){
       showToast(kind + ' failed: ' + (e.message || e), true);
@@ -951,6 +971,10 @@ function renderSessionTable(sessions: SessionView[]): string {
       const linkOpen = `<a class="session-link" href="/session/${encodeURIComponent(s.name)}">`;
       const respawnText = s.status === 'running' ? 'restart' : 'respawn';
       const respawnBtn = `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}" aria-label="${respawnText}"><span class="icon">↻</span><span class="label">${respawnText}</span></button>`;
+      const toggleText = s.status === 'running' ? 'stop' : 'start';
+      const toggleAction = s.status === 'running' ? 'stop' : 'respawn';
+      const toggleIcon = s.status === 'running' ? '⏹' : '▶';
+      const toggleBtn = `<button class="toggle" data-action="${toggleAction}" data-status="${s.status}" data-name="${escapeHtml(s.name)}" aria-label="${toggleText}"><span class="icon">${toggleIcon}</span><span class="label">${toggleText}</span></button>`;
       const editBtn = `<button class="edit" data-action="edit" data-name="${escapeHtml(s.name)}" data-cwd="${escapeHtml(s.cwd)}" data-agent="${escapeHtml(s.agent)}" data-flags="${escapeHtml(s.flags || '')}" data-env="${escapeHtml(JSON.stringify(s.env || {}))}" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>`;
       const resumeBtn = (s.hasHistory && s.conversationCount > 0)
         ? `<button class="resume-btn" data-action="resume" data-name="${escapeHtml(s.name)}" aria-label="resume"><span class="icon">☰</span><span class="label">${s.conversationCount}</span></button>`
@@ -963,7 +987,7 @@ function renderSessionTable(sessions: SessionView[]): string {
   <td>${escapeHtml(s.agent)}</td>
   <td class="${cls}">${s.status}</td>
   <td class="cwd cwd-col" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></td>
-  <td class="actions">${resumeBtn}${respawnBtn}${editBtn}${killBtn}</td>
+  <td class="actions">${resumeBtn}${toggleBtn}${respawnBtn}${editBtn}${killBtn}</td>
 </tr>`;
     })
     .join('\n');
@@ -2021,6 +2045,23 @@ function killSession(name: string): { ok: true; status: 'running' | 'exited' } |
   return { ok: true, status: wasRunning ? 'running' : 'exited' };
 }
 
+/**
+ * Stop a session without forgetting it. Idempotent — already-stopped sessions
+ * return ok. The state record stays intact so the session can be started again
+ * from the same config via /respawn.
+ */
+function stopSession(name: string): { ok: true } | { ok: false; error: string } {
+  const session = state.get(name);
+  if (!session) return { ok: false, error: `no tracked session "${name}"` };
+  if (!tmux.hasSession(name)) return { ok: true };
+  try {
+    tmux.killSession(name);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  return { ok: true };
+}
+
 // ---------- server ----------
 
 export interface ServerHandle {
@@ -2029,6 +2070,7 @@ export interface ServerHandle {
 }
 
 const RESPAWN_RE = /^\/api\/sessions\/([^/]+)\/respawn$/;
+const STOP_RE = /^\/api\/sessions\/([^/]+)\/stop$/;
 const KILL_RE = /^\/api\/sessions\/([^/]+)\/kill$/;
 const RESUME_RE = /^\/api\/sessions\/([^/]+)\/resume$/;
 const SEND_RE = /^\/api\/sessions\/([^/]+)\/send$/;
@@ -2177,6 +2219,12 @@ export function startServer(opts: ServeOptions): ServerHandle {
       if (mRespawn) {
         const name = decodeURIComponent(mRespawn[1]!);
         const result = respawnSession(name);
+        return sendJson(res, result, result.ok ? 200 : 400);
+      }
+      const mStop = url.pathname.match(STOP_RE);
+      if (mStop) {
+        const name = decodeURIComponent(mStop[1]!);
+        const result = stopSession(name);
         return sendJson(res, result, result.ok ? 200 : 400);
       }
       const mKill = url.pathname.match(KILL_RE);
