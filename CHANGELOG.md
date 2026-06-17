@@ -5,6 +5,22 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.20.1] — 2026-06-17
+
+### Added — second Copy button for full scrollback
+
+Two buttons on the top bar now:
+
+  - **⎘**   — Copy visible viewport (what's on screen). Mobile-primary.
+  - **⎘⎘**  — Copy full scrollback (entire xterm buffer, up to the
+    configured scrollback limit of 5000 lines). Useful for grabbing a
+    whole conversation or a long log dump.
+
+Both flash green on success and emit the same "✓ copied" toast.
+Shared `_readBufferRange(start, end)` helper backs both — the per-button
+handler just supplies the row range. Trailing blank lines are trimmed
+in both modes so the copy ends on real content.
+
 ## [0.20.0] — 2026-06-17
 
 ### Added — Copy button + desktop auto-copy
