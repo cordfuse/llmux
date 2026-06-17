@@ -5,6 +5,16 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.3] — 2026-06-17
+
+### Documentation
+
+- Cropped the grey letterbox out of the mobile gif. Pixel 7 emulation
+  reported a 412×915 viewport but the bottom ~78px past y=839 was
+  outside the rendered viewport (system-nav-area placeholder, mid-grey
+  `#7F7F82`). Trimmed to 412×836 so the gif ends on the soft-keyboard
+  toolbar instead of an empty grey strip. ~2.2 MB still.
+
 ## [0.15.2] — 2026-06-17
 
 ### Documentation
