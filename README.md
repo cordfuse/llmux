@@ -6,14 +6,41 @@
 [![node](https://img.shields.io/node/v/@cordfuse/llmux.svg?label=node)](./packages/llmux/package.json)
 
 Run every AI agent CLI under a single daemon. One named tmux session per
-agent. Drive any of them from a terminal (`llmux session attach`), a REST or
-WebSocket API, or a phone browser over Tailscale.
+agent. Drive any of them from a terminal (`llmux session attach`), a REST
+or WebSocket API, or a phone browser over Tailscale. Sessions survive
+daemon restarts; attach is raw-TTY (`Ctrl+]` to detach).
 
-Each agent runs unmodified — llmux just brokers I/O. Sessions survive
-restarts, attach is raw-TTY, and Claude Code conversations are resumable
-from any client.
+### Headless ≠ `claude -p`
 
-> **Status:** v0.13.2 — daemon + CLI client consolidated into one binary
+The obvious way to script Claude Code is `claude -p "prompt"` (and similar
+non-interactive modes in codex, gemini, etc.). That spawns a fresh
+short-lived child per call: no shared conversation, no in-session OAuth,
+no `/commands`, no persistent tool state, no MCP context. Each call
+starts cold.
+
+llmux drives the **interactive** agent process — the same TUI a human
+launches — over `tmux send-keys`. Spawn `claude` once, fire prompts at the
+same live agent forever from any client (CLI, REST, WebSocket, web).
+The agent runs unmodified and doesn't know it's being driven headlessly.
+Tool state persists across prompts. Conversations are resumable from any
+client.
+
+### OAuth from your phone, on a headless box
+
+A consequence of driving real interactive agents: **OAuth works even when
+the daemon host has no browser.** Spawn `claude` (or `codex`, `gemini`,
+`agy`) on a headless server, open the picker on your phone over Tailscale
+HTTPS, tap the row to attach, complete the browser OAuth flow on your
+phone, detach. The session stays authed forever. Same trick for re-auth
+when a token expires — phone in, click through, phone out.
+
+That's the same surface you get for everyday driving: pick an agent on
+your phone over LTE, type a prompt into a real xterm with a soft-keyboard
+toolbar (Esc / Tab / Ctrl / arrows / shell chars), watch tool calls
+stream in. No "mobile app" — it's the same daemon serving a real
+terminal over a WebSocket.
+
+> **Status:** v0.13.3 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 

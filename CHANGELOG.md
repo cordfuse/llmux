@@ -5,6 +5,27 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.3] — 2026-06-16
+
+### Documentation
+
+- README opener now spells out the two real differentiators that the
+  previous "what is llmux" pitch glossed over:
+  - **Headless driving of the interactive agent process** vs `claude -p`
+    (or codex/gemini equivalents). Calls out that `-p`-style modes
+    spawn cold short-lived children — no shared conversation, no
+    in-session OAuth, no `/commands`, no persistent tool state, no MCP
+    context. llmux sends keystrokes to a live interactive agent in
+    tmux so state carries across prompts.
+  - **OAuth on a headless host using your phone.** Spawn an
+    OAuth-requiring agent (claude / codex / gemini / agy) on a
+    browserless server, attach from the phone picker over Tailscale
+    HTTPS, complete the browser flow on the phone, detach. Session
+    stays authed forever. Same trick for token refresh.
+  - **Phone-as-primary-driver** angle hardened — same surface for OAuth
+    and everyday use, no "mobile app," just a WebSocket-served xterm
+    with the soft-keyboard toolbar.
+
 ## [0.13.2] — 2026-06-16
 
 ### Fixed
