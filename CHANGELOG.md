@@ -5,6 +5,24 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.17.2] — 2026-06-17
+
+### Fixed
+
+- **Dark strip under terminal on desktop** — `applyLayout()` used
+  `parseInt('0px', 10) || 42`, which treats a legitimate `0` (the
+  hidden-bar value set by v0.17.1's desktop media query) as falsy and
+  falls back to 42. The terminal reserved 42 px for the absent bar.
+  Swapped to `Number.isFinite(parsed) ? parsed : 42` — 0 is honored.
+- **Pinch-to-zoom on desktop** — v0.17.0 only listened for `touch*`
+  events. Desktop trackpads emit `wheel` events with `ctrlKey: true`
+  for pinch gestures (the browser synthesizes the flag — the operator
+  isn't actually pressing Ctrl). Added a `wheel` listener gated on
+  `ctrlKey`, rAF-throttled, that steps the font size up/down per
+  scroll direction. Same clamp range (8–32 px), same localStorage
+  persistence as the touch path. Mouse-wheel-plus-real-Ctrl also
+  works (conventional zoom gesture).
+
 ## [0.17.1] — 2026-06-17
 
 ### Changed

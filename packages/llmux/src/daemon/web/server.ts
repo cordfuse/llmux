@@ -1370,7 +1370,12 @@ function sessionPage(name: string): string {
     const allKeysH = getAllKeysH();
     document.documentElement.style.setProperty('--allkeys-h', allKeysH + 'px');
     const cs = getComputedStyle(document.documentElement);
-    const barH = parseInt(cs.getPropertyValue('--bar-h'),10) || 42;
+    // `parseInt('0px', 10) || 42` treats a legitimate 0 as falsy and falls
+    // back to 42. That broke desktop where the soft-keyboard media query
+    // sets --bar-h:0 — layout reserved 42 px for the hidden bar, leaving a
+    // dark strip under the terminal. Use a finite-number check instead.
+    const _bar = parseInt(cs.getPropertyValue('--bar-h'), 10);
+    const barH = Number.isFinite(_bar) ? _bar : 42;
     const topbarH = parseInt(cs.getPropertyValue('--topbar-h'),10) || 0;
     const vv = window.visualViewport;
     const visibleH = vv ? vv.height : window.innerHeight;
@@ -1449,6 +1454,36 @@ function sessionPage(name: string): string {
   }
   termEl.addEventListener('touchend',    function(e){ if (e.touches.length < 2) _pinchEnd(); }, { passive: true });
   termEl.addEventListener('touchcancel', _pinchEnd, { passive: true });
+
+  // Desktop equivalent: trackpad pinch emits a `wheel` event with
+  // `ctrlKey: true` (browsers synthesize the Ctrl flag — user isn't
+  // actually pressing Ctrl). Mouse-wheel + real Ctrl also lands here,
+  // which is the conventional "zoom" gesture too. preventDefault stops
+  // the browser from page-zooming on top of us.
+  let wheelStepPending = false;
+  let wheelDeltaAccum = 0;
+  termEl.addEventListener('wheel', function(e){
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    wheelDeltaAccum += e.deltaY;
+    if (wheelStepPending) return;
+    wheelStepPending = true;
+    requestAnimationFrame(function(){
+      wheelStepPending = false;
+      const delta = wheelDeltaAccum;
+      wheelDeltaAccum = 0;
+      if (delta === 0) return;
+      // deltaY > 0 = scroll down = zoom out; deltaY < 0 = scroll up = zoom in.
+      const step = delta > 0 ? -1 : 1;
+      const current = term.options.fontSize;
+      const target = Math.max(FONT_MIN, Math.min(FONT_MAX, current + step));
+      if (target === current) return;
+      term.options.fontSize = target;
+      try { fit.fit(); } catch(_){}
+      safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
+      try { localStorage.setItem(FONT_KEY, String(target)); } catch(_){}
+    });
+  }, { passive: false });
 
   // ---- Wire toolbar ----
   document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
