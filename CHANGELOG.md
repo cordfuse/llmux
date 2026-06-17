@@ -5,6 +5,32 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.20.4] — 2026-06-17
+
+### Fixed — pinch-to-zoom still broken after v0.20.3 (onSelectionChange regression)
+
+v0.20.3's `touch-action:none` was necessary but not sufficient. The
+pinch handler was firing and computing the new font size, but the
+resize wasn't taking effect.
+
+Two changes (cause and renderer-safety):
+
+1. **Guard `onSelectionChange` against active pinch.** The desktop
+   auto-copy listener added in v0.20.0 was the regression vector. On
+   Android, xterm fires spurious selection-change events during a
+   2-finger touch; the synchronous `navigator.clipboard.writeText()`
+   call inside the callback was clobbering the pinch resize in the
+   same frame. Skip the listener body entirely while `pinchState` is
+   non-null. Desktop mouse-drag selection still auto-copies as before.
+
+2. **Explicit `term.refresh(0, term.rows - 1)` after `fit.fit()`.**
+   Belt-and-suspenders: forces an xterm redraw after the fontSize
+   property is set + fit recalculates dimensions. Cheap on both touch
+   and wheel zoom paths.
+
+xterm's keyboard input, the wheel-with-ctrlKey desktop pinch path, and
+Copy/All buttons are unaffected.
+
 ## [0.20.3] — 2026-06-17
 
 ### Fixed — pinch-to-zoom font sizing broken on mobile
