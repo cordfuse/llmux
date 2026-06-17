@@ -5,6 +5,26 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.4] — 2026-06-17
+
+### Changed — brand mark aligned to Cordfuse PWA family
+
+Replaced the multiplex-fan geometric mark (favicon + PWA icon) with a
+bracketed monogram `{Lm}` rendered in monospace bold, matching the
+visual language of the Cordfuse PWA family (e.g. vyzr's `{Vz}`). Same
+512×512 rounded-square template, ~17.6% corner radius, subtle
+sky-blue border at 22% opacity.
+
+Color scheme stays with llmux's existing palette so the brand identity
+holds across the rest of the UI: dark-navy backplate (#0b0c10) and
+sky-blue accent (#7cc4ff) — visibly distinct from vyzr's cyan/navy
+pairing (#22d3ee on #131c2e).
+
+Both `FAVICON_SVG` and `PWA_ICON_SVG` collapsed to a single shared
+`BRAND_SVG` constant — the same vector source scales cleanly from
+16×16 browser-tab favicon to 512×512 home-screen icon. Verified
+rendering at 32 / 192 / 512 via `rsvg-convert`.
+
 ## [0.15.3] — 2026-06-17
 
 ### Documentation

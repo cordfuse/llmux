@@ -94,10 +94,13 @@ function listSessionViews(): SessionView[] {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-// Brand mark: a "multiplex fan" — one anchor (the daemon) diverging into
-// three endpoint nodes (the agents). Single-point hub-and-spoke, dark navy
-// background with sky-blue accent matching the picker UI.
-const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#0b0c10"/><g stroke="#7cc4ff" stroke-width="2" stroke-linecap="round" fill="none"><line x1="16" y1="8" x2="8" y2="25"/><line x1="16" y1="8" x2="16" y2="25"/><line x1="16" y1="8" x2="24" y2="25"/></g><circle cx="16" cy="8" r="3" fill="#7cc4ff"/><circle cx="8" cy="25" r="2" fill="#7cc4ff"/><circle cx="16" cy="25" r="2" fill="#7cc4ff"/><circle cx="24" cy="25" r="2" fill="#7cc4ff"/></svg>`;
+// Brand mark: bracketed monogram `{Lm}` rendered in monospace, sky-blue
+// (#7cc4ff) on dark navy (#0b0c10). Matches the visual language of the
+// Cordfuse PWA family ({Vz}, etc.) with llmux's own palette. Vector source
+// is shared by the favicon, apple-touch-icon, and the PWA install icons
+// (192/512) — browsers scale the SVG natively.
+const BRAND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="90" ry="90" fill="#0b0c10"/><rect x="1.5" y="1.5" width="509" height="509" rx="89" ry="89" fill="none" stroke="#7cc4ff" stroke-width="1.5" stroke-opacity="0.22"/><text x="256" y="236" text-anchor="middle" dominant-baseline="central" font-family="'Noto Sans Mono','Courier New',monospace" font-size="185" font-weight="700" fill="#7cc4ff" letter-spacing="-3">{Lm}</text></svg>`;
+const FAVICON_SVG = BRAND_SVG;
 const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`;
 
 // ---------- PWA assets ----------
@@ -105,11 +108,11 @@ const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`
 // the browser can discover them before the auth gate. The SW caches the
 // app shell once the user is authed (the SW's fetch carries cookies).
 
-// PWA icon: same "multiplex fan" mark as the favicon, scaled up for
-// home-screen / splash. Geometry kept inside the central 80% so Android's
-// adaptive-icon masks (circle/squircle) don't crop the anchor or endpoint
-// nodes. Solid dark-navy backplate doubles as the maskable background.
-const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" fill="#0b0c10"/><g stroke="#7cc4ff" stroke-width="10" stroke-linecap="round" fill="none"><line x1="96" y1="50" x2="48" y2="146"/><line x1="96" y1="50" x2="96" y2="146"/><line x1="96" y1="50" x2="144" y2="146"/></g><circle cx="96" cy="50" r="16" fill="#7cc4ff"/><circle cx="48" cy="146" r="11" fill="#7cc4ff"/><circle cx="96" cy="146" r="11" fill="#7cc4ff"/><circle cx="144" cy="146" r="11" fill="#7cc4ff"/></svg>`;
+// PWA icon: identical brand mark, served at /icon-192.svg and /icon-512.svg.
+// Solid backplate doubles as the maskable background; the {Lm} monogram
+// sits well inside the central 80% safe zone so Android's adaptive-icon
+// masks don't crop it.
+const PWA_ICON_SVG = BRAND_SVG;
 
 const PWA_MANIFEST = JSON.stringify({
   name: 'llmux',
