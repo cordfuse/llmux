@@ -1,6 +1,6 @@
 {
   "name": "@cordfuse/llmux",
-  "version": "0.20.2",
+  "version": "0.20.3",
   "description": "tmux-based AI agent dispatcher — REST/WS daemon + CLI client in one binary",
   "license": "MIT",
   "type": "module",

@@ -5,6 +5,19 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.20.3] — 2026-06-17
+
+### Fixed — pinch-to-zoom font sizing broken on mobile
+
+Pinch-to-zoom on the terminal stopped working after the v0.20.x copy
+work; the touchstart's preventDefault was firing but Android intercepted
+the 2-finger gesture for native page-zoom *before* our handler got the
+chance to claim the event. Added touch-action:none to #term so the
+browser knows our JS owns all touch gestures on the terminal area.
+
+xterm's keyboard input + wheel-with-ctrlKey (desktop pinch) paths are
+unaffected; only the touch-event-handling defaults change.
+
 ## [0.20.2] — 2026-06-17
 
 ### Fixed — copy buttons rendered as ugly glyph boxes on Android

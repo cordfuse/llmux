@@ -1038,7 +1038,11 @@ function sessionPage(name: string): string {
   #all-keys .row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
   #all-keys button{flex:0 0 auto;min-width:36px;height:30px;padding:0 8px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:12px ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
   #all-keys button:active{background:#252b34;border-color:#3a414b}
-  #term{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:var(--bar-h)}
+  /* touch-action:none claims all touch gestures for our handlers — without
+     this, Android intercepts 2-finger touches for page-zoom before our
+     touchstart's preventDefault can fire, which kills the pinch-to-zoom
+     font scaling. xterm still receives wheel/keyboard input as normal. */
+  #term{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:var(--bar-h);touch-action:none}
   body.allkeys-open #term{bottom:calc(var(--bar-h) + var(--allkeys-h))}
   #overlay{position:fixed;inset:0;background:rgba(11,12,16,.92);display:none;align-items:center;justify-content:center;z-index:30;padding:20px}
   #overlay.show{display:flex}
