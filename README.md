@@ -12,9 +12,18 @@ anywhere. Spawn `claude`, `codex`, `agy`, `gemini`, `qwen`, `opencode`, `amp`,
 a REST call, or from a browser on your phone over Tailscale. Past
 conversations are browsable and resumable. The agents keep running.
 
-> **Status:** v0.12.0 — daemon + CLI client consolidated into one binary
+> **Status:** v0.12.2 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/sessions.jpg" width="32%" alt="mobile sessions picker — 5 agents running, respawn/edit/kill per row">
+  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/edit.jpg" width="32%" alt="edit session form — agent, name, cwd, flags, env vars">
+  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/chat.jpg" width="32%" alt="phone chat — xterm.js with soft-keyboard toolbar attached to an OpenCode session">
+</p>
+
+> Browser picker, edit form, and attached terminal — all on a phone over
+> Tailscale HTTPS.
 
 ## Install
 

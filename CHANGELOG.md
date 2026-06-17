@@ -5,6 +5,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.2] — 2026-06-16
+
+### Documentation
+
+- README hero strip: three real phone screenshots of the mobile picker, edit
+  form, and attached xterm chat — taken on Android over the Tailscale HTTPS
+  frontend. Shows what the surface actually looks like instead of asking
+  readers to imagine it. Files live at `docs/screenshots/{sessions,edit,
+  chat}.jpg`; embedded via absolute `raw.githubusercontent.com` URLs so the
+  npm README page renders the same as GitHub. Status callout bumped to
+  v0.12.2.
+
 ## [0.12.1] — 2026-06-16
 
 ### Documentation
