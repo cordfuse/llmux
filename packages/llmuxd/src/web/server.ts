@@ -131,8 +131,9 @@ function pickerPage(): string {
   .cwd code{unicode-bidi:embed;direction:ltr}
   .cwd-col{max-width:0}
   .actions{text-align:right;white-space:nowrap}
-  .actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 9px;font:12px ui-monospace,monospace;cursor:pointer;margin-left:4px;display:inline-flex;align-items:center;gap:4px}
+  .actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 9px;font:12px ui-monospace,monospace;cursor:pointer;margin-left:4px;display:inline-flex;align-items:center;gap:4px;transition:background 150ms ease,border-color 150ms ease,transform 100ms ease}
   .actions button:hover{background:#252b34;border-color:#3a414b}
+  .actions button:active{transform:scale(.94)}
   .actions button.respawn{color:#7cc4ff;border-color:#2d4a66}
   .actions button.edit{color:#d29922;border-color:#574122}
   .actions button.kill{color:#f85149;border-color:#4a2329}
@@ -141,10 +142,12 @@ function pickerPage(): string {
   .actions button:disabled{opacity:.5;cursor:wait}
   .empty{color:#7a7f87;padding:18px;text-align:center;border:1px dashed #1f2329;border-radius:8px}
   .empty code{color:#c9d1d9;background:#11141a;padding:2px 6px;border-radius:4px}
+  tbody tr{transition:background 150ms ease}
+  tbody tr:hover{background:#0e1116}
   #new-btn{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:6px 10px;font:12px ui-monospace,monospace;cursor:pointer}
   #new-btn:hover{background:#252b34}
-  #new-form{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:14px;margin-bottom:14px;display:none}
-  #new-form.open{display:block}
+  #new-form{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:14px;margin-bottom:14px;max-height:0;opacity:0;overflow:hidden;padding-top:0;padding-bottom:0;border-width:0;margin-bottom:0;transition:max-height 220ms ease,opacity 180ms ease,padding-top 220ms ease,padding-bottom 220ms ease,border-width 220ms ease,margin-bottom 220ms ease}
+  #new-form.open{max-height:900px;opacity:1;padding:14px;border-width:1px;margin-bottom:14px}
   #new-form .form-title{margin:0 0 12px;font-size:13px;color:#c9d1d9;font-weight:600}
   #new-form select:disabled{opacity:.6;cursor:not-allowed}
   #new-form .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
@@ -163,8 +166,10 @@ function pickerPage(): string {
   #toast{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);background:#11141a;border:1px solid #1f2329;color:#e6e8eb;padding:8px 14px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30}
   #toast.show{opacity:1}
   #toast.error{border-color:#4a2329;color:#f85149}
-  #confirm-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:none;align-items:center;justify-content:center;z-index:60;padding:20px}
-  #confirm-modal.open{display:flex}
+  #confirm-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px;opacity:0;visibility:hidden;transition:opacity 160ms ease,visibility 0s 160ms}
+  #confirm-modal.open{opacity:1;visibility:visible;transition:opacity 160ms ease}
+  #confirm-modal .panel{transform:translateY(8px) scale(.97);transition:transform 200ms ease}
+  #confirm-modal.open .panel{transform:translateY(0) scale(1)}
   #confirm-modal .panel{background:#11141a;border:1px solid #1f2329;border-radius:10px;padding:20px;max-width:360px;width:100%}
   #confirm-modal h3{margin:0 0 8px;font-size:15px;color:#e6e8eb}
   #confirm-modal p{margin:0 0 16px;font-size:13px;color:#c9d1d9;line-height:1.5}
@@ -176,8 +181,10 @@ function pickerPage(): string {
   #confirm-modal button:disabled{opacity:.5;cursor:wait}
   .help-btn{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:50%;width:18px;height:18px;font:11px ui-monospace,monospace;cursor:pointer;padding:0;margin-left:4px;display:inline-flex;align-items:center;justify-content:center;vertical-align:middle}
   .help-btn:hover{background:#252b34}
-  #agents-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
-  #agents-modal.open{display:flex}
+  #agents-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:flex;align-items:center;justify-content:center;z-index:40;padding:20px;opacity:0;visibility:hidden;transition:opacity 160ms ease,visibility 0s 160ms}
+  #agents-modal.open{opacity:1;visibility:visible;transition:opacity 160ms ease}
+  #agents-modal .panel{transform:translateY(8px) scale(.97);transition:transform 200ms ease}
+  #agents-modal.open .panel{transform:translateY(0) scale(1)}
   #agents-modal .panel{background:#11141a;border:1px solid #1f2329;border-radius:10px;padding:18px;max-width:520px;width:100%;max-height:80vh;display:flex;flex-direction:column}
   #agents-modal h3{margin:0 0 4px;font-size:15px;color:#e6e8eb}
   #agents-modal .sub{margin:0 0 14px;font-size:11px;color:#7a7f87}
@@ -195,8 +202,11 @@ function pickerPage(): string {
   #agents-modal .actions{display:flex;justify-content:flex-end}
   #agents-modal button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
   #agents-modal button:hover{background:#252b34}
-  #convs-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:none;align-items:center;justify-content:center;z-index:40;padding:20px}
-  #convs-modal.open{display:flex}
+  #convs-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:flex;align-items:center;justify-content:center;z-index:40;padding:20px;opacity:0;visibility:hidden;transition:opacity 160ms ease,visibility 0s 160ms}
+  #convs-modal.open{opacity:1;visibility:visible;transition:opacity 160ms ease}
+  #convs-modal .panel{transform:translateY(8px) scale(.97);transition:transform 200ms ease}
+  #convs-modal.open .panel{transform:translateY(0) scale(1)}
+  #convs-list .conv{transition:background 120ms ease}
   #convs-modal .panel{background:#11141a;border:1px solid #1f2329;border-radius:10px;padding:18px;max-width:560px;width:100%;max-height:80vh;display:flex;flex-direction:column}
   #convs-modal h3{margin:0 0 4px;font-size:15px;color:#e6e8eb}
   #convs-modal .sub{margin:0 0 14px;font-size:11px;color:#7a7f87}
