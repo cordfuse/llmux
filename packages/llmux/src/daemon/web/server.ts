@@ -1370,7 +1370,7 @@ function sessionPage(name: string): string {
     const allKeysH = getAllKeysH();
     document.documentElement.style.setProperty('--allkeys-h', allKeysH + 'px');
     const cs = getComputedStyle(document.documentElement);
-    // `parseInt('0px', 10) || 42` treats a legitimate 0 as falsy and falls
+    // parseInt('0px', 10) || 42 treats a legitimate 0 as falsy and falls
     // back to 42. That broke desktop where the soft-keyboard media query
     // sets --bar-h:0 — layout reserved 42 px for the hidden bar, leaving a
     // dark strip under the terminal. Use a finite-number check instead.
@@ -1455,10 +1455,10 @@ function sessionPage(name: string): string {
   termEl.addEventListener('touchend',    function(e){ if (e.touches.length < 2) _pinchEnd(); }, { passive: true });
   termEl.addEventListener('touchcancel', _pinchEnd, { passive: true });
 
-  // Desktop equivalent: trackpad pinch emits a `wheel` event with
-  // `ctrlKey: true` (browsers synthesize the Ctrl flag — user isn't
+  // Desktop equivalent: trackpad pinch emits a wheel event with
+  // ctrlKey: true (browsers synthesize the Ctrl flag — user isn't
   // actually pressing Ctrl). Mouse-wheel + real Ctrl also lands here,
-  // which is the conventional "zoom" gesture too. preventDefault stops
+  // which is the conventional zoom gesture too. preventDefault stops
   // the browser from page-zooming on top of us.
   let wheelStepPending = false;
   let wheelDeltaAccum = 0;
