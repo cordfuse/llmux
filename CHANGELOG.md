@@ -5,6 +5,57 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.21.2] — 2026-06-17
+
+### Fixed — four inert flags + handleRespawn dropping per-session overrides
+
+Audit caught several declared-but-unread flags (same class as the
+`--no-qr` bug v0.21.0 fixed). Each silently swallowed operator intent
+locally while the remote (`--server`) path continued to honor them.
+Wired all of them:
+
+- `session start --flags "<f>"` — was declared in `sessionLocalFlags()`
+  but `handleSpawn` ignored it. Now honored + persisted on the session
+  record (parity with the server-side `POST /api/sessions`).
+- `session start --env "K=V"` — same pattern. Parsed via the shared
+  `parseEnvText` helper now exported from `web/server.ts`.
+- `session start --resume-from <id>` — advertised in root `--help`
+  but **not declared** anywhere, so the parser errored before the
+  handler saw it. Declaration added, handler now sets `state.resumeFrom`
+  and passes the agent's `history.resumeFlag(id)` fragment at spawn.
+  Silently dropped on agents without a history adapter (matches the
+  server-side semantics).
+- `server start --config <path>` — declared in `dispatchServer` but
+  `handleServe` called `loadConfig()` with no opts so auto-discovery
+  always won. Now passes `{ explicit: <path> }` through.
+- `session prompt --no-enter` — declared, advertised, but `handleSend`
+  hardcoded `{ enter: true }`. Now honored. The remote client path
+  already did the right thing.
+
+Also fixed a related bug found while consolidating: **`handleRespawn`
+dropped per-session `flags` / `env` / `resumeFrom` overrides on local
+restart.** Sessions originally spawned with `--flags "..."` would lose
+the override on `session restart`. The server-side `respawnSession`
+already preserved them; local now does too, via the shared
+`buildAgentCommand` + `mergeSpawnEnv` helpers.
+
+### Changed — `buildAgentCommand`, `parseEnvText`, `mergeSpawnEnv` are now exported
+
+The three spawn-composition helpers in `web/server.ts` are now exported
+so `handlers.ts` can share them instead of duplicating logic. Internal
+refactor; no runtime semantics change for HTTP API consumers.
+
+### Fixed — error string referenced removed `token show` verb
+
+`token revoke` without an id now says "shown by `token list`" instead
+of the removed `token show`. One-character fix.
+
+### Chore — dead import + stale README version strings
+
+- Removed unused `import * as authStore` from `index.ts`.
+- README banner sample now shows `llmux v0.21.2` (was `v0.16.x`).
+- README "What this YAML does NOT do today" no longer pins to `v0.13.x`.
+
 ## [0.21.1] — 2026-06-17
 
 ### Added — `token revoke --all` to wipe the auth store
