@@ -5,6 +5,23 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-06-17
+
+### Documentation
+
+- Corrected the Problem section. v0.15.1 said "There's no way to attach
+  remotely" — false. SSH + tmux works fine, Claude has cowork and
+  remote-control, etc. The actual gap llmux fills is **the unified
+  addressable layer above the agent CLIs**, not remote access itself.
+- New problem framing: each agent CLI is reachable but on its own terms,
+  with a CLI-specific surface. There's no unified place a spec-driven
+  pipeline, a scheduled job, or a multi-agent chain can talk to that
+  treats every agent the same way. Llmux's contribution is the surface,
+  not the access.
+- Added a closing parenthetical noting that the sessions are real tmux
+  and existing SSH + tmux flows still work as-is — llmux *adds* a
+  surface, doesn't replace what was there.
+
 ## [0.15.1] — 2026-06-17
 
 ### Documentation

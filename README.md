@@ -7,29 +7,37 @@
 
 ## Problem
 
-You're a developer running Claude Code, Codex, Gemini, OpenCode, and a
-handful of other AI agent CLIs at the same time. Each one lives in its
-own terminal window, each tied to whichever machine launched it, each
-requiring you to physically alt-tab to send a prompt. There's no way to
-drive them from your phone. There's no way to attach remotely. First-run
-OAuth on a headless server is a circus.
+You're running Claude Code, Codex, Gemini, OpenCode, and a handful of
+other agent CLIs at the same time. Each lives in its own terminal. You
+can SSH and `tmux attach`; Claude has cowork and remote-control — but
+each agent is on its own terms, and the surface differs per CLI. There's
+no unified, addressable layer a spec-driven development pipeline, a
+scheduled job, or a multi-agent chain can talk to that treats every
+agent CLI the same way.
 
 ## Solution
 
-llmux is a daemon that hosts every agent CLI in its own named tmux
-session and exposes them by name over a REST/WebSocket API and a browser
-picker. Spawn `claude` once and it keeps running — fire prompts at the
-same live process forever from any client. The picker is an installable
-PWA reachable over Tailscale HTTPS, so your phone is a first-class
-client. First-run OAuth on a headless box works by attaching from the
-phone, clicking through the flow there, and detaching.
+llmux is that layer. One daemon, each agent CLI in its own named tmux
+session, every session reachable by name from a CLI, a REST/WebSocket
+API, or a browser picker that's an installable PWA over Tailscale HTTPS.
+SDD pipelines, multi-agent chains, scheduled jobs, and evals all reduce
+to plain `llmux session prompt <name> "..."` calls — the same surface
+drives the human terminal and the script.
 
 Each spawn is its own named tmux session — own cwd, own flags, own
 conversation. Run three `claude` sessions across three different repos
 side-by-side, or one each of `claude` / `codex` / `gemini`, or fifteen
 of each — there's no per-agent cap and no shared state.
 
-> **Status:** v0.15.1 — daemon + CLI client consolidated into one binary
+First-run OAuth on a headless box works by attaching from a phone (or
+any browser), clicking through the flow there, and detaching. Same
+trick for token refresh.
+
+(The sessions are real tmux. If you already have an SSH + tmux flow you
+like, `tmux attach -t <name>` still works exactly as you'd expect —
+llmux just adds the unified surface on top.)
+
+> **Status:** v0.15.2 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
