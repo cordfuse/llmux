@@ -1035,13 +1035,12 @@ function sessionPage(name: string): string {
   #all-keys button{flex:0 0 auto;min-width:36px;height:30px;padding:0 8px;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;font:12px ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
   #all-keys button:active{background:#252b34;border-color:#3a414b}
   #term{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:var(--bar-h)}
-  /* Suppress Android/iOS native text-selection popup ("Cut | Copy | Paste |
-     Select all") on the terminal area — xterm.js v5 renders rows as real
-     `<span>` text nodes for a11y, and Android's long-press kicks in on any
-     selectable text, stealing the gesture before our custom long-press
-     handler can extend the selection. xterm's own selection rendering
-     (via `term.select()`) is canvas-drawn and doesn't depend on browser
-     text-selection, so disabling user-select here is safe. */
+  /* Suppress Android/iOS native text-selection popup on the terminal area.
+     xterm.js v5 renders rows as real span text nodes for a11y; Android's
+     long-press kicks in on any selectable DOM text, stealing the gesture
+     before our custom long-press handler can extend the selection. xterm's
+     own selection rendering (via term.select) is canvas-drawn and doesn't
+     depend on browser text-selection, so disabling user-select is safe. */
   #term, #term *{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
   body.allkeys-open #term{bottom:calc(var(--bar-h) + var(--allkeys-h))}
   #overlay{position:fixed;inset:0;background:rgba(11,12,16,.92);display:none;align-items:center;justify-content:center;z-index:30;padding:20px}
