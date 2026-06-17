@@ -5,6 +5,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.7] — 2026-06-16
+
+### Documentation
+
+- Added an orchestration paragraph at the bottom of the "Headless ≠
+  `claude -p`" section. Calls out spec-driven development (SDD)
+  pipelines, multi-agent chains, scheduled jobs, and evals as the
+  natural higher-level patterns llmux enables — all reducing to plain
+  `llmux session prompt` calls against live agents. Frames llmux as the
+  substrate orchestration layers sit on top of, not as an orchestration
+  framework in itself.
+
 ## [0.13.6] — 2026-06-16
 
 ### Documentation

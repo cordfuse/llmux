@@ -27,6 +27,13 @@ The agent runs unmodified and doesn't know it's being driven headlessly.
 Tool state persists across prompts. Conversations are resumable from any
 client.
 
+That same surface is the substrate higher-level orchestration sits on top
+of — spec-driven development (SDD) pipelines, multi-agent chains,
+scheduled jobs, evals harnessed against live agents — all just `llmux
+session prompt <name> "..."` calls. No special agent build, no headless
+SDK, no mode flag. If a human can drive the agent, llmux can drive it
+the same way.
+
 ### OAuth from your phone, on a headless box
 
 A consequence of driving real interactive agents: **OAuth works even when
@@ -42,7 +49,7 @@ toolbar (Esc / Tab / Ctrl / arrows / shell chars), watch tool calls
 stream in. No "mobile app" — it's the same daemon serving a real
 terminal over a WebSocket.
 
-> **Status:** v0.13.6 — daemon + CLI client consolidated into one binary
+> **Status:** v0.13.7 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
