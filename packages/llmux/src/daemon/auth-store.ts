@@ -69,6 +69,20 @@ export function revokeAuthToken(idPrefix: string): boolean {
   return true;
 }
 
+/**
+ * Rename a token's display label. Empty string clears the name.
+ * Returns the updated record or null if no token matches the id prefix.
+ */
+export function renameAuthToken(idPrefix: string, newName: string): AuthToken | null {
+  const file = load();
+  const tok = file.tokens.find((t) => t.id === idPrefix);
+  if (!tok) return null;
+  if (newName === '') delete tok.name;
+  else tok.name = newName;
+  save(file);
+  return tok;
+}
+
 export function validateAuthToken(candidate: string | undefined): boolean {
   if (!candidate) return false;
   const now = Date.now();

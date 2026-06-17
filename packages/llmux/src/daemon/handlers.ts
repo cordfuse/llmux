@@ -228,6 +228,21 @@ export async function handleServe(args: ParsedArgs): Promise<void> {
   const handle = startServer({ port, host });
   printBanner(handle.port);
 
+  // QR pairing: default on; --no-qr to suppress.
+  // Auto-creates a fresh pairing token (named `server-start-<ISO date>` unless
+  // `--qr-name` is given), picks the best reachable endpoint (tailscale-https >
+  // tailscale-http > lan > local) unless `--qr-endpoint` overrides, and prints
+  // a scannable QR with the token baked into the deep link.
+  if (!args.flags['no-qr']) {
+    try {
+      await printServerStartQr(handle.port, args);
+    } catch (e) {
+      console.log('');
+      console.log(`  ⚠ QR generation skipped: ${(e as Error).message}`);
+      console.log('    Pass --no-qr to silence, or create a token explicitly with `llmux token create --qr`.');
+    }
+  }
+
   const shutdown = async (sig: string) => {
     console.log(`\n${sig} received — shutting down`);
     await handle.stop();
@@ -238,6 +253,43 @@ export async function handleServe(args: ParsedArgs): Promise<void> {
 
   // Idle forever — the http server and ws server keep the event loop alive.
   await new Promise<void>(() => {});
+}
+
+async function printServerStartQr(port: number, args: ParsedArgs): Promise<void> {
+  const endpointFlag = args.flags['qr-endpoint'] as string | undefined;
+  const nameFlag = args.flags['qr-name'] as string | undefined;
+  const expiryFlag = args.flags['qr-expiry'] as string | undefined;
+  if (expiryFlag && isNaN(new Date(expiryFlag).getTime())) {
+    throw new Error(`--qr-expiry must be an ISO-8601 timestamp (got "${expiryFlag}")`);
+  }
+  const endpoint = endpointFlag
+    ? resolveQrEndpoint(endpointFlag, port)
+    : autoPickQrEndpoint(port);
+  const defaultName = `server-start-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  const rec = authStore.createAuthToken({
+    name: nameFlag ?? defaultName,
+    ...(expiryFlag !== undefined ? { expiresAt: expiryFlag } : {}),
+  });
+  console.log('');
+  console.log(`  ✓ created pairing token (id: ${rec.id}, name: "${rec.name}")`);
+  printQr(endpoint.url, rec.token, endpoint.label);
+}
+
+/**
+ * Auto-select the most useful endpoint for a server-start QR. Phones living
+ * on tailnet want tailscale-https first; same-LAN devices fall through; the
+ * local-only loopback is the last resort and signals to the operator that
+ * no externally reachable surface was found.
+ */
+function autoPickQrEndpoint(port: number): { label: string; url: string } {
+  const addrs = getAddresses(port);
+  if (addrs.length === 0) throw new Error('no reachable endpoints found');
+  const priority = ['tailscale-https', 'tailscale-http', 'lan', 'local'];
+  for (const want of priority) {
+    const hit = addrs.find((a) => selectorOf(a.label) === want);
+    if (hit) return hit;
+  }
+  return addrs[0]!;
 }
 
 function endpointPort(): number {
@@ -367,6 +419,16 @@ export function handleTokenRevoke(args: ParsedArgs): void {
   if (!authStore.authEnabled()) {
     console.log('No tokens remain — auth is now disabled.');
   }
+}
+
+export function handleTokenRename(args: ParsedArgs): void {
+  const idPrefix = args.positional[0] === 'rename' ? args.positional[1] : args.positional[0];
+  if (!idPrefix) throw new Error('token rename requires an <id> (the 8-char prefix shown by `token list`)');
+  const newName = args.flags.name as string | undefined;
+  if (newName === undefined) throw new Error('token rename requires --name <label> (pass --name "" to clear)');
+  const rec = authStore.renameAuthToken(idPrefix, newName);
+  if (!rec) throw new Error(`no token with id "${idPrefix}"`);
+  console.log(`renamed ${rec.id} → "${rec.name ?? ''}"`);
 }
 
 export function handleRespawn(args: ParsedArgs): void {
