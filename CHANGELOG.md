@@ -5,6 +5,47 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-16
+
+### Added — `.llmux.yaml` actually does something
+
+The YAML config has been *defined* in `config.ts` since the original
+scaffolding but was never read by any code path. The README quietly
+promised it overrode per-agent defaults; it didn't. This release wires
+the subset that's coherent today.
+
+**Now wired:**
+
+- `agents.<key>.cmd` — replaces the agent's binary at spawn time
+- `agents.<key>.flags` — replaces the agent's default launch flags
+- `server.port` — fallback when no `--port` flag and no `LLMUXD_PORT`
+  env (precedence: flag > env > YAML > 3000 schema default)
+
+**Discovery order unchanged:** `--config <path>` flag → `./.llmux.yaml`
+in cwd → `~/.config/llmux/config.yaml` → `LLMUX_CONFIG=<path>` env.
+
+**Reserved but still inert** (documented as such in the README so
+operators don't waste time setting them): `agents.<key>.readyPrompt`,
+`server.{token,tokenExpiry,noQr}`, `sessions[]` auto-spawn list. These
+have no consumers; the schema is preserved so future wiring won't break
+existing configs.
+
+### Added — `tests/` directory
+
+Three test scripts persisted from this session's verification work:
+
+- **`tests/cli-read.sh`** — ~46 read-only CLI assertions
+- **`tests/cli-write.sh`** — ~28 write-op assertions in both local and
+  remote mode, runs against an isolated daemon on :13030 with its own
+  `XDG_STATE_HOME` (operator's :3030 daemon untouched). $0 — uses
+  `claude --cwd /tmp` and `--no-enter` so no LLM calls.
+- **`tests/attach-smoke.py`** — WebSocket attach + Ctrl+] detach
+  regression check (catches the v0.12.4 hang regression).
+
+Not wired into CI yet — needs a real `claude` binary and a graphical
+tmux host; appropriate for local-dev runs and pre-release smoke. See
+`tests/README.md`.
+
 ## [0.12.4] — 2026-06-16
 
 ### Fixed

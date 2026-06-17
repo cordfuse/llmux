@@ -8,7 +8,7 @@ Each agent runs unmodified — llmux just brokers I/O. Sessions survive
 restarts, attach is raw-TTY, and Claude Code conversations are resumable
 from any client.
 
-> **Status:** v0.12.3 — daemon + CLI client consolidated into one binary
+> **Status:** v0.13.0 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -181,17 +181,74 @@ currently speaks ws:// only.
 
 ## Config (`.llmux.yaml`)
 
-A YAML config (project-local or global) can override per-agent defaults.
-Discovery order:
+Optional YAML config file. llmux runs without it — defaults are baked into
+`agents.ts`. Use the YAML to override per-agent launch behavior or change
+the daemon's default port without baking a flag into every shell alias.
+
+### Discovery order (first hit wins)
 
 1. `--config <path>` flag
-2. `./.llmux.yaml` (project-local, auto-discovered in cwd)
-3. `~/.config/llmux/config.yaml` (global default)
+2. `./.llmux.yaml` — auto-discovered in the cwd you invoke from
+3. `~/.config/llmux/config.yaml` — global default
 4. `LLMUX_CONFIG=<path>` env var
 
-llmux runs without any YAML file — all defaults are baked into
-`agents.ts`. The `init` command to generate a starter YAML is not yet
-shipped; create one by hand if you want to override defaults today.
+### Schema
+
+```yaml
+# Server defaults — used when `llmux server start` runs with no overriding
+# flag / env. Precedence: --port flag > LLMUXD_PORT env > server.port here.
+server:
+  port: 3030          # daemon listen port (default 3000 when key omitted)
+
+# Per-agent overrides. Key matches the agent's `key` in the catalog
+# (claude, codex, agy, gemini, qwen, opencode, amp, grok, aider, continue,
+# kiro, cursor, plandex, goose, copilot). Only the keys you list override;
+# everything else falls through to the catalog default.
+agents:
+  claude:
+    cmd: claude       # binary path or PATH-lookup name (default: agent's catalog cmd)
+    flags: ""         # launch flags appended after cmd (default: catalog default,
+                      # e.g. "--dangerously-skip-permissions" for claude).
+                      # Empty string disables the default flags entirely.
+  codex:
+    flags: "--model gpt-5"  # keep `codex` as the binary, override flags
+```
+
+### Worked examples
+
+**Strip danger-mode flags from claude on a shared machine:**
+
+```yaml
+agents:
+  claude:
+    flags: ""        # claude launches with no flags — full permission prompts
+```
+
+**Point gemini at a wrapper script (logging, rate-limiting, whatever):**
+
+```yaml
+agents:
+  gemini:
+    cmd: /usr/local/bin/gemini-wrapped
+```
+
+**Run the daemon on a non-default port project-wide:**
+
+```yaml
+server:
+  port: 8080
+```
+
+A bare `llmux server start` from any cwd containing this file binds to
+`:8080`. `--port 3030` still wins per-invocation.
+
+### What this YAML does NOT do today
+
+The schema includes `agents.<key>.readyPrompt`, `server.token`,
+`server.tokenExpiry`, `server.noQr`, and `sessions[]` (auto-spawn list).
+These are reserved for future wiring — setting them has no effect in
+v0.13.x. If you need any of these surfaces, file an issue and they can be
+prioritised.
 
 ## Environment
 

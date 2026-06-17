@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import qrcodeTerminal from 'qrcode-terminal';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from './agents.ts';
+import { loadConfig } from './config.ts';
 import * as state from './state.ts';
 import * as tmux from './tmux.ts';
 import * as authStore from './auth-store.ts';
@@ -12,13 +13,32 @@ import type { ParsedArgs } from '../cli.ts';
 
 // ---------- helpers ----------
 
+/**
+ * Merge YAML `agents.<key>.{cmd,flags}` overrides over the catalog default.
+ * Discovery uses process.cwd() so a project-local `.llmux.yaml` takes effect
+ * when the operator invokes from that project.
+ */
+function applyAgentOverrides(base: AgentDefinition): AgentDefinition {
+  const cfg = loadConfig();
+  const o = cfg.agents[base.key];
+  if (!o) return base;
+  return {
+    ...base,
+    ...(o.cmd !== undefined ? { cmd: o.cmd } : {}),
+    ...(o.flags !== undefined ? { flags: o.flags } : {}),
+  };
+}
+
 function expandAgentList(spec: string): AgentDefinition[] {
-  if (spec === 'all') return Object.values(DEFAULT_AGENTS).filter(isAgentInstalled);
+  if (spec === 'all') {
+    return Object.values(DEFAULT_AGENTS).map(applyAgentOverrides).filter(isAgentInstalled);
+  }
   const keys = spec.split(',').map((k) => k.trim()).filter(Boolean);
   const out: AgentDefinition[] = [];
   for (const k of keys) {
-    const def = DEFAULT_AGENTS[k];
-    if (!def) throw new Error(`unknown agent "${k}". Known: ${Object.keys(DEFAULT_AGENTS).join(', ')}`);
+    const base = DEFAULT_AGENTS[k];
+    if (!base) throw new Error(`unknown agent "${k}". Known: ${Object.keys(DEFAULT_AGENTS).join(', ')}`);
+    const def = applyAgentOverrides(base);
     if (!isAgentInstalled(def)) throw new Error(`agent "${k}" is not installed (looked for: ${def.cmd})`);
     out.push(def);
   }
@@ -193,7 +213,13 @@ export function handleChat(args: ParsedArgs): void {
 
 export async function handleServe(args: ParsedArgs): Promise<void> {
   tmux.requireTmux();
-  const portRaw = (args.flags.port as string | undefined) ?? process.env.LLMUXD_PORT ?? '3000';
+  const cfg = loadConfig();
+  // Precedence: CLI --port > LLMUXD_PORT env > config.server.port (schema
+  // default already 3000 when no YAML present).
+  const portRaw =
+    (args.flags.port as string | undefined) ??
+    process.env.LLMUXD_PORT ??
+    String(cfg.server.port);
   const port = Number(portRaw);
   if (!Number.isFinite(port) || port <= 0 || port > 65535) {
     throw new Error(`invalid port: ${portRaw}`);
