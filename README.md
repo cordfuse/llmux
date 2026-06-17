@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@cordfuse/llmux.svg?logo=npm&label=npm)](https://www.npmjs.com/package/@cordfuse/llmux)
 [![npm downloads](https://img.shields.io/npm/dm/@cordfuse/llmux.svg?label=downloads)](https://www.npmjs.com/package/@cordfuse/llmux)
-[![license](https://img.shields.io/npm/l/@cordfuse/llmux.svg?label=license)](./LICENSE)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![node](https://img.shields.io/node/v/@cordfuse/llmux.svg?label=node)](./packages/llmux/package.json)
 
 Run every AI agent CLI under a single daemon. One named tmux session per
@@ -13,7 +13,7 @@ Each agent runs unmodified — llmux just brokers I/O. Sessions survive
 restarts, attach is raw-TTY, and Claude Code conversations are resumable
 from any client.
 
-> **Status:** v0.13.1 — daemon + CLI client consolidated into one binary
+> **Status:** v0.13.2 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude Code
 > history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 

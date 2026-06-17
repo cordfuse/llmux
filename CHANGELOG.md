@@ -5,6 +5,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.2] — 2026-06-16
+
+### Fixed
+
+- License badge in README header. The dynamic `shields.io/npm/l/...`
+  endpoint was returning 504 through GitHub's camo image proxy
+  (shields.io's npm-registry license lookup is intermittently flaky),
+  so the badge rendered as a broken image. Swapped for the static
+  `shields.io/badge/license-MIT-blue` URL — no npm call, no flaky
+  dependency. The other three badges (version / downloads / node) keep
+  reading npm registry data and were unaffected.
+
 ## [0.13.1] — 2026-06-16
 
 ### Documentation
