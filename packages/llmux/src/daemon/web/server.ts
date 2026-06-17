@@ -1530,7 +1530,7 @@ function sessionPage(name: string): string {
       const start = r === s.row ? s.col : 0;
       const stop  = r === e.row ? Math.min(full.length, e.col + 1) : full.length;
       out += full.slice(start, stop).replace(/\s+$/, '');
-      if (r < e.row) out += '\n';
+      if (r < e.row) out += '\\n';
     }
     return out;
   }
