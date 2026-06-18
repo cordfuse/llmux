@@ -5,6 +5,47 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-06-18
+
+### Added — CLI parity ship: `session edit`, `logs`, `settings`, variadic stop/restart
+
+The web UI accumulated several surfaces the CLI didn't have. Closing
+the gap so a script-driven workflow can do everything a phone-tapping
+one can.
+
+**`session edit <name>`** — patch a tracked session's persisted
+metadata. Flags `--name`, `--cwd`, `--flags`, `--env` (KEY=VAL one per
+line). `--apply` respawns afterwards to put the changes in effect.
+Without `--apply`, the patch is saved but the running pane continues
+under the old config until the next `session restart`. Exports the
+shared `editSession()` from web/server.ts so local and remote paths
+both go through the same logic.
+
+**`session stop <name> [<name>...]`** and **`session restart <name>
+[<name>...]`** are now variadic. Continues past per-target failures so
+a typo or missing record in the middle doesn't abort the rest of the
+batch; throws at the end if any failed. `session stop all` keyword
+preserved. `--cascade` still only valid with a single target.
+
+**`logs list [--limit N] [--json]`** — print the daemon's in-process
+log ring buffer (last 500 lines). Newest at the end.
+
+**`logs tail [--since ISO]`** — print the buffer then live-tail every
+new console line until Ctrl-C. Local-mode only (subscribes to the
+in-process ring; remote tailing routes through the SSE endpoint added
+in v0.26.0). `--since` filters initial output to entries at/after the
+given ISO-8601 timestamp.
+
+**`settings show [--json]`** — dump the daemon's resolved config
+source, state dir, tmux availability, listen port/host, env vars, and
+verbatim YAML content. Same payload as the web Settings screen.
+
+### Web UI
+
+Unchanged in this release. The /api/sessions PATCH route is still the
+backing surface; the new CLI verbs use the in-process editSession
+function directly for local mode.
+
 ## [0.26.0] — 2026-06-18
 
 ### Docs — "Multiple senders, one session"
