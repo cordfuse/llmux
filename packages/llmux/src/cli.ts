@@ -84,17 +84,3 @@ export function parseArgs(argv: readonly string[], specs: FlagSpecs): ParsedArgs
   return { positional, flags };
 }
 
-export function renderFlagHelp(specs: FlagSpecs): string {
-  const lines: string[] = [];
-  for (const [name, spec] of Object.entries(specs)) {
-    const lead = spec.alias ? `-${spec.alias}, --${name}` : `    --${name}`;
-    const value = spec.kind === 'string' ? ' <value>' : '';
-    lines.push(`  ${(lead + value).padEnd(28)}${spec.description}`);
-  }
-  return lines.join('\n');
-}
-
-export function notImplemented(commandPath: string): never {
-  console.error(`llmux ${commandPath}: not yet implemented (scaffold)`);
-  process.exit(70);
-}

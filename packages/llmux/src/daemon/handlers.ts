@@ -309,12 +309,26 @@ function autoPickQrEndpoint(port: number): { label: string; url: string } {
   return addrs[0]!;
 }
 
-function endpointPort(): number {
-  // Default daemon port — matches the `serve` command default in commands.ts.
-  // QR builders run from a separate `token create` invocation that doesn't
-  // know which port the daemon is bound to, so we resolve from the running
-  // daemon if reachable, else fall back to 3030 (the documented default).
-  return Number(process.env.LLMUX_PORT) || 3030;
+/**
+ * Resolve the port the daemon is (or will be) bound to. Mirrors `handleServe`'s
+ * precedence so `token create --qr` from a separate terminal builds a URL that
+ * actually reaches the running daemon:
+ *   CLI --port > LLMUXD_PORT > LLMUX_PORT (legacy) > config.server.port > 3030
+ * The CLI flag is consulted via the caller — pass `args.flags.port` as the
+ * `explicitPort` argument when invoking.
+ */
+function endpointPort(explicitPort?: string): number {
+  const cfg = loadConfig();
+  const raw =
+    explicitPort ??
+    process.env.LLMUXD_PORT ??
+    process.env.LLMUX_PORT ??
+    String(cfg.server.port ?? 3030);
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > 65535) {
+    throw new Error(`invalid port: ${raw}`);
+  }
+  return n;
 }
 
 function selectorOf(label: string): string {
@@ -372,6 +386,7 @@ export async function handleTokenCreate(args: ParsedArgs): Promise<void> {
   const expiry = args.flags.expiry as string | undefined;
   const qrFlag = Boolean(args.flags.qr);
   const qrEndpoint = args.flags['qr-endpoint'] as string | undefined;
+  const portFlag = args.flags.port as string | undefined;
   if (expiry && isNaN(new Date(expiry).getTime())) {
     throw new Error(`--expiry must be an ISO-8601 timestamp (got "${expiry}")`);
   }
@@ -381,7 +396,7 @@ export async function handleTokenCreate(args: ParsedArgs): Promise<void> {
   // doesn't leave an orphan token in auth.json.
   let endpoint: { label: string; url: string } | undefined;
   if (wantsQr) {
-    const port = endpointPort();
+    const port = endpointPort(portFlag);
     endpoint = qrEndpoint
       ? resolveQrEndpoint(qrEndpoint, port)
       : await pickEndpointInteractively(port);

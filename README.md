@@ -37,7 +37,7 @@ trick for token refresh.
 like, `tmux attach -t <name>` still works exactly as you'd expect —
 llmux just adds the unified surface on top.)
 
-> **Status:** v0.21.2 — daemon + CLI client consolidated into one binary
+> **Status:** v0.21.3 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -255,7 +255,7 @@ The server-start banner picks up the mapping automatically (any port, not
 just 3443/3080) and surfaces the resulting URLs:
 
 ```
-llmux v0.21.2
+llmux v0.21.3
 
   ▸ Tailscale HTTPS  https://<host>.tailnet.ts.net:3443
   ▸ Tailscale HTTP   http://<host>.tailnet.ts.net:3080
@@ -342,8 +342,8 @@ A bare `llmux server start` from any cwd containing this file binds to
 
 ### What this YAML does NOT do today
 
-The schema includes `agents.<key>.readyPrompt`, `server.token`,
-`server.tokenExpiry`, `server.noQr`, and `sessions[]` (auto-spawn list).
+The schema includes `server.token`, `server.tokenExpiry`, `server.noQr`,
+and `sessions[]` (auto-spawn list).
 These are reserved for future wiring — setting them has no effect yet.
 If you need any of these surfaces, file an issue and they can be
 prioritised.
@@ -354,7 +354,9 @@ prioritised.
 |---|---|
 | `LLMUX_SERVER` | Default `--server` URL for session/agent verbs |
 | `LLMUX_TOKEN`  | Default `--token` SAS auth |
-| `LLMUX_PORT`   | Default port resolution for QR-endpoint helpers |
+| `LLMUXD_PORT`  | Daemon listen port (consulted by `server start` + QR builders) |
+| `LLMUXD_HOST`  | Daemon bind host (defaults to `0.0.0.0`) |
+| `LLMUX_PORT`   | Legacy port hint for QR builders; prefer `LLMUXD_PORT` |
 | `XDG_STATE_HOME` | Override for the state directory parent |
 | `OPENCODE_YOLO`, `GOOSE_MODE`, … | Forwarded by `envDefaults` per-agent |
 

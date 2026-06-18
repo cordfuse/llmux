@@ -8,6 +8,7 @@ import * as h from './daemon/handlers.ts';
 import * as state from './daemon/state.ts';
 import * as tmux from './daemon/tmux.ts';
 import { DEFAULT_AGENTS, isAgentInstalled } from './daemon/agents.ts';
+import { buildAgentCommand, mergeSpawnEnv } from './daemon/web/server.ts';
 import { clientCommands } from './client/client.ts';
 
 // ----------------- version helper -----------------
@@ -122,7 +123,7 @@ Server verbs (always local):
                [--qr-name N] [--qr-expiry ISO]  a QR; --no-qr to suppress.
 
 Token verbs (always local — managing the daemon-host's auth store):
-  token create [--name N] [--expiry ISO] [--qr] [--qr-endpoint <label>]
+  token create [--name N] [--expiry ISO] [--qr] [--qr-endpoint <label>] [--port N]
   token list                                    show active tokens
   token rename <id> --name <label>              rename a token (pass --name "" to clear)
   token revoke <id>                             revoke a token by id
@@ -224,12 +225,11 @@ async function dispatchSession(verb: string | undefined, args: string[], env: Gl
         conversationId = convs[0]!.id;
       }
       if (tmux.hasSession(name)) tmux.killSession(name);
-      const cmd = `${agent.cmd} ${agent.flags ?? ''} ${agent.history.resumeFlag(conversationId)}`.trim();
       tmux.newSession({
         name,
-        command: cmd,
+        command: buildAgentCommand(agent, session.flags, conversationId),
         cwd: session.cwd,
-        env: { ...(agent.envDefaults ?? {}), ...(session.env ?? {}), LLMUX_SESSION: name, LLMUX_AGENT: session.agent },
+        env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: name, LLMUX_AGENT: session.agent }),
       });
       state.record({ ...session, resumeFrom: conversationId, createdAt: new Date().toISOString() });
       console.log(`${name} resumed from ${conversationId.slice(0, 8)}…`);
@@ -309,6 +309,7 @@ async function dispatchToken(verb: string | undefined, args: string[]): Promise<
     expiry: { kind: 'string', description: 'ISO-8601 expiry' },
     qr: { kind: 'boolean', description: 'render QR for first-tap login' },
     'qr-endpoint': { kind: 'string', description: 'endpoint label or URL for QR target' },
+    port: { kind: 'string', description: 'override the port baked into the QR URL (defaults to the daemon\'s resolved port)' },
     all: { kind: 'boolean', description: 'with `revoke`: revoke every token' },
     yes: { kind: 'boolean', description: 'with `revoke --all`: skip the interactive confirm prompt' },
     json: { kind: 'boolean', description: 'emit JSON' },

@@ -5,6 +5,61 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.21.3] — 2026-06-17
+
+### Fixed — `token create --qr` produced wrong URL on non-default ports
+
+`endpointPort()` always returned `LLMUX_PORT || 3030`, ignoring the
+daemon's actual resolved port. Operators on `--port 9999` got a QR
+encoding `…:3030/…` that didn't reach the running daemon. Now mirrors
+`handleServe`'s precedence: `--port` flag > `LLMUXD_PORT` >
+`LLMUX_PORT` > `config.server.port` > `3030`. Added matching `--port`
+flag to `token create` for explicit override.
+
+### Fixed — `session resume` dropped per-session flags / env / resumeFrom
+
+Same bug class as `handleRespawn` (fixed in v0.21.2), different code
+path: the in-line `session resume` case in `index.ts` rebuilt the
+launch command from `agent.flags` and the env from `agent.envDefaults`,
+ignoring the persisted `session.flags` and `session.env`. Replaced
+with the shared `buildAgentCommand` + `mergeSpawnEnv`. Resume now
+preserves every override the original spawn set.
+
+### Removed — `readyPrompt` (dead schema field)
+
+Every `AgentDefinition` carried a `readyPrompt` regex (`'^>'`,
+`'Goose❯'`, etc.) intended for spawn-confirmation detection, but
+nothing in the codebase ever read it. Removed from the type, removed
+from all 15 catalog entries, removed from the YAML schema
+(`AgentOverrides`), removed from the README "what this YAML does NOT
+do today" list. Can be re-added when there's a concrete consumer.
+
+### Removed — four dead exports
+
+- `installedAgents()` (`agents.ts`)
+- `renderFlagHelp()` (`cli.ts`)
+- `notImplemented()` (`cli.ts`)
+- `_request()` (`client/client.ts`) — comment claimed "re-exported for
+  tests" but no test imports it
+
+### Changed — `@types/ws` moved to devDependencies
+
+Was incorrectly listed under runtime `dependencies`, shipping the
+types package to every operator's `node_modules` even though `ws`
+itself isn't used at runtime by the CLI surface. Pure packaging fix.
+
+### Docs — env table + stale comments
+
+- README env table now lists `LLMUXD_PORT` (consulted by `server
+  start` + QR builders) and `LLMUXD_HOST` (daemon bind host).
+  `LLMUX_PORT` clarified as legacy fallback.
+- `net.ts:78` comment updated: `llmuxd serve` → `llmux server start`
+  (last code-comment reference to the old binary name; the legacy-shim
+  `case 'serve'` in `index.ts` is intentional backcompat and stays).
+- `client.ts:213` WS-client docstring rewritten — old language claimed
+  `node-pty` and `ws` were "llmuxd-only" which made no sense after the
+  bunectomy.
+
 ## [0.21.2] — 2026-06-17
 
 ### Fixed — four inert flags + handleRespawn dropping per-session overrides

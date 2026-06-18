@@ -84,16 +84,6 @@ async function request<T = unknown>(
   return parsed as T;
 }
 
-// Re-exported for tests; thin wrapper around request() so the public surface is stable.
-export async function _request(
-  ctx: ClientContext,
-  method: 'GET' | 'POST' | 'DELETE',
-  path: string,
-  body?: unknown,
-): Promise<unknown> {
-  return request(ctx, method, path, body);
-}
-
 // ---------- argv parsing ----------
 
 interface ParsedArgs {
@@ -212,9 +202,10 @@ interface WsHandle {
 
 /**
  * Minimal RFC 6455 client for the daemon's /ws/<name> endpoint. Returned
- * handle gives raw send/close. We hand-roll because the llmux package keeps
- * its dep tree empty (matches its current package.json — node-pty and ws are
- * llmuxd-only).
+ * handle gives raw send/close. Hand-rolled to keep the client-side WS path
+ * usable without pulling the `ws` runtime — the daemon already needs `ws`
+ * for its server-side, but standalone CLI invocations (e.g. `session attach`
+ * over a remote daemon) don't.
  */
 function openWs(opts: {
   url: string;
