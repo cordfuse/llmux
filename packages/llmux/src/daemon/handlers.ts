@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import qrcodeTerminal from 'qrcode-terminal';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from './agents.ts';
 import { loadConfig } from './config.ts';
+import * as logBuffer from './log-buffer.ts';
 import * as state from './state.ts';
 import * as tmux from './tmux.ts';
 import * as authStore from './auth-store.ts';
@@ -228,6 +229,10 @@ export function handleChat(args: ParsedArgs): void {
 }
 
 export async function handleServe(args: ParsedArgs): Promise<void> {
+  // Install console capture BEFORE any logging so the banner + warnings
+  // make it into the in-process log buffer that the web UI's Logs page
+  // tails. Idempotent.
+  logBuffer.install();
   tmux.requireTmux();
   const explicitConfig = args.flags.config as string | undefined;
   const cfg = loadConfig(explicitConfig ? { explicit: explicitConfig } : {});

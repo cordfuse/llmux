@@ -37,7 +37,7 @@ trick for token refresh.
 like, `tmux attach -t <name>` still works exactly as you'd expect —
 llmux just adds the unified surface on top.)
 
-> **Status:** v0.25.0 — daemon + CLI client consolidated into one binary
+> **Status:** v0.26.0 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -82,6 +82,28 @@ Because each session is reachable by name from any client, llmux is the
 substrate higher-level patterns sit on — spec-driven development (SDD)
 pipelines, multi-agent chains, scheduled jobs, evals harnessed against
 live agents.
+
+## Multiple senders, one session
+
+llmux sessions are shared mutable state. A given named session can receive
+prompts from any client — CLI, web, scheduled job — and inputs queue FIFO
+at the agent's TUI level. There's no daemon-side concept of "owner" or
+"lock."
+
+In practice, **name sessions by purpose**:
+
+- `claude-sdd` for spec-driven dev / headless automation
+- `claude-chat` for interactive chat
+- `claude-alice` / `claude-bob` for multi-user setups
+
+This is the same pattern as having multiple tmux windows: split by purpose,
+let people coordinate via the session name. `llmux session start claude
+--name <N>` exists for exactly this — there's no per-agent-type cap.
+
+If you mix headless and interactive on a single named session, expect
+transcript conflation: both senders' turns end up in one conversation
+history, in send-order. Not a bug, an inherent property of shared state.
+Designate one if it matters.
 
 ## Install
 
@@ -255,7 +277,7 @@ The server-start banner picks up the mapping automatically (any port, not
 just 3443/3080) and surfaces the resulting URLs:
 
 ```
-llmux v0.25.0
+llmux v0.26.0
 
   ▸ Tailscale HTTPS  https://<host>.tailnet.ts.net:3443
   ▸ Tailscale HTTP   http://<host>.tailnet.ts.net:3080
