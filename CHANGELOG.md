@@ -5,6 +5,31 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.31.3] — 2026-06-18
+
+### Fixed — Per-row Kill icon clipped off the right edge on sub-390px viewports
+
+v0.31.2 added the per-row Kill icon but the table row needed to grow to
+accommodate the 4th icon (Conversations / Resume / Edit / Kill on
+sessions-with-history). On Pixel/Galaxy portrait viewports (~360-380px
+CSS width) the actions column overflowed the viewport edge, clipping
+the rightmost Kill icon. Reported from a phone screenshot.
+
+Two changes:
+
+- **AGENT column hidden on mobile** (`@media max-width: 600px`). It's
+  redundant when the session name defaults to the agent key (the
+  common case — `codex` session runs `codex` agent etc.). When the
+  name differs from the agent, `rowHtml()` emits an inline
+  "agent: X" line inside the name-block so the agent stays visible.
+- **Sub-420px viewport rule** tightens per-row button geometry
+  (`padding:5px 4px`, `min-width:24px`, `margin-left:1px`,
+  `icon font-size:12px`) and narrows the name-block max-width
+  (`38vw` vs the prior `42vw`).
+
+Net result on a 360px viewport: checkbox + name-block + state +
+actions(4 icons) = ~340px, with margin to spare.
+
 ## [0.31.2] — 2026-06-18
 
 ### Added — Per-row Kill icon on every Sessions row
