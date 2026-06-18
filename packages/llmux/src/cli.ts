@@ -47,8 +47,13 @@ export function parseArgs(argv: readonly string[], specs: FlagSpecs): ParsedArgs
         if (eq >= 0) {
           flags[name] = body.slice(eq + 1);
         } else {
+          // Space form: `--flag value`. Consume next argv as value regardless
+          // of whether it starts with `-` — `--flags "--model opus"` is a
+          // documented use case for the per-spawn flag pass-through. Old
+          // behavior (reject `-`-prefixed next as "requires a value") broke
+          // the documented form; only `--flag=value` worked.
           const next = argv[i + 1];
-          if (next === undefined || next.startsWith('-')) {
+          if (next === undefined) {
             throw new Error(`--${rawName} requires a value`);
           }
           flags[name] = next;
@@ -69,7 +74,7 @@ export function parseArgs(argv: readonly string[], specs: FlagSpecs): ParsedArgs
         flags[name] = true;
       } else {
         const next = argv[i + 1];
-        if (next === undefined || next.startsWith('-')) {
+        if (next === undefined) {
           throw new Error(`-${body} requires a value`);
         }
         flags[name] = next;
