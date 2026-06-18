@@ -5,6 +5,53 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-06-18
+
+### Docs — "Multiple senders, one session"
+
+New README section documenting the shared-state nature of named sessions.
+Multiple senders queue FIFO at the agent TUI; there's no lock or owner
+concept. Recommended pattern: name sessions by purpose
+(`claude-sdd` vs `claude-chat`) and let operators coordinate via name.
+
+### Added — Logs screen with live daemon tail
+
+New `Logs` nav item. Tails the daemon's own console output without shell
+access to the host.
+
+How it works:
+
+- A new `daemon/log-buffer.ts` module wraps `console.log` / `.info` / `.warn`
+  / `.error` at handler-startup time. Each call still goes to the original
+  stdout/stderr (terminal output unchanged); the wrappers additionally push
+  the formatted text into an in-process ring buffer (last 500 lines).
+- `GET /api/logs` returns the current buffer for initial render.
+- `GET /api/logs/stream` is a Server-Sent Events stream — one
+  `data: { ts, level, text }` message per new console line. Heartbeats
+  every 30s to keep proxies from dropping the connection.
+- The Logs screen fetches /api/logs on open, then opens an EventSource
+  for live tail. Auto-scroll toggle (default on), client-side level
+  filter (all / warn+error / error only), and Clear button.
+- Closing the page (navigating away) tears down the EventSource so we
+  don't leak sockets across long browser sessions.
+
+Multi-line messages are split per newline so each visible line gets its
+own entry — keeps the timeline tidy when error stacks land.
+
+### REST API additions
+
+- `GET /api/logs` — returns `{ capacity, entries: LogEntry[] }`
+- `GET /api/logs/stream` — text/event-stream of new LogEntries; closes
+  when the client disconnects
+
+`LogEntry = { ts: ISO8601, level: 'info' | 'warn' | 'error', text: string }`.
+
+### Other
+
+- `handleServe` calls `logBuffer.install()` at the top before any other
+  daemon output, so banner + warnings make it into the buffer for
+  first-load operators
+
 ## [0.25.0] — 2026-06-18
 
 ### Added — Agents screen + Settings screen

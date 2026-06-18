@@ -6,6 +6,7 @@ import { hostname } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import QRCode from 'qrcode';
+import * as logBuffer from '../log-buffer.ts';
 import type { IPty } from 'node-pty';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition, type Conversation } from '../agents.ts';
 import * as state from '../state.ts';
@@ -243,6 +244,26 @@ function pickerPage(): string {
   #page-agents .agent-install:hover{background:#11141a}
   #page-agents .agent-docs{font-size:11px;color:#7cc4ff;text-decoration:none;margin-top:6px;display:inline-block}
   #page-agents .agent-docs:hover{text-decoration:underline}
+  .logs-toolbar{display:flex;gap:10px;align-items:center;margin-bottom:10px;padding:8px 10px;background:#11141a;border:1px solid #1f2329;border-radius:8px;flex-wrap:wrap;font-size:12px}
+  .logs-toolbar select{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 8px;font:12px ui-monospace,monospace;cursor:pointer}
+  .logs-toolbar .logs-autoscroll{display:flex;align-items:center;gap:6px;color:#9aa0a6;cursor:pointer}
+  .logs-toolbar .logs-autoscroll input{width:16px;height:16px;accent-color:#7cc4ff;margin:0}
+  .logs-toolbar #logs-status{color:#7a7f87;font-size:11px;margin-left:auto}
+  .logs-toolbar #logs-status.live{color:#7ee787}
+  .logs-toolbar #logs-status.offline{color:#f85149}
+  .logs-toolbar #logs-clear{background:#1c2128;color:#9aa0a6;border:1px solid #262c34;border-radius:6px;padding:5px 10px;font:11px ui-monospace,monospace;cursor:pointer}
+  .logs-toolbar #logs-clear:hover{background:#252b34;color:#e6e8eb}
+  #logs-view{background:#0b0c10;border:1px solid #1f2329;border-radius:8px;padding:10px 12px;font:11px ui-monospace,monospace;height:calc(100dvh - 280px);min-height:280px;overflow-y:auto;line-height:1.5}
+  #logs-view .log-line{display:flex;gap:8px;padding:2px 0;white-space:pre-wrap;word-break:break-all}
+  #logs-view .log-line .ts{color:#7a7f87;flex:0 0 auto}
+  #logs-view .log-line .lvl{flex:0 0 auto;width:46px;text-align:right;text-transform:uppercase;font-size:10px;padding-top:1px}
+  #logs-view .log-line .txt{flex:1 1 auto;color:#e6e8eb}
+  #logs-view .log-line.info .lvl{color:#7a7f87}
+  #logs-view .log-line.warn .lvl{color:#d29922}
+  #logs-view .log-line.warn .txt{color:#f0c478}
+  #logs-view .log-line.error .lvl{color:#f85149}
+  #logs-view .log-line.error .txt{color:#ff8a80}
+  #logs-view .log-empty{color:#7a7f87;font-style:italic;padding:6px 0}
   #meta{color:#7a7f87;font-size:11px;display:flex;gap:10px;align-items:center}
   #refresh-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ee787;transition:background .25s;box-shadow:0 0 6px #7ee78766}
   #refresh-dot.stale{background:#9aa0a6;box-shadow:none}
@@ -430,6 +451,7 @@ function pickerPage(): string {
     <a data-page="sessions" class="active"><span class="nav-icon">▦</span>Sessions</a>
     <a data-page="tokens"><span class="nav-icon">⚿</span>Tokens</a>
     <a data-page="agents"><span class="nav-icon">⌬</span>Agents</a>
+    <a data-page="logs"><span class="nav-icon">▤</span>Logs</a>
     <a data-page="settings"><span class="nav-icon">⚙</span>Settings</a>
     <a data-page="about"><span class="nav-icon">ⓘ</span>About</a>
   </nav>
@@ -550,6 +572,15 @@ function pickerPage(): string {
   </div>
   <div id="agents-list-container">loading…</div>
 </div>
+<div id="page-logs" class="page">
+  <div class="logs-toolbar">
+    <select id="logs-level"><option value="all">all levels</option><option value="warn">warn + error</option><option value="error">error only</option></select>
+    <label class="logs-autoscroll"><input type="checkbox" id="logs-autoscroll" checked> auto-scroll</label>
+    <span id="logs-status">connecting…</span>
+    <button id="logs-clear" type="button" title="Clear the visible buffer (server-side keeps last 500)">clear</button>
+  </div>
+  <div id="logs-view"></div>
+</div>
 <div id="page-settings" class="page">
   <div id="settings-grid">
     <div class="about-card">
@@ -663,14 +694,20 @@ function pickerPage(): string {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // Logs page state hoisted up here because showPage() routes call
+  // closeLogs() at initial-page time, which is BEFORE the Logs subsystem
+  // would otherwise declare its let-bound locals. Object property mutation
+  // avoids the temporal-dead-zone error that crashed v0.26.0 first ship.
+  const logsState = { eventSource: null, buffer: [] };
+
   // ---- Nav drawer + page routing ----
   // The web UI grew beyond a single Sessions table — Tokens management and
   // an About panel ride alongside it now. The hamburger menu is the entry
   // point; each "page" is just a div toggled by adding/removing .active.
   // Last-viewed page persists in localStorage so a hard reload keeps the
   // operator on the same screen.
-  const ROUTES = ['sessions', 'tokens', 'agents', 'settings', 'about'];
-  const PAGE_TITLES = { sessions: 'Sessions', tokens: 'Tokens', agents: 'Agents', settings: 'Settings', about: 'About' };
+  const ROUTES = ['sessions', 'tokens', 'agents', 'logs', 'settings', 'about'];
+  const PAGE_TITLES = { sessions: 'Sessions', tokens: 'Tokens', agents: 'Agents', logs: 'Logs', settings: 'Settings', about: 'About' };
   const navToggle = document.getElementById('nav-toggle');
   const navDrawer = document.getElementById('nav-drawer');
   const navBackdrop = document.getElementById('nav-backdrop');
@@ -706,6 +743,7 @@ function pickerPage(): string {
     if (name === 'about') refreshAbout();
     if (name === 'agents') refreshAgents();
     if (name === 'settings') refreshSettings();
+    if (name === 'logs') openLogs(); else closeLogs();
   }
   navDrawer.querySelectorAll('a[data-page]').forEach(function(a){
     a.addEventListener('click', function(e){
@@ -1649,6 +1687,115 @@ function pickerPage(): string {
       settingsConfigSource.textContent = 'failed to load: ' + (e.message || String(e));
     }
   }
+
+  // ---- Logs page (in-process tail) ----
+  // Initial /api/logs snapshot then EventSource for live tail. Close the
+  // stream when the user navigates away to avoid leaking sockets on long
+  // sessions. Auto-scroll defaults on; flipping it off lets the operator
+  // read history without the view jumping when a new line lands. Level
+  // filter is client-side — the server always streams everything, the UI
+  // just hides what the operator doesn't want to see.
+  const logsView = document.getElementById('logs-view');
+  const logsStatus = document.getElementById('logs-status');
+  const logsLevel = document.getElementById('logs-level');
+  const logsAutoscroll = document.getElementById('logs-autoscroll');
+  const logsClear = document.getElementById('logs-clear');
+  // logsState is declared at the top of this IIFE so showPage()'s initial
+  // call (which fires before this section is reached) can safely invoke
+  // closeLogs() without hitting a temporal-dead-zone error on let-declared
+  // locals down here.
+
+  function logLineHtml(e){
+    const tsShort = e.ts.slice(11, 19);
+    return '<div class="log-line ' + e.level + '"><span class="ts">' + escapeHtml(tsShort) + '</span><span class="lvl">' + e.level + '</span><span class="txt">' + escapeHtml(e.text) + '</span></div>';
+  }
+
+  function levelPasses(level){
+    const want = logsLevel.value;
+    if (want === 'all') return true;
+    if (want === 'warn') return level === 'warn' || level === 'error';
+    if (want === 'error') return level === 'error';
+    return true;
+  }
+
+  function rerenderLogs(){
+    const visible = logsState.buffer.filter(function(e){ return levelPasses(e.level); });
+    if (visible.length === 0){
+      logsView.innerHTML = '<div class="log-empty">(no log lines)</div>';
+      return;
+    }
+    logsView.innerHTML = visible.map(logLineHtml).join('');
+    if (logsAutoscroll.checked) logsView.scrollTop = logsView.scrollHeight;
+  }
+
+  function appendLog(entry){
+    logsState.buffer.push(entry);
+    // Cap client-side buffer at 1000 — server keeps 500, but we let the
+    // client retain a bit more across reconnects.
+    if (logsState.buffer.length > 1000) logsState.buffer.shift();
+    if (!levelPasses(entry.level)) return;
+    const div = document.createElement('div');
+    div.innerHTML = logLineHtml(entry);
+    const wasAtBottom = (logsView.scrollHeight - logsView.scrollTop - logsView.clientHeight) < 40;
+    if (logsView.querySelector('.log-empty')) logsView.innerHTML = '';
+    logsView.appendChild(div.firstChild);
+    if (logsAutoscroll.checked || wasAtBottom){
+      logsView.scrollTop = logsView.scrollHeight;
+    }
+  }
+
+  async function openLogs(){
+    closeLogs();
+    logsStatus.textContent = 'loading…';
+    logsStatus.classList.remove('live', 'offline');
+    try {
+      const r = await fetch('/api/logs', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const data = await r.json();
+      logsState.buffer = Array.isArray(data.entries) ? data.entries.slice() : [];
+      rerenderLogs();
+    } catch(e){
+      logsView.innerHTML = '<div class="log-empty">failed to load logs: ' + escapeHtml(e.message || String(e)) + '</div>';
+      logsStatus.textContent = 'offline';
+      logsStatus.classList.add('offline');
+      return;
+    }
+    try {
+      logsState.eventSource = new EventSource('/api/logs/stream');
+      logsState.eventSource.onopen = function(){
+        logsStatus.textContent = 'live';
+        logsStatus.classList.add('live');
+        logsStatus.classList.remove('offline');
+      };
+      logsState.eventSource.onerror = function(){
+        logsStatus.textContent = 'reconnecting…';
+        logsStatus.classList.remove('live');
+        logsStatus.classList.add('offline');
+      };
+      logsState.eventSource.onmessage = function(ev){
+        try {
+          const entry = JSON.parse(ev.data);
+          appendLog(entry);
+        } catch(_){}
+      };
+    } catch(e){
+      logsStatus.textContent = 'sse not supported';
+      logsStatus.classList.add('offline');
+    }
+  }
+
+  function closeLogs(){
+    if (logsState.eventSource){
+      try { logsState.eventSource.close(); } catch(_){}
+      logsState.eventSource = null;
+    }
+  }
+
+  logsLevel.addEventListener('change', rerenderLogs);
+  logsClear.addEventListener('click', function(){
+    logsState.buffer = [];
+    rerenderLogs();
+  });
 
   // ---- New / Edit session form ----
   const newBtn = document.getElementById('new-btn');
@@ -3423,6 +3570,42 @@ export function startServer(opts: ServeOptions): ServerHandle {
         docsUrl: def.docsUrl ?? '',
       }));
       return sendJson(res, all);
+    }
+
+    // ---- Logs (in-process ring buffer + SSE tail) ----
+    // GET /api/logs        — snapshot of the buffer for initial render
+    // GET /api/logs/stream — Server-Sent Events: one `data: { ts, level, text }`
+    //                       message per new console line. Operators can stop
+    //                       watching by closing the EventSource.
+    if (url.pathname === '/api/logs' && method === 'GET') {
+      return sendJson(res, { capacity: logBuffer.getCapacity(), entries: logBuffer.getBuffer() });
+    }
+    if (url.pathname === '/api/logs/stream' && method === 'GET') {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache, no-transform',
+        connection: 'keep-alive',
+        'x-accel-buffering': 'no',
+      });
+      // Send a comment line as a heartbeat / handshake so proxies don't buffer
+      // the first message indefinitely.
+      res.write(': stream open\n\n');
+      const unsubscribe = logBuffer.subscribe((entry) => {
+        try {
+          res.write(`data: ${JSON.stringify(entry)}\n\n`);
+        } catch {
+          // res may be closed; let the close handler clean up.
+        }
+      });
+      const heartbeat = setInterval(() => {
+        try { res.write(': heartbeat\n\n'); } catch {}
+      }, 30000);
+      req.on('close', () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+        try { res.end(); } catch {}
+      });
+      return;
     }
 
     // ---- Settings (read-only diagnostic) ----
