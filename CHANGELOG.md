@@ -5,6 +5,27 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-06-18
+
+### Added — multi-select bulk toolbar on the Sessions web UI
+
+The Sessions page (mobile-tap-from-phone path; also desktop) gained:
+
+- **Host machine name in the header** — `LLMUX on steve-cachyos · Sessions` style. Reads from `os.hostname()` so cachy shows `steve-cachyos`, mac shows `Steves-Air`. Distinguishes which daemon's UI you're on when you have multiple panes open.
+- **Checkbox column on every row** + select-all checkbox in the column header (tri-state — checked / unchecked / indeterminate).
+- **Bulk toolbar above the list** with four text-labelled buttons: **Start**, **Stop**, **Respawn**, **Kill**. Each fires per-name POSTs in parallel against the existing `/api/sessions/<name>/{respawn,stop,kill}` endpoints.
+- **Smart enable/disable** — `Start` lights up only when the selection has at least one exited session, `Stop` only when there's at least one running. `Respawn` and `Kill` light up whenever anything's selected. Empty selection = all four toolbar buttons disabled.
+- **`Kill N sessions?` confirm modal** on Kill (reuses the existing single-row askConfirm pattern). Stop / Start / Respawn don't confirm — they're recoverable.
+- **Selection persists across the 3s poll** by session name. If a session disappears from the API response (killed, etc.) it's pruned from the selection set so the toolbar count + downstream fan-out stay accurate.
+
+### Removed — per-row Start / Stop / Respawn / Kill buttons
+
+Replaced by the bulk toolbar. Per-row **Edit** (pencil) and **Resume** (☰) stay — those are inherently one-row-at-a-time operations.
+
+### Files changed
+
+`packages/llmux/src/daemon/web/server.ts` only. No API changes; the bulk actions reuse the existing per-session POST endpoints.
+
 ## [0.22.1] — 2026-06-18
 
 ### Fixed — web terminal broken on every fresh macOS install (F6, BLOCKER)

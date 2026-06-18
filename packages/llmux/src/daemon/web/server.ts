@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { hostname } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
@@ -114,9 +115,10 @@ const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`
 
 function pickerPage(): string {
   const sessions = listSessionViews();
+  const host = hostname();
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LLMUX: Sessions</title>
+<title>llmux on ${escapeHtml(host)} · Sessions</title>
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <meta name="theme-color" content="#0b0c10">
@@ -127,6 +129,7 @@ function pickerPage(): string {
   header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
   h1{font-size:18px;margin:0}
   h1 .brand{color:#7cc4ff;letter-spacing:.08em;font-weight:600}
+  h1 .host{color:#a371f7;font-weight:500}
   #meta{color:#7a7f87;font-size:11px;display:flex;gap:10px;align-items:center}
   #refresh-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ee787;transition:background .25s;box-shadow:0 0 6px #7ee78766}
   #refresh-dot.stale{background:#9aa0a6;box-shadow:none}
@@ -156,6 +159,17 @@ function pickerPage(): string {
   .actions button.toggle[data-status="exited"]{color:#7ee787;border-color:#1f4528}
   .actions button .icon{font-size:13px;line-height:1;display:inline-block;vertical-align:middle}
   .actions button:disabled{opacity:.5;cursor:wait}
+  #bulk-toolbar{display:flex;gap:6px;align-items:center;margin-bottom:10px;padding:8px 10px;background:#11141a;border:1px solid #1f2329;border-radius:8px;flex-wrap:wrap}
+  #bulk-toolbar button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:6px 12px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease}
+  #bulk-toolbar button:hover:not(:disabled){background:#252b34;border-color:#3a414b}
+  #bulk-toolbar button.start{color:#7ee787;border-color:#1f4528}
+  #bulk-toolbar button.stop{color:#f0883e;border-color:#4a3019}
+  #bulk-toolbar button.respawn{color:#7cc4ff;border-color:#2d4a66}
+  #bulk-toolbar button.kill{color:#f85149;border-color:#4a2329}
+  #bulk-toolbar button:disabled{opacity:.35;cursor:not-allowed;background:#11141a}
+  #bulk-count{color:#7a7f87;font-size:11px;margin-left:auto;white-space:nowrap}
+  th.select-col,td.select-col{width:28px;padding-right:0;text-align:left}
+  input.row-select,input#select-all{width:16px;height:16px;accent-color:#7cc4ff;cursor:pointer;vertical-align:middle;margin:0}
   .empty{color:#7a7f87;padding:18px;text-align:center;border:1px dashed #1f2329;border-radius:8px}
   .empty code{color:#c9d1d9;background:#11141a;padding:2px 6px;border-radius:4px}
   tbody tr{transition:background 150ms ease}
@@ -256,7 +270,7 @@ function pickerPage(): string {
 </style></head>
 <body>
 <header>
-  <h1><span class="brand">LLMUX</span>: Sessions</h1>
+  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · Sessions</h1>
   <div id="meta">
     <button id="new-btn" type="button">+ new session</button>
     <span id="refresh-dot" title="updates every 3s"></span>
@@ -296,6 +310,13 @@ function pickerPage(): string {
       <button type="submit" class="primary" id="new-submit">spawn</button>
     </div>
   </form>
+</div>
+<div id="bulk-toolbar">
+  <button id="bulk-start" type="button" class="start" disabled title="Start every checked session that's currently exited">Start</button>
+  <button id="bulk-stop" type="button" class="stop" disabled title="Stop every checked session that's currently running">Stop</button>
+  <button id="bulk-respawn" type="button" class="respawn" disabled title="Respawn every checked session (kill + relaunch with persisted config)">Respawn</button>
+  <button id="bulk-kill" type="button" class="kill" disabled title="Kill every checked session and remove its state record">Kill</button>
+  <span id="bulk-count">0 selected</span>
 </div>
 <div id="list-container">${renderSessionTable(sessions)}</div>
 <div id="toast"></div>
@@ -369,16 +390,6 @@ function pickerPage(): string {
   function rowHtml(s){
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
-    const respawnText = s.status === 'running' ? 'restart' : 'respawn';
-    const respawnTitle = s.status === 'running' ? 'kill + relaunch with the persisted config (use after edit)' : 'launch the agent again with the persisted config';
-    const respawnBtn = '<button class="respawn" data-action="respawn" data-name="' + escapeHtml(s.name) + '" title="' + respawnTitle + '" aria-label="' + respawnText + '"><span class="icon">↻</span><span class="label">' + respawnText + '</span></button>';
-    const toggleText = s.status === 'running' ? 'stop' : 'start';
-    const toggleAction = s.status === 'running' ? 'stop' : 'respawn';
-    // Outline glyphs (□ ▷) to match the visual weight of the line-stroke
-    // icons next to them (☰ ↻ ✎ ✕). The filled ⏹ ▶ variants render too heavy.
-    const toggleIcon = s.status === 'running' ? '□' : '▷';
-    const toggleTitle = s.status === 'running' ? 'stop the agent (keep config; can start again from the same record)' : 'start the agent from the persisted config';
-    const toggleBtn = '<button class="toggle" data-action="' + toggleAction + '" data-status="' + s.status + '" data-name="' + escapeHtml(s.name) + '" title="' + toggleTitle + '" aria-label="' + toggleText + '"><span class="icon">' + toggleIcon + '</span><span class="label">' + toggleText + '</span></button>';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" title="edit name, cwd, flags, or env" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
     const resumeBtn = (s.hasHistory && s.conversationCount > 0)
       ? '<button class="resume-btn" data-action="resume" data-name="' + escapeHtml(s.name) + '" title="resume a past conversation for this agent + cwd" aria-label="resume"><span class="icon">☰</span><span class="label">' + s.conversationCount + '</span></button>'
@@ -386,11 +397,12 @@ function pickerPage(): string {
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
     return '<tr data-name="' + escapeHtml(s.name) + '">' +
+      '<td class="select-col"><input type="checkbox" class="row-select" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" aria-label="select ' + escapeHtml(s.name) + '"></td>' +
       '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></span></td>' +
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
-      '<td class="actions">' + resumeBtn + toggleBtn + respawnBtn + editBtn + '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" title="' + (s.status === 'running' ? 'kill the tmux session + remove the record' : 'remove the record') + '" aria-label="' + (s.status === 'running' ? 'kill' : 'remove') + '"><span class="icon">✕</span><span class="label">' + (s.status === 'running' ? 'kill' : 'remove') + '</span></button></td>' +
+      '<td class="actions">' + resumeBtn + editBtn + '</td>' +
       '</tr>';
   }
 
@@ -400,7 +412,59 @@ function pickerPage(): string {
       return;
     }
     const rows = sessions.map(rowHtml).join('');
-    container.innerHTML = '<table><thead><tr><th>name</th><th>agent</th><th>state</th><th class="cwd-col">cwd</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    container.innerHTML = '<table><thead><tr><th class="select-col"><input type="checkbox" id="select-all" aria-label="select all"></th><th>name</th><th>agent</th><th>state</th><th class="cwd-col">cwd</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  // ---- Bulk selection state ----
+  // selected: Set<sessionName> — survives polls so the checked rows persist
+  //   across the 3s auto-refresh. Sessions that no longer exist (killed, etc.)
+  //   are pruned from this set during each poll so dead names don't haunt the
+  //   toolbar count or the bulk-action fan-out.
+  // lastStatusByName: Map<sessionName, 'running' | 'exited'> — needed to decide
+  //   whether Start (acts on exited) and Stop (acts on running) should be
+  //   enabled given the current selection.
+  const selected = new Set();
+  const lastStatusByName = new Map();
+  const bulkStart = document.getElementById('bulk-start');
+  const bulkStop = document.getElementById('bulk-stop');
+  const bulkRespawn = document.getElementById('bulk-respawn');
+  const bulkKill = document.getElementById('bulk-kill');
+  const bulkCount = document.getElementById('bulk-count');
+
+  function updateToolbarState(){
+    let running = 0, exited = 0;
+    for (const n of selected){
+      const s = lastStatusByName.get(n);
+      if (s === 'running') running++;
+      else if (s === 'exited') exited++;
+    }
+    const total = selected.size;
+    bulkStart.disabled = exited === 0;
+    bulkStop.disabled = running === 0;
+    bulkRespawn.disabled = total === 0;
+    bulkKill.disabled = total === 0;
+    bulkCount.textContent = total + ' selected';
+  }
+
+  function applySelectionAfterRender(){
+    // Re-render replaces every checkbox node, so restore checked state from
+    // the surviving "selected" set, then sync the select-all tri-state.
+    const checkboxes = container.querySelectorAll('input.row-select');
+    checkboxes.forEach(function(cb){
+      if (selected.has(cb.dataset.name)) cb.checked = true;
+    });
+    syncSelectAllState();
+  }
+
+  function syncSelectAllState(){
+    const sa = document.getElementById('select-all');
+    if (!sa) return;
+    const checkboxes = container.querySelectorAll('input.row-select');
+    const total = checkboxes.length;
+    let checked = 0;
+    checkboxes.forEach(function(cb){ if (cb.checked) checked++; });
+    sa.checked = total > 0 && checked === total;
+    sa.indeterminate = checked > 0 && checked < total;
   }
 
   async function poll(){
@@ -409,7 +473,19 @@ function pickerPage(): string {
       const r = await fetch('/api/sessions', { cache: 'no-store' });
       if (!r.ok) throw new Error('http ' + r.status);
       const data = await r.json();
+      // Refresh status map + prune selections for sessions that no longer exist.
+      lastStatusByName.clear();
+      const present = new Set();
+      for (const s of data){
+        lastStatusByName.set(s.name, s.status);
+        present.add(s.name);
+      }
+      for (const n of [...selected]){
+        if (!present.has(n)) selected.delete(n);
+      }
       render(data);
+      applySelectionAfterRender();
+      updateToolbarState();
       dot.classList.remove('stale','error');
       label.textContent = 'live';
       lastFetch = Date.now();
@@ -424,36 +500,6 @@ function pickerPage(): string {
     if (lastFetch && Date.now() - lastFetch > 8000 && !dot.classList.contains('error')){
       dot.classList.add('stale');
       label.textContent = 'stale';
-    }
-  }
-
-  async function action(name, kind, btn){
-    btn.disabled = true;
-    const original = btn.textContent;
-    btn.textContent = '…';
-    try {
-      const r = await fetch('/api/sessions/' + encodeURIComponent(name) + '/' + kind, { method: 'POST' });
-      const body = await r.json().catch(function(){ return {}; });
-      if (!r.ok || body.ok === false) throw new Error(body.error || 'request failed');
-      let msg;
-      if (kind === 'respawn') {
-        // The respawn endpoint is reused by both the "restart" and the
-        // "start" (toggle when exited) buttons. The button itself carries
-        // a data-status — exited means it was a start, running means a restart.
-        msg = btn.dataset.status === 'exited' ? 'started ' + name : 'respawned ' + name;
-      } else if (kind === 'stop') {
-        msg = 'stopped ' + name;
-      } else if (body.status === 'running') {
-        msg = 'killed ' + name;
-      } else {
-        msg = 'removed ' + name;
-      }
-      showToast(msg);
-      poll();
-    } catch(e){
-      showToast(kind + ' failed: ' + (e.message || e), true);
-      btn.disabled = false;
-      btn.textContent = original;
     }
   }
 
@@ -644,7 +690,7 @@ function pickerPage(): string {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  container.addEventListener('click', async function(e){
+  container.addEventListener('click', function(e){
     const btn = e.target.closest('button[data-action]');
     if (!btn) return;
     e.preventDefault();
@@ -660,19 +706,85 @@ function pickerPage(): string {
       openConvsModal(name);
       return;
     }
-    if (kind === 'kill'){
-      const running = btn.dataset.status === 'running';
-      const ok = await askConfirm({
-        title: running ? 'Kill session?' : 'Remove session record?',
-        body: running
-          ? 'Terminate the tmux session <code>' + escapeHtmlSafe(name) + '</code> and remove its state record. The agent process inside will be killed. This cannot be undone.'
-          : 'Remove the state record for <code>' + escapeHtmlSafe(name) + '</code>. The tmux session is already exited; this just cleans up the row.',
-        okLabel: running ? 'kill' : 'remove',
-        destructive: true,
+  });
+
+  // ---- Checkbox + select-all wiring ----
+  container.addEventListener('change', function(e){
+    if (e.target.id === 'select-all'){
+      const checkboxes = container.querySelectorAll('input.row-select');
+      const checked = e.target.checked;
+      checkboxes.forEach(function(cb){
+        cb.checked = checked;
+        if (checked) selected.add(cb.dataset.name);
+        else selected.delete(cb.dataset.name);
       });
-      if (!ok) return;
+      e.target.indeterminate = false;
+      updateToolbarState();
+      return;
     }
-    action(name, kind, btn);
+    if (e.target.classList.contains('row-select')){
+      const cbName = e.target.dataset.name;
+      if (e.target.checked) selected.add(cbName);
+      else selected.delete(cbName);
+      syncSelectAllState();
+      updateToolbarState();
+    }
+  });
+
+  // ---- Bulk-action toolbar ----
+  // Fan out per-name POSTs in parallel. Filter to eligible status when the
+  // action only makes sense for one of {running, exited}. Aggregate into a
+  // single toast — "stopped 3 sessions" / "2 ok, 1 failed".
+  async function bulkAction(opts){
+    const targets = [...selected].filter(function(n){
+      return opts.filter ? opts.filter(lastStatusByName.get(n)) : true;
+    });
+    if (targets.length === 0){
+      showToast('no eligible sessions in selection', true);
+      return;
+    }
+    const results = await Promise.all(targets.map(async function(name){
+      try {
+        const r = await fetch('/api/sessions/' + encodeURIComponent(name) + '/' + opts.kind, { method: 'POST' });
+        const body = await r.json().catch(function(){ return {}; });
+        return { name: name, ok: r.ok && body.ok !== false };
+      } catch(_) {
+        return { name: name, ok: false };
+      }
+    }));
+    const okCount = results.filter(function(r){ return r.ok; }).length;
+    const failCount = results.length - okCount;
+    if (failCount === 0){
+      showToast(opts.verb + ' ' + okCount + ' session' + (okCount === 1 ? '' : 's'));
+    } else {
+      showToast(okCount + ' ok, ' + failCount + ' failed', true);
+    }
+    poll();
+  }
+
+  bulkStart.addEventListener('click', function(){
+    bulkAction({ filter: function(s){ return s === 'exited'; }, kind: 'respawn', verb: 'started' });
+  });
+  bulkStop.addEventListener('click', function(){
+    bulkAction({ filter: function(s){ return s === 'running'; }, kind: 'stop', verb: 'stopped' });
+  });
+  bulkRespawn.addEventListener('click', function(){
+    bulkAction({ kind: 'respawn', verb: 'respawned' });
+  });
+  bulkKill.addEventListener('click', async function(){
+    const count = selected.size;
+    if (count === 0) return;
+    const names = [...selected];
+    const ok = await askConfirm({
+      title: count === 1 ? 'Kill session?' : 'Kill ' + count + ' sessions?',
+      body: count === 1
+        ? 'Terminate <code>' + escapeHtmlSafe(names[0]) + '</code> and remove its state record. The agent process will be killed. This cannot be undone.'
+        : 'Terminate ' + count + ' sessions and remove their state records. The agent processes will be killed. This cannot be undone.',
+      okLabel: 'kill',
+      destructive: true,
+    });
+    if (!ok) return;
+    bulkAction({ kind: 'kill', verb: 'killed' });
   });
 
   // ---- New / Edit session form ----
