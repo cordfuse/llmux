@@ -47,6 +47,75 @@ function expandAgentList(spec: string): AgentDefinition[] {
   return out;
 }
 
+/**
+ * Wait for the agent's TUI to render its "ready for input" prompt, then
+ * fire each init prompt in turn (with Enter at end, 500ms gap between).
+ *
+ * Ready detection: if the agent has a `readyPrompt` regex, poll
+ * tmux capture-pane every 200ms until the regex matches the tail of the
+ * pane content OR we hit the timeout. If no regex is set, fall back to
+ * a 2-second sleep — close enough for most CLIs that boot in under that.
+ *
+ * On timeout (10s) we WARN and fire anyway. Hanging forever would leave
+ * an operator's `session start` blocked on an unmatched regex.
+ */
+async function fireInitPrompts(
+  sessionName: string,
+  agent: AgentDefinition,
+  prompts: readonly string[],
+): Promise<void> {
+  if (prompts.length === 0) return;
+  const readyRegex = agent.readyPrompt ? new RegExp(agent.readyPrompt, 'm') : null;
+  if (!readyRegex) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+  } else {
+    const start = Date.now();
+    const TIMEOUT_MS = 10_000;
+    let matched = false;
+    while (Date.now() - start < TIMEOUT_MS) {
+      try {
+        const pane = tmux.capturePane(sessionName, 15);
+        const tail = pane.trimEnd().split('\n').slice(-3).join('\n');
+        if (readyRegex.test(tail)) {
+          matched = true;
+          break;
+        }
+      } catch {
+        // session may not be live yet; keep polling
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 200));
+    }
+    if (!matched) {
+      console.warn(
+        `[llmux] init-prompts: timed out waiting for ${agent.readyPrompt} on ${sessionName}; firing anyway`,
+      );
+    }
+  }
+  for (const prompt of prompts) {
+    try {
+      tmux.sendKeys(sessionName, prompt, { enter: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[llmux] init-prompts: send-keys failed on ${sessionName}: ${msg}`);
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+/**
+ * Compose the final init-prompts list for a session. Daemon-wide prompts
+ * (from `.llmux.yaml`) fire FIRST, then the session-specific ones. The
+ * result is what gets persisted on `session.initPrompts` so respawns
+ * fire the same context exactly once each.
+ */
+function composeInitPrompts(daemonPrompts: readonly string[] | undefined, sessionPrompts: readonly string[] | undefined): string[] | undefined {
+  const merged: string[] = [];
+  if (daemonPrompts) merged.push(...daemonPrompts);
+  if (sessionPrompts) merged.push(...sessionPrompts);
+  return merged.length > 0 ? merged : undefined;
+}
+
 function resolveCwd(input: string | undefined): string {
   if (!input) return process.cwd();
   const out = resolve(input);
@@ -76,7 +145,7 @@ export function resolveTarget(target: string): ResolvedTarget {
 
 // ---------- handlers ----------
 
-export function handleSpawn(args: ParsedArgs): void {
+export async function handleSpawn(args: ParsedArgs): Promise<void> {
   tmux.requireTmux();
   const spec = args.positional[0];
   if (!spec) throw new Error('spawn requires an agent (or `all`)');
@@ -96,6 +165,8 @@ export function handleSpawn(args: ParsedArgs): void {
       ? parseEnvText(args.flags.env as string)
       : undefined;
   const resumeFrom = args.flags['resume-from'] as string | undefined;
+  const cliInitPrompts = Array.isArray(args.flags.init) ? (args.flags.init as string[]) : undefined;
+  const skipInit = Boolean(args.flags['skip-init']);
 
   const agents = expandAgentList(spec);
 
@@ -106,6 +177,12 @@ export function handleSpawn(args: ParsedArgs): void {
     throw new Error('--resume-from is only valid with a single agent');
   }
 
+  // Daemon-wide init prompts come from .llmux.yaml — fire on every newly
+  // spawned session, before per-session prompts. Resume case sidesteps
+  // this path entirely (it goes through the resume handler).
+  const cfg = loadConfig();
+  const daemonInitPrompts = cfg.initPrompts ?? [];
+
   const parent = process.env.LLMUX_SESSION ?? null;
   const created: string[] = [];
 
@@ -115,6 +192,12 @@ export function handleSpawn(args: ParsedArgs): void {
       throw new Error(`session "${sessionName}" already exists`);
     }
     const effectiveResume = resumeFrom && agent.history ? resumeFrom : undefined;
+    // Init prompts: compose daemon + CLI flags. The persisted list is what
+    // respawns will re-fire — so the daemon's contribution is "baked in"
+    // at spawn time. If .llmux.yaml changes later, existing sessions stick
+    // with the snapshot they spawned under (intentional: change is opt-in
+    // per session via `session edit --init`).
+    const composedInitPrompts = composeInitPrompts(daemonInitPrompts, cliInitPrompts);
     tmux.newSession({
       name: sessionName,
       command: buildAgentCommand(agent, flagsOverride, effectiveResume),
@@ -128,12 +211,17 @@ export function handleSpawn(args: ParsedArgs): void {
       ...(flagsOverride !== undefined ? { flags: flagsOverride } : {}),
       ...(envOverride !== undefined ? { env: envOverride } : {}),
       ...(effectiveResume !== undefined ? { resumeFrom: effectiveResume } : {}),
+      ...(composedInitPrompts !== undefined ? { initPrompts: composedInitPrompts } : {}),
       createdAt: new Date().toISOString(),
       parent,
       restart: 'on-failure',
     });
     created.push(sessionName);
     console.log(`spawned ${sessionName} (agent: ${agent.key}, cwd: ${cwd})`);
+    if (composedInitPrompts && !skipInit) {
+      console.log(`  firing ${composedInitPrompts.length} init prompt${composedInitPrompts.length === 1 ? '' : 's'}...`);
+      await fireInitPrompts(sessionName, agent, composedInitPrompts);
+    }
   }
 
   if (created.length === 0) {
@@ -500,7 +588,7 @@ export function handleTokenRename(args: ParsedArgs): void {
   console.log(`renamed ${rec.id} → "${rec.name ?? ''}"`);
 }
 
-function respawnOne(target: string): void {
+async function respawnOne(target: string, opts: { skipInit?: boolean } = {}): Promise<void> {
   const session = state.get(target);
   if (!session) throw new Error(`no tracked session "${target}"`);
 
@@ -524,12 +612,21 @@ function respawnOne(target: string): void {
   });
   state.record({ ...session, createdAt: new Date().toISOString() });
   console.log(`respawned ${target} (agent: ${session.agent}, cwd: ${session.cwd})`);
+
+  // Re-fire the persisted init prompts so the restart re-establishes the
+  // same operator-context the original spawn set up. Resume case does NOT
+  // re-fire (the prompts are already in the conversation history).
+  if (!opts.skipInit && session.initPrompts && session.initPrompts.length > 0) {
+    console.log(`  firing ${session.initPrompts.length} init prompt${session.initPrompts.length === 1 ? '' : 's'}...`);
+    await fireInitPrompts(target, agent, session.initPrompts);
+  }
 }
 
-export function handleRespawn(args: ParsedArgs): void {
+export async function handleRespawn(args: ParsedArgs): Promise<void> {
   tmux.requireTmux();
   const targets = args.positional;
   if (targets.length === 0) throw new Error('restart requires one or more <session> names');
+  const skipInit = Boolean(args.flags['skip-init']);
   // Variadic: respawn each named session in turn. On a per-target failure
   // the remaining ones still attempt — operators bulk-restarting a queue
   // shouldn't lose every late session because the first one's tmux pane
@@ -537,7 +634,7 @@ export function handleRespawn(args: ParsedArgs): void {
   const errors: string[] = [];
   for (const t of targets) {
     try {
-      respawnOne(t);
+      await respawnOne(t, { skipInit });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`respawn ${t} failed: ${msg}`);
@@ -614,28 +711,48 @@ export function handleKill(args: ParsedArgs): void {
   }
 }
 
-export function handleSessionEdit(args: ParsedArgs): void {
+export async function handleSessionEdit(args: ParsedArgs): Promise<void> {
   tmux.requireTmux();
   const target = args.positional[0];
   if (!target) throw new Error('edit requires <session>');
-  const patch: { name?: string; cwd?: string; flags?: string; env?: string } = {};
+  const patch: { name?: string; cwd?: string; flags?: string; env?: string; initPrompts?: string[] } = {};
   if (typeof args.flags.name === 'string') patch.name = args.flags.name;
   if (typeof args.flags.cwd === 'string') patch.cwd = args.flags.cwd;
   if (typeof args.flags.flags === 'string') patch.flags = args.flags.flags as string;
   if (typeof args.flags.env === 'string') patch.env = args.flags.env as string;
+  if (Array.isArray(args.flags.init)) patch.initPrompts = args.flags.init as string[];
   if (Object.keys(patch).length === 0) {
-    throw new Error('edit requires at least one of --name, --cwd, --flags, --env');
+    throw new Error('edit requires at least one of --name, --cwd, --flags, --env, --init');
   }
+  // The shared editSession only knows about name/cwd/flags/env. Patch the
+  // initPrompts directly against the state record after the main edit
+  // settles. Stays in lock-step with the web path because the web Edit
+  // modal patches over PATCH /api/sessions and writes initPrompts there
+  // (added in the same release).
   const result = editSession(target, patch);
   if (!result.ok) throw new Error(result.error);
+  if (patch.initPrompts !== undefined) {
+    const rec = state.get(result.session.name);
+    if (rec) {
+      const next: state.SessionState = {
+        ...rec,
+        ...(patch.initPrompts.length > 0 ? { initPrompts: patch.initPrompts } : {}),
+      };
+      if (patch.initPrompts.length === 0) delete next.initPrompts;
+      state.record(next);
+    }
+  }
   console.log(`edited ${result.session.name} (agent: ${result.session.agent}, cwd: ${result.session.cwd})`);
   if (result.session.flags !== undefined) console.log(`  flags: ${result.session.flags}`);
   if (result.session.env !== undefined && Object.keys(result.session.env).length > 0) {
     console.log('  env:');
     for (const [k, v] of Object.entries(result.session.env)) console.log(`    ${k}=${v}`);
   }
+  if (patch.initPrompts !== undefined) {
+    console.log(`  init prompts: ${patch.initPrompts.length}`);
+  }
   if (args.flags.apply) {
-    respawnOne(result.session.name);
+    await respawnOne(result.session.name);
   } else {
     console.log('(restart the session to apply: `llmux session restart ' + result.session.name + '`)');
   }
