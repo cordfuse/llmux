@@ -101,6 +101,27 @@ export function renameSession(oldName: string, newName: string): void {
 }
 
 /**
+ * Capture the current pane contents for a session — used by the
+ * init-prompts feature to poll for the agent's "ready" prompt regex
+ * before firing the first scripted prompt. `lines` caps the tail
+ * (cheap; we typically only need to inspect the last few lines).
+ */
+export function capturePane(name: string, lines = 10): string {
+  if (!hasSession(name)) {
+    throw new Error(`tmux session "${name}" not found`);
+  }
+  const r = spawnSync(
+    'tmux',
+    ['capture-pane', '-t', name, '-p', '-S', `-${lines}`],
+    { stdio: 'pipe' },
+  );
+  if (r.status !== 0) {
+    throw new Error(`tmux capture-pane failed: ${r.stderr.toString().trim() || `exit ${r.status}`}`);
+  }
+  return r.stdout.toString();
+}
+
+/**
  * Attach interactively. Inside a tmux client → `switch-client`. Outside → `attach`.
  * Inherits the controlling TTY so the user takes over the terminal.
  */

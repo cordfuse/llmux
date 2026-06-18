@@ -21,12 +21,20 @@ export interface SessionConfig {
 export interface AgentOverrides {
   cmd?: string;
   flags?: string;
+  readyPrompt?: string;
 }
 
 export interface LlmuxConfig {
   server: ServerConfig;
   agents: Record<string, AgentOverrides>;
   sessions: SessionConfig[];
+  /**
+   * Daemon-wide initialization prompts. Fired into every newly-spawned
+   * session (and every respawn) before any operator interaction. Composed
+   * with the per-session `initPrompts` field at spawn time, with the
+   * daemon-wide prompts firing first.
+   */
+  initPrompts?: string[];
   sourcePath?: string;
 }
 
@@ -70,6 +78,7 @@ export function loadConfig(opts: DiscoverOptions = {}): LlmuxConfig {
     server: { ...DEFAULT_CONFIG.server, ...(parsed?.server ?? {}) },
     agents: { ...DEFAULT_CONFIG.agents, ...(parsed?.agents ?? {}) },
     sessions: parsed?.sessions ?? [],
+    ...(Array.isArray(parsed?.initPrompts) ? { initPrompts: parsed.initPrompts.filter((p): p is string => typeof p === 'string') } : {}),
     sourcePath: path,
   };
   return merged;

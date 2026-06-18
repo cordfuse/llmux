@@ -26,6 +26,14 @@ export interface AgentDefinition {
   cmd: string;
   /** Default args appended after `cmd`. */
   flags?: string;
+  /**
+   * Regex (as a JS string) matched against the bottom of the pane to detect
+   * "agent is ready to receive input". Used by the init-prompts feature to
+   * wait for the agent's TUI to render its prompt before firing the first
+   * scripted prompt. Optional — if unset, the firing logic falls back to a
+   * fixed 2-second sleep.
+   */
+  readyPrompt?: string;
   /** Custom install detection (overrides the default PATH lookup). */
   detectInstalled?: () => boolean;
   /** One-line install command (shell). Shown in the agent-help modal. */
@@ -153,11 +161,11 @@ const copilotInstalled = (): boolean => {
 };
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
-  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory },
-  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex' },
-  agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install' },
-  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli' },
-  qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',     installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code' },
+  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory },
+  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex' },
+  agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install' },
+  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli' },
+  qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code' },
   // OpenCode's --dangerously-skip-permissions only applies to `opencode run`
   // (one-shot). The TUI default mode rejects it and exits — danger mode in
   // the TUI is controlled via OPENCODE_YOLO=1 instead.
@@ -166,17 +174,17 @@ export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   // overrides per-spawn via the flags field if they want a specific model
   // (e.g. `-m openrouter/anthropic/claude-sonnet-4.6` or
   // `-m ollama/qwen2.5-coder:14b`).
-  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai',          envDefaults: { OPENCODE_YOLO: '1' } },
-  amp:      { key: 'amp',      displayName: 'Sourcegraph Amp',     cmd: 'amp',          flags: '--dangerously-allow-all',     installHint: 'npm install -g @sourcegraph/amp',                 docsUrl: 'https://ampcode.com/manual' },
-  grok:     { key: 'grok',     displayName: 'Grok Build CLI',      cmd: 'grok',         flags: '--always-approve', installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',   docsUrl: 'https://x.ai/cli' },
-  aider:    { key: 'aider',    displayName: 'Aider',               cmd: 'aider',        flags: '--yes-always --model claude-opus-4-6',   installHint: 'python -m pip install aider-chat',                docsUrl: 'https://aider.chat' },
-  continue: { key: 'continue', displayName: 'Continue CLI',        cmd: 'cn',           flags: '--auto',     installHint: 'npm install -g @continuedev/cli',                 docsUrl: 'https://docs.continue.dev/guides/cli' },
-  kiro:     { key: 'kiro',     displayName: 'Kiro CLI',            cmd: 'kiro-cli',     flags: '--trust-all-tools',     installHint: 'brew install kiro  # or see docs for Linux/Windows', docsUrl: 'https://kiro.dev/docs/cli/installation/' },
-  cursor:   { key: 'cursor',   displayName: 'Cursor CLI',          cmd: 'cursor-agent',     installHint: 'curl https://cursor.com/install -fsSL | bash',    docsUrl: 'https://cursor.com/docs/cli/installation' },
-  plandex:  { key: 'plandex',  displayName: 'Plandex',             cmd: 'plandex',     installHint: 'curl -fsSL https://plandex.ai/install.sh | bash', docsUrl: 'https://docs.plandex.ai' },
+  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     readyPrompt: '^>', installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai',          envDefaults: { OPENCODE_YOLO: '1' } },
+  amp:      { key: 'amp',      displayName: 'Sourcegraph Amp',     cmd: 'amp',          flags: '--dangerously-allow-all',     readyPrompt: '^>', installHint: 'npm install -g @sourcegraph/amp',                 docsUrl: 'https://ampcode.com/manual' },
+  grok:     { key: 'grok',     displayName: 'Grok Build CLI',      cmd: 'grok',         flags: '--always-approve', readyPrompt: '^grok>', installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',   docsUrl: 'https://x.ai/cli' },
+  aider:    { key: 'aider',    displayName: 'Aider',               cmd: 'aider',        flags: '--yes-always --model claude-opus-4-6',   readyPrompt: '^> $', installHint: 'python -m pip install aider-chat',                docsUrl: 'https://aider.chat' },
+  continue: { key: 'continue', displayName: 'Continue CLI',        cmd: 'cn',           flags: '--auto',     readyPrompt: '^>', installHint: 'npm install -g @continuedev/cli',                 docsUrl: 'https://docs.continue.dev/guides/cli' },
+  kiro:     { key: 'kiro',     displayName: 'Kiro CLI',            cmd: 'kiro-cli',     flags: '--trust-all-tools',     readyPrompt: '^>', installHint: 'brew install kiro  # or see docs for Linux/Windows', docsUrl: 'https://kiro.dev/docs/cli/installation/' },
+  cursor:   { key: 'cursor',   displayName: 'Cursor CLI',          cmd: 'cursor-agent',     readyPrompt: '^>', installHint: 'curl https://cursor.com/install -fsSL | bash',    docsUrl: 'https://cursor.com/docs/cli/installation' },
+  plandex:  { key: 'plandex',  displayName: 'Plandex',             cmd: 'plandex',     readyPrompt: '^>', installHint: 'curl -fsSL https://plandex.ai/install.sh | bash', docsUrl: 'https://docs.plandex.ai' },
   // goose has no launch flag — auto-approve is controlled via GOOSE_MODE=auto.
-  goose:    { key: 'goose',    displayName: 'Goose',               cmd: 'goose', installHint: 'curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash', docsUrl: 'https://block.github.io/goose', envDefaults: { GOOSE_MODE: 'auto' } },
-  copilot:  { key: 'copilot',  displayName: 'GitHub Copilot CLI',  cmd: 'gh copilot',      detectInstalled: copilotInstalled, installHint: 'gh copilot suggest "hi"  # gh prerequisite; first run downloads', docsUrl: 'https://docs.github.com/en/copilot/how-tos/use-copilot-in-the-cli' },
+  goose:    { key: 'goose',    displayName: 'Goose',               cmd: 'goose', readyPrompt: 'Goose❯', installHint: 'curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash', docsUrl: 'https://block.github.io/goose', envDefaults: { GOOSE_MODE: 'auto' } },
+  copilot:  { key: 'copilot',  displayName: 'GitHub Copilot CLI',  cmd: 'gh copilot',      detectInstalled: copilotInstalled, readyPrompt: '●', installHint: 'gh copilot suggest "hi"  # gh prerequisite; first run downloads', docsUrl: 'https://docs.github.com/en/copilot/how-tos/use-copilot-in-the-cli' },
 };
 
 export function isAgentInstalled(agent: AgentDefinition): boolean {

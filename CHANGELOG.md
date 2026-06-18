@@ -5,6 +5,83 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-06-18
+
+### Added — Init prompts (daemon-wide + per-session)
+
+System-prompt-style context, fired automatically after every spawn.
+
+**Daemon-wide** (`.llmux.yaml`):
+```yaml
+initPrompts:
+  - |
+    You work in a TypeScript monorepo. Never write Python.
+  - |
+    If the current branch is main, stop and ask before committing.
+```
+
+**Per-session** (CLI):
+```bash
+llmux session start claude --name sdd \
+  --init "you process tickets from $REPO" \
+  --init "respond in JSON {action, files, reasoning}"
+```
+
+Composed at spawn time as `daemon.initPrompts → session.initPrompts`,
+persisted on the session state record so `session restart` re-fires
+the same context exactly.
+
+### Added — `readyPrompt` revival on `AgentDefinition`
+
+Reintroduced as the optional regex-string field on every agent in the
+catalog (`^>` for most, `Goose❯` for Goose, `^agy>` for Antigravity,
+etc.). At spawn, the daemon polls `tmux capture-pane` every 200ms
+matching the agent's `readyPrompt` against the tail of the pane; once
+matched (or 10s timeout reached) it fires the composed init prompts
+500ms apart. Agents without a `readyPrompt` set fall back to a 2s
+sleep.
+
+Also restored on `AgentOverrides` in the YAML schema so per-agent
+`.llmux.yaml` overrides can supply a custom regex.
+
+### Added — `--init` / `--skip-init` flags
+
+- `session start <agent> --init "<prompt>" [--init "<prompt>"...]` —
+  repeatable, accumulates into an array
+- `session start --skip-init` — suppress the init-prompt firing for
+  this single spawn (the persisted list still saves; --skip-init only
+  affects THIS invocation)
+- `session restart <name> --skip-init` — same suppression on restart
+- `session edit <name> --init "..."` — replace the persisted
+  init-prompt list (`--init ""` clears; combine with `--apply` to
+  respawn into the new prompts)
+
+### Changed — `string-array` flag kind in the parser
+
+`packages/llmux/src/cli.ts` gained a third `FlagKind`: `string-array`.
+A flag declared as `kind: 'string-array'` accumulates an array on
+repeated occurrences instead of overwriting. `init` is the first
+consumer; future repeatable string flags can opt in by changing their
+kind.
+
+### State persistence
+
+`state.SessionState` gained an optional `initPrompts?: string[]`
+field. Stored on disk so respawns re-fire the same list. Removed
+sessions or upgrades from pre-v0.28.0 simply lack the field — fully
+backwards compatible.
+
+### Spawn timing rules
+
+| Scenario | Init prompts fired? |
+|---|---|
+| `session start <agent>` with daemon and/or session prompts | yes — both, in order |
+| `session start <agent> --skip-init` | no |
+| `session restart <name>` | yes — re-fires persisted list |
+| `session restart <name> --skip-init` | no |
+| `session resume <name> --conversation <id>` | no — prompts already in history |
+| `handleSpawn` and `handleRespawn` are now `async` | (call sites updated in index.ts) |
+
 ## [0.27.0] — 2026-06-18
 
 ### Added — CLI parity ship: `session edit`, `logs`, `settings`, variadic stop/restart

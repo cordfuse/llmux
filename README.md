@@ -37,7 +37,7 @@ trick for token refresh.
 like, `tmux attach -t <name>` still works exactly as you'd expect —
 llmux just adds the unified surface on top.)
 
-> **Status:** v0.27.0 — daemon + CLI client consolidated into one binary
+> **Status:** v0.28.0 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -104,6 +104,53 @@ If you mix headless and interactive on a single named session, expect
 transcript conflation: both senders' turns end up in one conversation
 history, in send-order. Not a bug, an inherent property of shared state.
 Designate one if it matters.
+
+## Init prompts
+
+llmux can fire a sequence of prompts into an agent immediately after the
+agent's TUI becomes ready — useful for setting up persistent context
+("you work in a TypeScript monorepo, never write Python") that should
+apply to every turn in the session.
+
+Two scopes:
+
+- **Daemon-wide** — `initPrompts:` at the top of `.llmux.yaml`. Fired
+  into every newly-spawned session before any operator interaction.
+- **Per-session** — `--init <prompt>` flag on `session start`
+  (repeatable). Composed AFTER the daemon-wide prompts.
+
+```yaml
+# .llmux.yaml
+initPrompts:
+  - |
+    You work in a TypeScript monorepo. Never write Python.
+  - |
+    If the current branch is main, stop and ask before committing.
+```
+
+```bash
+llmux session start claude --name sdd \
+  --init "you process tickets from $REPO" \
+  --init "respond in JSON {action, files, reasoning}"
+```
+
+**Spawn timing.** The daemon polls the tmux pane for each agent's
+`readyPrompt` regex (e.g. `^>` for Claude, `Goose❯` for Goose). Once
+the regex matches the bottom of the pane the prompts fire in order
+with a 500ms gap between. Timeout is 10s — if the regex never matches
+(agent hung at OAuth, etc.) llmux warns and fires anyway. For agents
+without a `readyPrompt` defined, it falls back to a fixed 2-second
+sleep.
+
+**Respawn behaviour.** `session restart` re-fires the same init
+prompts (re-establishes the operator context). `session resume` does
+NOT re-fire (the prompts are already in the conversation history).
+Pass `--skip-init` on `session start` or `session restart` to suppress
+firing for that single invocation.
+
+**Editing post-spawn.** `session edit <name> --init "..."` replaces
+the persisted list. Combine with `--apply` to respawn immediately so
+the new prompts take effect.
 
 ## Install
 
@@ -277,7 +324,7 @@ The server-start banner picks up the mapping automatically (any port, not
 just 3443/3080) and surfaces the resulting URLs:
 
 ```
-llmux v0.27.0
+llmux v0.28.0
 
   ▸ Tailscale HTTPS  https://<host>.tailnet.ts.net:3443
   ▸ Tailscale HTTP   http://<host>.tailnet.ts.net:3080

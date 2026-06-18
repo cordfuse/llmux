@@ -108,6 +108,7 @@ Session verbs (local by default; pass --server <url> to target a remote daemon):
   session list                                  list tracked sessions
   session start <agent> [--name N] [--cwd P]    spawn a new agent in tmux
                        [--flags "F"] [--env "K=V"] [--resume-from <id>]
+                       [--init "<prompt>" ...] [--skip-init]
   session stop <name> [<name>...]               kill + forget the session(s)
   session restart <name> [<name>...]            kill + relaunch with persisted config
   session edit <name> [--name N] [--cwd P]      patch persisted config of a tracked session
@@ -201,16 +202,16 @@ async function dispatchSession(verb: string | undefined, args: string[], env: Gl
       h.handleStatus(parsed);
       return;
     case 'start':
-      h.handleSpawn(parsed);
+      await h.handleSpawn(parsed);
       return;
     case 'stop':
       h.handleKill(parsed);
       return;
     case 'restart':
-      h.handleRespawn(parsed);
+      await h.handleRespawn(parsed);
       return;
     case 'edit':
-      h.handleSessionEdit(parsed);
+      await h.handleSessionEdit(parsed);
       return;
     case 'attach':
       h.handleChat(parsed);
@@ -285,6 +286,8 @@ function sessionLocalFlags() {
     browser: { kind: 'boolean' as const, description: 'open in web browser (attach)' },
     it: { kind: 'boolean' as const, description: 'interactive (attach)' },
     apply: { kind: 'boolean' as const, description: 'with `edit`: respawn the session after patching' },
+    init: { kind: 'string-array' as const, description: 'init prompt to fire on spawn (repeatable; composes with daemon.initPrompts)' },
+    'skip-init': { kind: 'boolean' as const, description: 'skip firing init prompts on this spawn' },
     json: { kind: 'boolean' as const, description: 'emit JSON' },
   };
 }

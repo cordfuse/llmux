@@ -12,6 +12,15 @@ export interface SessionState {
   env?: Record<string, string>;
   /** ID of the agent's prior conversation this session resumed from (if any). */
   resumeFrom?: string;
+  /**
+   * Per-session initialization prompts. Fired into the agent after the
+   * readyPrompt regex matches (or a fallback 2s sleep). Re-fired on
+   * `session restart` (a respawn restores the context); NOT fired on
+   * `session resume` (the prompts are already in the conversation
+   * history). Composed with the daemon-wide `initPrompts` from
+   * `.llmux.yaml` at spawn time, with the daemon prompts firing first.
+   */
+  initPrompts?: string[];
   createdAt: string;
   parent: string | null;
   restart: 'always' | 'on-failure' | 'never';

@@ -1,4 +1,9 @@
-export type FlagKind = 'boolean' | 'string';
+/**
+ * `string-array` is for flags that can repeat — each occurrence appends
+ * to an array on `flags[name]`. Existing single-shot kinds (`boolean`,
+ * `string`) work exactly the same as before.
+ */
+export type FlagKind = 'boolean' | 'string' | 'string-array';
 
 export interface FlagSpec {
   kind: FlagKind;
@@ -10,7 +15,7 @@ export type FlagSpecs = Record<string, FlagSpec>;
 
 export interface ParsedArgs {
   positional: string[];
-  flags: Record<string, string | boolean>;
+  flags: Record<string, string | boolean | string[]>;
 }
 
 export function parseArgs(argv: readonly string[], specs: FlagSpecs): ParsedArgs {
@@ -22,7 +27,19 @@ export function parseArgs(argv: readonly string[], specs: FlagSpecs): ParsedArgs
   const resolveName = (raw: string): string => aliasMap.get(raw) ?? raw;
 
   const positional: string[] = [];
-  const flags: Record<string, string | boolean> = {};
+  const flags: Record<string, string | boolean | string[]> = {};
+  function setStringValue(name: string, value: string, spec: FlagSpec): void {
+    if (spec.kind === 'string-array') {
+      const existing = flags[name];
+      if (Array.isArray(existing)) {
+        existing.push(value);
+      } else {
+        flags[name] = [value];
+      }
+    } else {
+      flags[name] = value;
+    }
+  }
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!;
@@ -45,7 +62,7 @@ export function parseArgs(argv: readonly string[], specs: FlagSpecs): ParsedArgs
         flags[name] = eq >= 0 ? body.slice(eq + 1) !== 'false' : true;
       } else {
         if (eq >= 0) {
-          flags[name] = body.slice(eq + 1);
+          setStringValue(name, body.slice(eq + 1), spec);
         } else {
           // Space form: `--flag value`. Consume next argv as value regardless
           // of whether it starts with `-` — `--flags "--model opus"` is a
@@ -56,7 +73,7 @@ export function parseArgs(argv: readonly string[], specs: FlagSpecs): ParsedArgs
           if (next === undefined) {
             throw new Error(`--${rawName} requires a value`);
           }
-          flags[name] = next;
+          setStringValue(name, next, spec);
           i++;
         }
       }
@@ -77,7 +94,7 @@ export function parseArgs(argv: readonly string[], specs: FlagSpecs): ParsedArgs
         if (next === undefined) {
           throw new Error(`-${body} requires a value`);
         }
-        flags[name] = next;
+        setStringValue(name, next, spec);
         i++;
       }
       continue;
