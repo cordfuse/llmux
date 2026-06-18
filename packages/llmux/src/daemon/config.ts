@@ -21,7 +21,6 @@ export interface SessionConfig {
 export interface AgentOverrides {
   cmd?: string;
   flags?: string;
-  readyPrompt?: string;
 }
 
 export interface LlmuxConfig {

@@ -75,7 +75,7 @@ function findTailscaleIp(): string | undefined {
   return undefined;
 }
 
-/** Build the address list shown on `llmuxd serve` startup. */
+/** Build the address list shown on `llmux server start` startup. */
 export function getAddresses(port: number): ReachableAddress[] {
   const out: ReachableAddress[] = [];
   const serve = detectTailscaleServe(port);
