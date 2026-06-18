@@ -242,7 +242,7 @@ export async function handleServe(args: ParsedArgs): Promise<void> {
     throw new Error(`invalid port: ${portRaw}`);
   }
   const host = process.env.LLMUXD_HOST ?? '0.0.0.0';
-  const handle = startServer({ port, host });
+  const handle = startServer({ port, host, config: cfg });
   printBanner(handle.port);
 
   // QR pairing: default on; --no-qr to suppress.
