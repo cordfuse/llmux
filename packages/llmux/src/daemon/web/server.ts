@@ -168,8 +168,8 @@ function pickerPage(): string {
   #bulk-toolbar button.kill{color:#f85149;border-color:#4a2329}
   #bulk-toolbar button:disabled{opacity:.35;cursor:not-allowed;background:#11141a}
   #bulk-count{color:#7a7f87;font-size:11px;margin-left:auto;white-space:nowrap}
-  th.select-col,td.select-col{width:28px;padding-right:0;text-align:left}
-  input.row-select,input#select-all{width:16px;height:16px;accent-color:#7cc4ff;cursor:pointer;vertical-align:middle;margin:0}
+  th.select-col,td.select-col{width:24px;padding-right:14px;text-align:left}
+  input.row-select,input#select-all{width:20px;height:20px;accent-color:#7cc4ff;cursor:pointer;vertical-align:middle;margin:0}
   .empty{color:#7a7f87;padding:18px;text-align:center;border:1px dashed #1f2329;border-radius:8px}
   .empty code{color:#c9d1d9;background:#11141a;padding:2px 6px;border-radius:4px}
   tbody tr{transition:background 150ms ease}
