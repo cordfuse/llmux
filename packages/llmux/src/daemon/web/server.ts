@@ -14,6 +14,7 @@ import * as state from '../state.ts';
 import * as tmux from '../tmux.ts';
 import * as authStore from '../auth-store.ts';
 import { getAddresses } from '../net.ts';
+import { loadConfig, loadOverride, overridePath, saveOverride, type LlmuxConfig, type TurnqConfig } from '../config.ts';
 
 function readDaemonVersion(): string {
   // Resolve package.json relative to this source file so the version stays
@@ -40,8 +41,12 @@ export interface ServeOptions {
   port: number;
   host: string;
   /** Loaded YAML config. Surfaced by /api/settings; defaults to whatever
-   *  `loadConfig()` returns if the caller doesn't pass anything. */
-  config?: import('../config.ts').LlmuxConfig;
+   *  `loadConfig()` returns if the caller doesn't pass anything. The server
+   *  treats this as the boot snapshot — on overlay writes through
+   *  PUT /api/settings/* it re-reads with `loadConfig()` so subsequent
+   *  reads (and the WebSocket attach path's turnq config lookup) reflect
+   *  the new state. */
+  config?: LlmuxConfig;
 }
 
 const XTERM_CSS = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css';
@@ -67,6 +72,8 @@ interface SessionView {
   defaultEnv: Record<string, string>;
   /** Conversation id this session is currently resumed from (if any). */
   resumeFrom?: string;
+  /** Per-session init prompts (combined with daemon.initPrompts at next respawn). */
+  initPrompts?: string[];
   /** Whether the agent has a history adapter — UI shows the conversations icon. */
   hasHistory: boolean;
   /** Count of prior conversations for this agent+cwd (0 if no adapter or empty history). */
@@ -157,7 +164,7 @@ function pickerPage(): string {
   #nav-drawer a.active{border-left-color:#7cc4ff;color:#7cc4ff;background:#11141a}
   #nav-drawer a .nav-icon{font-size:16px;width:20px;text-align:center;color:inherit}
   #nav-drawer .nav-footer{padding:10px 20px 0;border-top:1px solid #1f2329;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;align-items:center}
-  .page{display:none}
+  .page{display:none;padding-bottom:56px}
   .page.active{display:block}
   .tokens-toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
   .tokens-toolbar button{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
@@ -226,8 +233,35 @@ function pickerPage(): string {
     #settings-grid{grid-template-columns:1fr 1fr}
   }
   #settings-grid{display:grid;grid-template-columns:1fr;gap:14px}
-  #settings-grid .about-card{box-sizing:border-box}
-  #settings-grid .yaml-blob{margin:0;padding:10px 12px;background:#0b0c10;color:#7ee787;border:1px solid #1f2329;border-radius:6px;font:11px ui-monospace,monospace;line-height:1.5;overflow-x:auto;white-space:pre;max-height:280px}
+  /* min-width:0 lets the grid item shrink to its cell instead of expanding
+     to fit overflowing children — the YAML pre's long lines were widening
+     the card past the viewport, pushing every kv val off the right edge. */
+  #settings-grid .about-card{box-sizing:border-box;min-width:0;overflow:hidden}
+  #settings-grid .about-card .kv{align-items:baseline;gap:12px;flex-wrap:wrap}
+  #settings-grid .about-card .kv .val{min-width:0;flex:1 1 auto;overflow-wrap:anywhere;word-break:break-word}
+  #settings-grid .yaml-blob{margin:0;padding:10px 12px;background:#0b0c10;color:#7ee787;border:1px solid #1f2329;border-radius:6px;font:11px ui-monospace,monospace;line-height:1.5;overflow-x:auto;white-space:pre;max-height:280px;max-width:100%;box-sizing:border-box}
+  #settings-grid .settings-init-sub{margin:0 0 10px;font-size:11px;color:#9aa0a6;line-height:1.5}
+  #settings-grid .settings-init-sub code{color:#c9d1d9;background:#0b0c10;padding:1px 5px;border-radius:3px}
+  #settings-grid #settings-daemon-init{display:flex;flex-direction:column;gap:8px}
+  #settings-grid #settings-daemon-init .empty{color:#7a7f87;font-style:italic;font-size:12px;padding:8px 12px;background:#0b0c10;border:1px dashed #1f2329;border-radius:6px}
+  #settings-grid #settings-daemon-init .prompt{background:#0b0c10;border:1px solid #1f2329;border-radius:6px;padding:8px 10px;font:11px ui-monospace,monospace;color:#c9d1d9;white-space:pre-wrap;word-break:break-word;line-height:1.5}
+  #settings-grid #settings-daemon-init .prompt-idx{color:#7cc4ff;font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+  #settings-grid .about-card.editable{padding-bottom:14px}
+  #settings-grid .settings-input{flex:1 1 160px;min-width:0;background:#0b0c10;color:#c9d1d9;border:1px solid #1f2329;border-radius:4px;padding:6px 8px;font:12px ui-monospace,monospace;box-sizing:border-box}
+  #settings-grid .settings-input:focus{outline:none;border-color:#388bfd}
+  #settings-grid .settings-input::placeholder{color:#5a6068}
+  #settings-grid label.toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;color:#c9d1d9;font-size:12px}
+  #settings-grid label.toggle input{margin:0}
+  #settings-grid textarea#settings-daemon-init-input{width:100%;min-height:90px;background:#0b0c10;color:#c9d1d9;border:1px solid #1f2329;border-radius:6px;padding:8px 10px;font:11px ui-monospace,monospace;box-sizing:border-box;resize:vertical;line-height:1.5}
+  #settings-grid textarea#settings-daemon-init-input:focus{outline:none;border-color:#388bfd}
+  #settings-grid .settings-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:12px}
+  #settings-grid .settings-status{font-size:11px;color:#7a7f87;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+  #settings-grid .settings-status.ok{color:#7ee787}
+  #settings-grid .settings-status.err{color:#ff7b72}
+  #settings-grid .settings-save{background:#388bfd;color:#fff;border:none;border-radius:4px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer}
+  #settings-grid .settings-save:hover{background:#4895ff}
+  #settings-grid .settings-save:disabled{background:#3a4047;color:#7a7f87;cursor:not-allowed}
+  #settings-grid .overlay-badge{display:inline-block;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#0b0c10;background:#7cc4ff;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle}
   .agents-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;font-size:12px;color:#9aa0a6;flex-wrap:wrap;gap:10px}
   .agents-bar #agents-summary{color:#c9d1d9}
   .agents-toggle label{display:flex;align-items:center;gap:6px;cursor:pointer}
@@ -297,16 +331,19 @@ function pickerPage(): string {
   #bulk-toolbar{display:flex;gap:6px;align-items:center;margin-bottom:10px;padding:8px 10px;background:#11141a;border:1px solid #1f2329;border-radius:8px;flex-wrap:wrap}
   #bulk-toolbar .bulk-action-row{display:flex;gap:6px;flex:1;min-width:0;align-items:center}
   #bulk-toolbar button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:6px 12px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease;flex:0 0 auto}
-  /* Portrait phones: 6 buttons can't fit at any readable size. Make the
-     button row a horizontal-scroll strip — swipe to see Kill if needed —
-     and put the count chip on its own row below. Hide the scrollbar so
-     it doesn't draw visual chrome. */
+  /* Portrait phones: 6 buttons can't fit one row at any readable size.
+     Column layout — button row scrolls horizontally (swipe to see Kill),
+     count chip drops to its own row below. Box-sizing + width:100% on
+     every column item so they CAN'T expand past the toolbar's width,
+     which previously let the row's intrinsic button-sum widen the whole
+     toolbar past the viewport (Kill button + "N selected" chip both got
+     cut off the right edge of the fold). */
   @media (max-width:600px){
-    #bulk-toolbar{flex-direction:column;align-items:stretch;gap:6px;padding:6px 8px}
-    #bulk-toolbar .bulk-action-row{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+    #bulk-toolbar{flex-direction:column;align-items:stretch;gap:6px;padding:6px 8px;flex-wrap:nowrap;box-sizing:border-box;width:100%;max-width:100%}
+    #bulk-toolbar .bulk-action-row{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px;width:100%;max-width:100%;min-width:0;flex:0 0 auto;box-sizing:border-box}
     #bulk-toolbar .bulk-action-row::-webkit-scrollbar{display:none}
-    #bulk-toolbar button{padding:5px 10px;font-size:11px}
-    #bulk-count{flex-basis:auto;margin-left:0;text-align:right;padding-top:0}
+    #bulk-toolbar button{padding:4px 8px;font-size:11px}
+    #bulk-count{flex-basis:auto;margin-left:0;text-align:right;padding-top:0;width:100%;box-sizing:border-box}
   }
   #bulk-toolbar button:hover:not(:disabled){background:#252b34;border-color:#3a414b}
   #bulk-toolbar button.new{color:#7cc4ff;border-color:#2d4a66}
@@ -499,6 +536,11 @@ function pickerPage(): string {
       <textarea id="new-env" rows="3" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="KEY=VALUE one per line"></textarea>
     </div>
     <div id="new-env-hint" class="hint" hidden></div>
+    <div class="field">
+      <label for="new-init">init prompts (session level)</label>
+      <textarea id="new-init" rows="4" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="one prompt per line — fired into the agent after spawn; composed AFTER daemon.initPrompts from .llmux.yaml"></textarea>
+    </div>
+    <div id="new-init-hint" class="hint">Daemon-wide prompts are configured in .llmux.yaml (see Settings → Daemon init prompts). These per-session prompts fire after the daemon ones.</div>
     <div class="actions">
       <button type="button" id="new-cancel">cancel</button>
       <button type="submit" class="primary" id="new-submit">spawn</button>
@@ -602,16 +644,36 @@ function pickerPage(): string {
       <div class="kv"><span class="key">LLMUX_PORT</span><span class="val" id="settings-env-llmux-port">—</span></div>
       <div class="kv"><span class="key">XDG_STATE_HOME</span><span class="val" id="settings-env-xdg">—</span></div>
     </div>
-    <div class="about-card">
+    <div class="about-card editable">
       <h3>turnq (FIFO turn coordination)</h3>
-      <div class="kv"><span class="key">enabled</span><span class="val" id="settings-turnq-enabled">—</span></div>
+      <p class="settings-init-sub">When enabled, every <code>send</code> wraps in a FIFO turn so multi-sender clashes can't tear a prompt mid-flight. Edits persist to <code>~/.config/llmux/overrides.yaml</code>; delete that file to revert.</p>
+      <div class="kv"><span class="key">enabled</span><label class="toggle"><input type="checkbox" id="settings-turnq-enabled-input"> <span id="settings-turnq-enabled-label">no</span></label></div>
       <div class="kv"><span class="key">mode</span><span class="val" id="settings-turnq-mode">—</span></div>
-      <div class="kv"><span class="key">url</span><span class="val" id="settings-turnq-url">—</span></div>
-      <div class="kv"><span class="key">max-hold</span><span class="val" id="settings-turnq-maxhold">—</span></div>
+      <div class="kv"><span class="key">url</span><input class="settings-input" type="text" id="settings-turnq-url-input" placeholder="(empty = local flock)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="kv"><span class="key">max-hold (ms)</span><input class="settings-input" type="number" id="settings-turnq-maxhold-input" min="1000" step="1000" placeholder="300000"></div>
+      <div class="settings-actions">
+        <span class="settings-status" id="settings-turnq-status"></span>
+        <button type="button" class="settings-save" id="settings-turnq-save">save turnq</button>
+      </div>
+    </div>
+    <div class="about-card editable">
+      <h3>Daemon init prompts</h3>
+      <p class="settings-init-sub">One prompt per line. Fired into every newly-spawned session before per-session <code>initPrompts</code>. Edits persist to <code>~/.config/llmux/overrides.yaml</code>; delete that file to revert.</p>
+      <textarea id="settings-daemon-init-input" rows="5" placeholder="one prompt per line" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+      <div class="settings-actions">
+        <span class="settings-status" id="settings-daemon-init-status"></span>
+        <button type="button" class="settings-save" id="settings-daemon-init-save">save init prompts</button>
+      </div>
     </div>
     <div class="about-card">
-      <h3>Loaded YAML</h3>
+      <h3>Loaded YAML <span class="overlay-badge" id="settings-overlay-badge" style="display:none">overlay active</span></h3>
+      <p class="settings-init-sub">Base config file as it exists on disk. The Settings UI never writes here — UI edits go to the overlay (shown below if active).</p>
       <pre id="settings-yaml" class="yaml-blob">—</pre>
+    </div>
+    <div class="about-card" id="settings-overlay-card" style="display:none">
+      <h3>Active overrides</h3>
+      <p class="settings-init-sub">Runtime overlay at <code id="settings-overlay-path">~/.config/llmux/overrides.yaml</code>. Delete this file on the daemon host to wipe all UI edits.</p>
+      <pre id="settings-overlay-yaml" class="yaml-blob">—</pre>
     </div>
   </div>
 </div>
@@ -781,7 +843,7 @@ function pickerPage(): string {
   function rowHtml(s){
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
-    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" title="edit name, cwd, flags, or env" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
+    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" data-init="' + escapeHtml(JSON.stringify(s.initPrompts || [])) + '" title="edit name, cwd, flags, env, init prompts" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
     const sendBtn = s.status === 'running'
       ? '<button class="send-btn" data-action="send" data-name="' + escapeHtml(s.name) + '" title="send a prompt to this session without attaching the terminal" aria-label="send"><span class="icon">⤴</span><span class="label">send</span></button>'
       : '';
@@ -1096,7 +1158,9 @@ function pickerPage(): string {
     if (kind === 'edit'){
       let env = {};
       try { env = JSON.parse(btn.dataset.env || '{}'); } catch(_){}
-      openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd, flags: btn.dataset.flags, env: env });
+      let initPrompts = [];
+      try { initPrompts = JSON.parse(btn.dataset.init || '[]'); } catch(_){}
+      openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd, flags: btn.dataset.flags, env: env, initPrompts: initPrompts });
       return;
     }
     if (kind === 'resume'){
@@ -1662,9 +1726,11 @@ function pickerPage(): string {
   });
 
   // ---- Settings page ----
-  // Read-only diagnostic info: where the daemon thinks its config + state
-  // live, what envs are active, what YAML is loaded. The /api/settings
-  // endpoint is added in this release.
+  // GET /api/settings populates discovery + listen + env + turnq editor +
+  // daemon initPrompts editor + the base YAML pane and (when active) the
+  // overlay YAML pane. Save buttons PUT into /api/settings/{turnq,init-prompts}
+  // which write to the runtime overlay at ~/.config/llmux/overrides.yaml
+  // and reload the daemon's currentConfig snapshot.
   const settingsConfigSource = document.getElementById('settings-config-source');
   const settingsStateDir = document.getElementById('settings-state-dir');
   const settingsTmux = document.getElementById('settings-tmux');
@@ -1675,6 +1741,91 @@ function pickerPage(): string {
   const settingsEnvLlmuxdHost = document.getElementById('settings-env-llmuxd-host');
   const settingsEnvLlmuxPort = document.getElementById('settings-env-llmux-port');
   const settingsEnvXdg = document.getElementById('settings-env-xdg');
+  const turnqEnabledInput = document.getElementById('settings-turnq-enabled-input');
+  const turnqEnabledLabel = document.getElementById('settings-turnq-enabled-label');
+  const turnqUrlInput = document.getElementById('settings-turnq-url-input');
+  const turnqMaxHoldInput = document.getElementById('settings-turnq-maxhold-input');
+  const turnqModeVal = document.getElementById('settings-turnq-mode');
+  const turnqSaveBtn = document.getElementById('settings-turnq-save');
+  const turnqStatus = document.getElementById('settings-turnq-status');
+  const daemonInitInput = document.getElementById('settings-daemon-init-input');
+  const daemonInitSaveBtn = document.getElementById('settings-daemon-init-save');
+  const daemonInitStatus = document.getElementById('settings-daemon-init-status');
+  const overlayBadge = document.getElementById('settings-overlay-badge');
+  const overlayCard = document.getElementById('settings-overlay-card');
+  const overlayPathLabel = document.getElementById('settings-overlay-path');
+  const overlayYaml = document.getElementById('settings-overlay-yaml');
+
+  function syncTurnqModeFromInputs(){
+    if (!turnqEnabledInput.checked){
+      turnqModeVal.textContent = 'disabled';
+      return;
+    }
+    turnqModeVal.textContent = turnqUrlInput.value.trim().length > 0 ? 'distributed' : 'local';
+  }
+  turnqEnabledInput.addEventListener('change', function(){
+    turnqEnabledLabel.textContent = turnqEnabledInput.checked ? 'yes' : 'no';
+    syncTurnqModeFromInputs();
+  });
+  turnqUrlInput.addEventListener('input', syncTurnqModeFromInputs);
+
+  function setStatus(el, msg, kind){
+    el.textContent = msg;
+    el.classList.remove('ok', 'err');
+    if (kind === 'ok') el.classList.add('ok');
+    else if (kind === 'err') el.classList.add('err');
+  }
+
+  turnqSaveBtn.addEventListener('click', async function(){
+    turnqSaveBtn.disabled = true;
+    setStatus(turnqStatus, 'saving…', '');
+    const body = {
+      enabled: turnqEnabledInput.checked,
+      url: turnqUrlInput.value.trim() || null,
+      maxHoldMs: Number(turnqMaxHoldInput.value) || 300000,
+    };
+    try {
+      const r = await fetch('/api/settings/turnq', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) throw new Error(data.error || 'http ' + r.status);
+      setStatus(turnqStatus, 'saved ✓', 'ok');
+      await refreshSettings();
+      setTimeout(function(){ setStatus(turnqStatus, '', ''); }, 2400);
+    } catch(e){
+      setStatus(turnqStatus, 'error: ' + (e.message || String(e)), 'err');
+    } finally {
+      turnqSaveBtn.disabled = false;
+    }
+  });
+
+  daemonInitSaveBtn.addEventListener('click', async function(){
+    daemonInitSaveBtn.disabled = true;
+    setStatus(daemonInitStatus, 'saving…', '');
+    const lines = (daemonInitInput.value || '')
+      .split('\\n')
+      .map(function(s){ return s.replace(/\\s+$/, ''); })
+      .filter(function(s){ return s.length > 0; });
+    try {
+      const r = await fetch('/api/settings/init-prompts', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ initPrompts: lines }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) throw new Error(data.error || 'http ' + r.status);
+      setStatus(daemonInitStatus, 'saved ✓ (' + lines.length + ' prompt' + (lines.length === 1 ? '' : 's') + ')', 'ok');
+      await refreshSettings();
+      setTimeout(function(){ setStatus(daemonInitStatus, '', ''); }, 2400);
+    } catch(e){
+      setStatus(daemonInitStatus, 'error: ' + (e.message || String(e)), 'err');
+    } finally {
+      daemonInitSaveBtn.disabled = false;
+    }
+  });
 
   async function refreshSettings(){
     try {
@@ -1692,10 +1843,22 @@ function pickerPage(): string {
       settingsEnvXdg.textContent = data.env.XDG_STATE_HOME || '(unset)';
       settingsYaml.textContent = data.yamlText || '(no .llmux.yaml found)';
       const turnq = data.turnq || { enabled: false, mode: 'disabled' };
-      document.getElementById('settings-turnq-enabled').textContent = turnq.enabled ? 'yes' : 'no';
-      document.getElementById('settings-turnq-mode').textContent = turnq.mode || 'disabled';
-      document.getElementById('settings-turnq-url').textContent = turnq.url || '(local flock)';
-      document.getElementById('settings-turnq-maxhold').textContent = turnq.maxHoldMs ? (turnq.maxHoldMs + 'ms') : '—';
+      turnqEnabledInput.checked = Boolean(turnq.enabled);
+      turnqEnabledLabel.textContent = turnq.enabled ? 'yes' : 'no';
+      turnqUrlInput.value = turnq.url || '';
+      turnqMaxHoldInput.value = turnq.maxHoldMs || 300000;
+      syncTurnqModeFromInputs();
+      const prompts = Array.isArray(data.daemonInitPrompts) ? data.daemonInitPrompts : [];
+      daemonInitInput.value = prompts.join('\\n');
+      if (data.overlayActive){
+        overlayBadge.style.display = 'inline-block';
+        overlayCard.style.display = '';
+        overlayPathLabel.textContent = data.overlayPath || '~/.config/llmux/overrides.yaml';
+        overlayYaml.textContent = data.overlayText || '(empty)';
+      } else {
+        overlayBadge.style.display = 'none';
+        overlayCard.style.display = 'none';
+      }
     } catch(e){
       settingsConfigSource.textContent = 'failed to load: ' + (e.message || String(e));
     }
@@ -1820,6 +1983,7 @@ function pickerPage(): string {
   const newCwd = document.getElementById('new-cwd');
   const newFlags = document.getElementById('new-flags');
   const newEnv = document.getElementById('new-env');
+  const newInit = document.getElementById('new-init');
   const newCwdHint = document.getElementById('new-cwd-hint');
   const newFlagsHint = document.getElementById('new-flags-hint');
   const newEnvHint = document.getElementById('new-env-hint');
@@ -1903,6 +2067,7 @@ function pickerPage(): string {
     // can edit/clear from there. Empty = spawn with no flags / no env override.
     newFlags.value = agentDefaultFlags(newAgent.value);
     newEnv.value = envToText(agentDefaultEnv(newAgent.value));
+    newInit.value = '';
     syncFlagsHint(newAgent.value);
     syncEnvHint(newAgent.value);
     newAgent.focus();
@@ -1931,6 +2096,7 @@ function pickerPage(): string {
     newEnv.value = row.env && Object.keys(row.env).length > 0
       ? envToText(row.env)
       : envToText(agentDefaultEnv(newAgent.value));
+    newInit.value = Array.isArray(row.initPrompts) ? row.initPrompts.join('\\n') : '';
     syncFlagsHint(newAgent.value);
     syncEnvHint(newAgent.value);
     newName.focus();
@@ -1960,6 +2126,13 @@ function pickerPage(): string {
     const cwd = newCwd.value.trim();
     const flags = newFlags.value;
     const env = newEnv.value;
+    // initPrompts: one per line. Filter empty lines. The whole array is sent
+    // (including [] when the textarea is cleared) so the operator can wipe
+    // prompts via the form — same wipe semantics as the CLI edit --init.
+    const initPrompts = newInit.value
+      .split('\\n')
+      .map(function(s){ return s.replace(/\\s+$/, ''); })
+      .filter(function(s){ return s.length > 0; });
     newSubmit.disabled = true;
     const originalLabel = newSubmit.textContent;
     try {
@@ -1967,7 +2140,7 @@ function pickerPage(): string {
         newSubmit.textContent = 'saving…';
         // For edit, always send flags + env so input values are canonical.
         // name/cwd still only sent if user typed (so blank = no change).
-        const body = { flags: flags, env: env };
+        const body = { flags: flags, env: env, initPrompts: initPrompts };
         if (name) body.name = name;
         if (cwd) body.cwd = cwd;
         const r = await fetch('/api/sessions/' + encodeURIComponent(formMode.edit), {
@@ -1989,6 +2162,7 @@ function pickerPage(): string {
         // empty values = explicit "no flags" / "no env override".
         body.flags = flags;
         body.env = env;
+        if (initPrompts.length > 0) body.initPrompts = initPrompts;
         const r = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -2020,37 +2194,20 @@ function pickerPage(): string {
 </body></html>`;
 }
 
-function renderSessionTable(sessions: SessionView[]): string {
-  if (sessions.length === 0) {
-    return `<div class="empty">no sessions yet — spawn one from the CLI:<br><br><code>llmux session start claude --name <em>name</em></code></div>`;
-  }
-  const rows = sessions
-    .map((s) => {
-      const cls = `state-${s.status}`;
-      const linkOpen = `<a class="session-link" href="/session/${encodeURIComponent(s.name)}">`;
-      const respawnText = s.status === 'running' ? 'restart' : 'respawn';
-      const respawnBtn = `<button class="respawn" data-action="respawn" data-name="${escapeHtml(s.name)}" aria-label="${respawnText}"><span class="icon">↻</span><span class="label">${respawnText}</span></button>`;
-      const toggleText = s.status === 'running' ? 'stop' : 'start';
-      const toggleAction = s.status === 'running' ? 'stop' : 'respawn';
-      const toggleIcon = s.status === 'running' ? '□' : '▷';
-      const toggleBtn = `<button class="toggle" data-action="${toggleAction}" data-status="${s.status}" data-name="${escapeHtml(s.name)}" aria-label="${toggleText}"><span class="icon">${toggleIcon}</span><span class="label">${toggleText}</span></button>`;
-      const editBtn = `<button class="edit" data-action="edit" data-name="${escapeHtml(s.name)}" data-cwd="${escapeHtml(s.cwd)}" data-agent="${escapeHtml(s.agent)}" data-flags="${escapeHtml(s.flags || '')}" data-env="${escapeHtml(JSON.stringify(s.env || {}))}" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>`;
-      const resumeBtn = (s.hasHistory && s.conversationCount > 0)
-        ? `<button class="resume-btn" data-action="resume" data-name="${escapeHtml(s.name)}" aria-label="resume"><span class="icon">☰</span><span class="label">${s.conversationCount}</span></button>`
-        : '';
-      const killText = s.status === 'running' ? 'kill' : 'remove';
-      const killBtn = `<button class="kill" data-action="kill" data-name="${escapeHtml(s.name)}" data-status="${s.status}" aria-label="${killText}"><span class="icon">✕</span><span class="label">${killText}</span></button>`;
-      const cwdShort = s.cwdDisplay || s.cwd;
-      return `<tr data-name="${escapeHtml(s.name)}">
-  <td class="name-block"><span class="name">${linkOpen}${escapeHtml(s.name)}</a></span><span class="cwd" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></span></td>
-  <td>${escapeHtml(s.agent)}</td>
-  <td class="${cls}">${s.status}</td>
-  <td class="cwd cwd-col" title="${escapeHtml(s.cwd)}"><code>${escapeHtml(cwdShort)}</code></td>
-  <td class="actions">${resumeBtn}${toggleBtn}${respawnBtn}${editBtn}${killBtn}</td>
-</tr>`;
-    })
-    .join('\n');
-  return `<table><thead><tr><th>name</th><th>agent</th><th>state</th><th class="cwd-col">cwd</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+function renderSessionTable(_sessions: SessionView[]): string {
+  // Initial server-rendered placeholder. The browser-side `render()` function
+  // replaces this on the first /api/sessions poll (~0-3s after load) using
+  // the modern row template (checkbox column, select-all header, per-row
+  // Edit + Resume only — bulk actions live in the toolbar above). The
+  // server-side legacy table we used to render here showed pre-v0.23.0
+  // per-row Start/Stop/Respawn/Kill buttons that flashed on screen for
+  // the duration of that first poll, looking like the page was broken
+  // before the JS handlers wired up. Rendering an empty-header skeleton
+  // keeps the page layout stable while the real rows load in.
+  return `<table><thead><tr>
+    <th class="select-col"><input type="checkbox" id="select-all" aria-label="select all" disabled></th>
+    <th>name</th><th>agent</th><th>state</th><th class="cwd-col">cwd</th><th></th>
+  </tr></thead><tbody><tr><td colspan="6" style="padding:14px;color:#7a7f87;text-align:center">loading sessions…</td></tr></tbody></table>`;
 }
 
 function deadSessionPage(s: SessionView): string {
@@ -3047,7 +3204,13 @@ function viewOf(s: state.SessionState, live: boolean): SessionView {
   let conversationCount = 0;
   if (agentDef?.history) {
     try {
-      conversationCount = agentDef.history.listConversations(s.cwd).length;
+      // Prefer the fast count adapter when available — Claude Code's full
+      // listConversations parses every transcript file (hundreds of MB on
+      // long-running operator boxes), blocking the event loop. The count
+      // adapter on claudeHistory is a directory-only readdir.
+      conversationCount = agentDef.history.countConversations
+        ? agentDef.history.countConversations(s.cwd)
+        : agentDef.history.listConversations(s.cwd).length;
     } catch {
       conversationCount = 0;
     }
@@ -3062,6 +3225,7 @@ function viewOf(s: state.SessionState, live: boolean): SessionView {
     ...(s.env !== undefined ? { env: s.env } : {}),
     defaultEnv: agentDef?.envDefaults ?? {},
     ...(s.resumeFrom !== undefined ? { resumeFrom: s.resumeFrom } : {}),
+    ...(s.initPrompts !== undefined ? { initPrompts: s.initPrompts } : {}),
     hasHistory: Boolean(agentDef?.history),
     conversationCount,
     createdAt: s.createdAt,
@@ -3104,7 +3268,7 @@ export function mergeSpawnEnv(agent: AgentDefinition, sessionEnv: Record<string,
 
 const SESSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string; env?: string; resumeFrom?: string }):
+function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string; env?: string; resumeFrom?: string; initPrompts?: string[] }):
   | { ok: true; session: SessionView }
   | { ok: false; error: string } {
   if (!input.agent) return { ok: false, error: 'agent is required' };
@@ -3156,6 +3320,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
     ...(flagsOverride !== undefined ? { flags: flagsOverride } : {}),
     ...(envOverride !== undefined ? { env: envOverride } : {}),
     ...(resumeFrom !== undefined ? { resumeFrom } : {}),
+    ...(input.initPrompts && input.initPrompts.length > 0 ? { initPrompts: input.initPrompts } : {}),
     createdAt: new Date().toISOString(),
     parent: null,
     restart: 'on-failure',
@@ -3239,7 +3404,7 @@ function resumeConversation(
 
 export function editSession(
   oldName: string,
-  patch: { name?: string; cwd?: string; flags?: string; env?: string },
+  patch: { name?: string; cwd?: string; flags?: string; env?: string; initPrompts?: string[] },
 ): { ok: true; session: SessionView } | { ok: false; error: string } {
   const session = state.get(oldName);
   if (!session) return { ok: false, error: `no tracked session "${oldName}"` };
@@ -3282,6 +3447,13 @@ export function editSession(
   // (including empty → empty override = "no extra env vars beyond the LLMUX_*").
   const nextEnv = patch.env !== undefined ? parseEnvText(patch.env) : session.env;
 
+  // initPrompts semantics: undefined → no change; array → replace (empty
+  // array clears the persisted list). Operator can wipe init prompts by
+  // sending []; new prompts take effect on the next respawn.
+  const nextInitPrompts = patch.initPrompts !== undefined
+    ? (patch.initPrompts.length > 0 ? patch.initPrompts : undefined)
+    : session.initPrompts;
+
   const updated: state.SessionState = {
     name: renaming ? newName! : oldName,
     agent: session.agent,
@@ -3289,6 +3461,8 @@ export function editSession(
     ...(nextFlags !== undefined ? { flags: nextFlags } : {}),
     ...(nextEnv !== undefined ? { env: nextEnv } : {}),
     ...(session.resumeFrom !== undefined ? { resumeFrom: session.resumeFrom } : {}),
+    ...(nextInitPrompts !== undefined ? { initPrompts: nextInitPrompts } : {}),
+    ...(session.turnqMarker !== undefined ? { turnqMarker: session.turnqMarker } : {}),
     createdAt: session.createdAt,
     parent: session.parent,
     restart: session.restart,
@@ -3374,6 +3548,14 @@ const CONVERSATIONS_RE = /^\/api\/sessions\/([^/]+)\/conversations$/;
 const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
 
 export function startServer(opts: ServeOptions): ServerHandle {
+  // Boot snapshot — refreshed in-place by the PUT /api/settings/* handlers
+  // so subsequent reads (including the WebSocket attach path's turnq
+  // lookup) reflect the new overlay state without restarting the daemon.
+  let currentConfig: LlmuxConfig | undefined = opts.config;
+  function reloadCurrentConfig(): LlmuxConfig {
+    currentConfig = loadConfig();
+    return currentConfig;
+  }
   const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const method = req.method ?? 'GET';
@@ -3621,16 +3803,22 @@ export function startServer(opts: ServeOptions): ServerHandle {
       return;
     }
 
-    // ---- Settings (read-only diagnostic) ----
-    // Surface what the daemon resolved for its config path / state dir /
-    // listen address, plus the verbatim YAML text for visual inspection.
-    // No mutation surface; this is a debug aid for operators wondering
-    // "where did this daemon think its config was."
+    // ---- Settings ----
+    // GET: effective config + diagnostic info. The web UI's Settings page
+    // reads this on every nav-in.
+    // PUT /api/settings/init-prompts: replace the daemon-wide init prompts
+    // PUT /api/settings/turnq: replace the turnq subconfig
+    // Both PUT verbs persist to the runtime overlay file (separate from the
+    // hand-edited base YAML — see config.ts) and reload currentConfig.
     if (url.pathname === '/api/settings' && method === 'GET') {
-      const cfg = opts.config;
+      const cfg = currentConfig;
       let yamlText = '';
       if (cfg?.sourcePath) {
         try { yamlText = readFileSync(cfg.sourcePath, 'utf8'); } catch { yamlText = '(failed to read config file)'; }
+      }
+      let overlayText = '';
+      if (cfg?.overlayPath) {
+        try { overlayText = readFileSync(cfg.overlayPath, 'utf8'); } catch { overlayText = '(failed to read overlay file)'; }
       }
       let tmuxAvailable = false;
       try { tmux.requireTmux(); tmuxAvailable = true; } catch { tmuxAvailable = false; }
@@ -3639,6 +3827,9 @@ export function startServer(opts: ServeOptions): ServerHandle {
         host: hostname(),
         configSource: cfg?.sourcePath ?? null,
         yamlText,
+        overlayPath: cfg?.overlayPath ?? overridePath(),
+        overlayText,
+        overlayActive: Boolean(cfg?.overlayPath),
         stateDir: state.stateDir(),
         tmuxAvailable,
         port: opts.port,
@@ -3657,12 +3848,61 @@ export function startServer(opts: ServeOptions): ServerHandle {
               maxHoldMs: cfg.turnq.maxHoldMs ?? 300_000,
             }
           : { enabled: false, url: null, mode: 'disabled', maxHoldMs: null },
+        daemonInitPrompts: cfg?.initPrompts ?? [],
       });
+    }
+
+    if (url.pathname === '/api/settings/init-prompts' && method === 'PUT') {
+      try {
+        const body = (await readJsonBody(req)) as { initPrompts?: unknown };
+        if (!Array.isArray(body.initPrompts)) {
+          return sendJson(res, { ok: false, error: 'initPrompts must be an array' }, 400);
+        }
+        const cleaned = body.initPrompts
+          .filter((p): p is string => typeof p === 'string')
+          .map((p) => p.replace(/\s+$/, ''))
+          .filter((p) => p.length > 0);
+        saveOverride({ initPrompts: cleaned });
+        reloadCurrentConfig();
+        console.log(`[settings] daemon initPrompts updated via web UI (${cleaned.length} prompt${cleaned.length === 1 ? '' : 's'})`);
+        return sendJson(res, { ok: true, initPrompts: cleaned, overlayActive: Boolean(currentConfig?.overlayPath) });
+      } catch (err) {
+        return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/settings/turnq' && method === 'PUT') {
+      try {
+        const body = (await readJsonBody(req)) as { enabled?: unknown; maxHoldMs?: unknown; url?: unknown };
+        const next: TurnqConfig = { enabled: Boolean(body.enabled) };
+        if (typeof body.maxHoldMs === 'number' && Number.isFinite(body.maxHoldMs) && body.maxHoldMs > 0) {
+          next.maxHoldMs = Math.floor(body.maxHoldMs);
+        }
+        if (typeof body.url === 'string' && body.url.trim().length > 0) {
+          next.url = body.url.trim();
+        }
+        saveOverride({ turnq: next });
+        reloadCurrentConfig();
+        const mode = next.url ? 'distributed' : 'local';
+        console.log(`[settings] turnq updated via web UI (enabled=${next.enabled}, mode=${mode})`);
+        return sendJson(res, {
+          ok: true,
+          turnq: {
+            enabled: next.enabled,
+            url: next.url ?? null,
+            mode: next.enabled ? mode : 'disabled',
+            maxHoldMs: next.maxHoldMs ?? 300_000,
+          },
+          overlayActive: Boolean(currentConfig?.overlayPath),
+        });
+      } catch (err) {
+        return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
+      }
     }
 
     if (url.pathname === '/api/sessions' && method === 'POST') {
       try {
-        const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown; resumeFrom?: unknown };
+        const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown; resumeFrom?: unknown; initPrompts?: unknown };
         const result = createSession({
           agent: typeof body.agent === 'string' ? body.agent : '',
           ...(typeof body.name === 'string' ? { name: body.name } : {}),
@@ -3670,6 +3910,9 @@ export function startServer(opts: ServeOptions): ServerHandle {
           ...(typeof body.flags === 'string' ? { flags: body.flags } : {}),
           ...(typeof body.env === 'string' ? { env: body.env } : {}),
           ...(typeof body.resumeFrom === 'string' ? { resumeFrom: body.resumeFrom } : {}),
+          ...(Array.isArray(body.initPrompts)
+            ? { initPrompts: body.initPrompts.filter((p): p is string => typeof p === 'string') }
+            : {}),
         });
         return sendJson(res, result, result.ok ? 200 : 400);
       } catch (err) {
@@ -3711,7 +3954,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
             await turnqIntegration.sendWithTurn(name, body.prompt, {
               enter,
               skipTurnq,
-              turnqConfig: opts.config?.turnq,
+              turnqConfig: currentConfig?.turnq,
             });
           } catch (err) {
             return sendJson(res, { ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
@@ -3757,12 +4000,15 @@ export function startServer(opts: ServeOptions): ServerHandle {
       if (mEdit) {
         const name = decodeURIComponent(mEdit[1]!);
         try {
-          const body = (await readJsonBody(req)) as { name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown };
+          const body = (await readJsonBody(req)) as { name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown; initPrompts?: unknown };
           const result = editSession(name, {
             ...(typeof body.name === 'string' ? { name: body.name } : {}),
             ...(typeof body.cwd === 'string' ? { cwd: body.cwd } : {}),
             ...(typeof body.flags === 'string' ? { flags: body.flags } : {}),
             ...(typeof body.env === 'string' ? { env: body.env } : {}),
+            ...(Array.isArray(body.initPrompts)
+              ? { initPrompts: body.initPrompts.filter((p): p is string => typeof p === 'string') }
+              : {}),
           });
           return sendJson(res, result, result.ok ? 200 : 400);
         } catch (err) {
