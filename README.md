@@ -37,7 +37,7 @@ trick for token refresh.
 like, `tmux attach -t <name>` still works exactly as you'd expect —
 llmux just adds the unified surface on top.)
 
-> **Status:** v0.29.0 — daemon + CLI client consolidated into one binary
+> **Status:** v0.30.0 — daemon + CLI client consolidated into one binary
 > (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
 > Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
 
@@ -151,6 +151,48 @@ firing for that single invocation.
 **Editing post-spawn.** `session edit <name> --init "..."` replaces
 the persisted list. Combine with `--apply` to respawn immediately so
 the new prompts take effect.
+
+## turnq — FIFO turn coordination (optional)
+
+By default llmux sessions accept prompts from any client in send-order;
+concurrent sends interleave at the tmux level (mostly OK because the
+agent CLI buffers input — see the "Multiple senders, one session"
+section above). For workflows where strict FIFO matters (multiple
+operators, headless SDD pipelines), enable turnq:
+
+```yaml
+# .llmux.yaml
+turnq:
+  enabled: true
+  # url: http://localhost:3003   # optional — defaults to local flock(2) mode
+  maxHoldMs: 300000               # hard release timeout (default 5 min)
+```
+
+How it works:
+
+1. At session spawn, llmux generates a per-session marker
+   (`LLMUX_DONE_xxxxxxxx`) and auto-injects a built-in init prompt
+   asking the agent to emit `<<LLMUX_DONE_xxxxxxxx>>` on its own line
+   as the last line of every response.
+2. Each `tmux send-keys` (CLI `session prompt`, web "send" button,
+   broadcast) wraps in `turnq.withTurn(channel = "llmux:<session>")`.
+3. Inside the turn, llmux polls the pane tail every 400ms for the
+   marker. When matched, the turn releases and the next sender goes.
+4. If `maxHoldMs` elapses without the marker appearing, llmux force-
+   releases with a warning (agent crashed, hung tool call, etc.).
+5. The marker line is stripped from the web terminal stream so it
+   doesn't clutter the operator's view. CLI `tmux attach` still shows it.
+
+The marker is per-session and uses random bytes, so concurrent
+sessions don't false-trigger each other and pre-crafted input can't
+spoof a release on someone else's session.
+
+Per-call opt-out: `llmux session prompt <name> "..." --no-turnq` or
+`{"skipTurnq": true}` in the HTTP /send body.
+
+If `url` is omitted, the integration uses turnq's local `flock(2)`
+mode — no server required. Set `url` to a turnq HTTP server for
+cross-process / cross-host coordination.
 
 ## Install
 
@@ -324,7 +366,7 @@ The server-start banner picks up the mapping automatically (any port, not
 just 3443/3080) and surfaces the resulting URLs:
 
 ```
-llmux v0.29.0
+llmux v0.30.0
 
   ▸ Tailscale HTTPS  https://<host>.tailnet.ts.net:3443
   ▸ Tailscale HTTP   http://<host>.tailnet.ts.net:3080

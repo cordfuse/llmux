@@ -21,6 +21,14 @@ export interface SessionState {
    * `.llmux.yaml` at spawn time, with the daemon prompts firing first.
    */
   initPrompts?: string[];
+  /**
+   * Per-session turnq turn-marker (random hex suffix). Generated at spawn
+   * when turnq is enabled. The agent is instructed via a built-in init
+   * prompt to emit `<<LLMUX_DONE_xxxxxxxx>>` as the last line of every
+   * response; sendWithTurn polls the pane for this marker before
+   * releasing the turn.
+   */
+  turnqMarker?: string;
   createdAt: string;
   parent: string | null;
   restart: 'always' | 'on-failure' | 'never';

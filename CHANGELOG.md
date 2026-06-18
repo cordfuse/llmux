@@ -5,6 +5,76 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-06-18
+
+### Added — turnq integration (FIFO turn coordination)
+
+Opt-in via `.llmux.yaml`:
+
+```yaml
+turnq:
+  enabled: true
+  url: http://localhost:3003   # optional; local flock(2) when omitted
+  maxHoldMs: 300000             # hard timeout (default 5 min)
+```
+
+**Marker auto-injection.** At session spawn (when `turnq.enabled`), llmux
+generates a per-session random marker (`LLMUX_DONE_xxxxxxxx`) and appends
+a built-in system prompt to the init batch asking the agent to emit
+`<<LLMUX_DONE_xxxxxxxx>>` on its own line at the end of every response.
+The marker prompt fires LAST so LLM recency bias keeps it fresh in the
+agent's context.
+
+**Send wrapper.** `daemon/turnq-integration.ts` exposes `sendWithTurn`,
+called by:
+- CLI `session prompt`
+- CLI `session broadcast`
+- HTTP `POST /api/sessions/:name/send`
+- Web one-shot send + bulk Broadcast
+
+When turnq is enabled, the wrapper acquires `turnq.withTurn(channel =
+"llmux:<session>")`, fires `tmux send-keys`, then polls the pane every
+400ms for the marker. Release on first match. If `maxHoldMs` elapses
+without the marker (agent crashed, hung tool call, etc.), warn and
+force-release.
+
+**Web terminal strip.** The WS `term.onData` forwarder buffers per-line
+and filters out any line containing the marker before pushing to the
+browser. Operator's xterm view stays clean; CLI `tmux attach` still
+shows the marker (would require modifying tmux output to filter that
+path).
+
+**Settings screen card.** New "turnq" card in the Settings screen shows
+`enabled / mode (local|distributed|disabled) / url / max-hold`. Reads
+from the extended `/api/settings` payload.
+
+**Per-call opt-out.** `--no-turnq` flag on `session prompt` and
+`session broadcast`. `{"skipTurnq": true}` in the HTTP `/send` body.
+
+**State.** `state.SessionState` gained `turnqMarker?: string`. Set at
+spawn when turnq is enabled, undefined otherwise. Pre-v0.30.0 sessions
+have no marker — sendWithTurn falls back to a 1.5s fixed hold so back-
+to-back sends still serialize for them, just less precisely.
+
+### Internal
+
+- `daemon/config.ts`: new `TurnqConfig` interface + parse path
+- `daemon/turnq-integration.ts`: new module (Coordinator singleton,
+  marker generation, `sendWithTurn`)
+- `handleSend`, `handleBroadcast`: now async
+- `@cordfuse/turnq` added to runtime deps; build externalises it
+
+### Backwards compatibility
+
+- Default config has no `turnq` block — turnq integration is fully
+  disabled out of the box. Existing behavior unchanged.
+- Sessions spawned pre-v0.30.0 have no `turnqMarker` — sendWithTurn
+  falls back to a fixed 1.5s hold (sequential, just less precise).
+- CLI surface: `--no-turnq` is additive. All other prompt/broadcast
+  flags work unchanged.
+- HTTP API: `skipTurnq` is an optional body field on /send. Existing
+  callers ignored = same behavior as before.
+
 ## [0.29.0] — 2026-06-18
 
 ### Security — at-rest token hashing (mac CR closeout)

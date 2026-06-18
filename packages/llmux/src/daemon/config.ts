@@ -24,6 +24,29 @@ export interface AgentOverrides {
   readyPrompt?: string;
 }
 
+/**
+ * turnq integration — FIFO turn coordination across senders (CLI + web)
+ * so two clients writing into the same tmux session don't conflict.
+ *
+ * - When `enabled: true`, llmux auto-injects a system marker prompt as the
+ *   last init prompt of every spawn, asking the agent to emit a unique
+ *   per-session marker on its own line when it finishes responding.
+ * - Every `tmux send-keys` wraps in `withTurn(channel = llmux:<session>)`
+ *   acquired from a turnq Coordinator.
+ * - The held turn releases when the daemon sees the marker in the pane
+ *   tail (agent self-signals completion), OR when `maxHoldMs` elapses
+ *   (hard fallback; logs a warning).
+ * - If `url` is set, the Coordinator talks to a turnq server (distributed
+ *   mode). If omitted, it uses turnq's local `flock(2)` mode — no server
+ *   required.
+ */
+export interface TurnqConfig {
+  enabled: boolean;
+  url?: string;
+  /** Hard timeout after which the turn auto-releases. Default 300_000 (5 min). */
+  maxHoldMs?: number;
+}
+
 export interface LlmuxConfig {
   server: ServerConfig;
   agents: Record<string, AgentOverrides>;
@@ -35,6 +58,7 @@ export interface LlmuxConfig {
    * daemon-wide prompts firing first.
    */
   initPrompts?: string[];
+  turnq?: TurnqConfig;
   sourcePath?: string;
 }
 
@@ -79,6 +103,15 @@ export function loadConfig(opts: DiscoverOptions = {}): LlmuxConfig {
     agents: { ...DEFAULT_CONFIG.agents, ...(parsed?.agents ?? {}) },
     sessions: parsed?.sessions ?? [],
     ...(Array.isArray(parsed?.initPrompts) ? { initPrompts: parsed.initPrompts.filter((p): p is string => typeof p === 'string') } : {}),
+    ...(parsed?.turnq && typeof parsed.turnq === 'object'
+      ? {
+          turnq: {
+            enabled: Boolean(parsed.turnq.enabled),
+            ...(typeof parsed.turnq.url === 'string' ? { url: parsed.turnq.url } : {}),
+            ...(typeof parsed.turnq.maxHoldMs === 'number' ? { maxHoldMs: parsed.turnq.maxHoldMs } : {}),
+          },
+        }
+      : {}),
     sourcePath: path,
   };
   return merged;
