@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { hostname } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
+import QRCode from 'qrcode';
 import type { IPty } from 'node-pty';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition, type Conversation } from '../agents.ts';
 import * as state from '../state.ts';
@@ -199,6 +200,9 @@ function pickerPage(): string {
   #token-secret-modal .secret-value:hover{background:#0d1f10}
   #token-secret-modal .pair-url{font-family:ui-monospace,monospace;background:#0b0c10;color:#7cc4ff;padding:10px 12px;border:1px solid #2d4a66;border-radius:6px;word-break:break-all;font-size:11px;cursor:pointer}
   #token-secret-modal .pair-url:hover{background:#11141a}
+  #token-secret-qr-wrap{display:none;flex-direction:column;align-items:center;gap:6px;margin-bottom:14px}
+  #token-secret-qr-wrap.show{display:flex}
+  #token-secret-qr svg{display:block;width:200px;height:200px;background:#0b0c10;border:1px solid #1f2329;border-radius:6px;padding:8px}
   #token-secret-modal .copy-hint{font-size:10px;color:#7a7f87;margin-top:4px}
   #token-secret-modal .actions{display:flex;justify-content:flex-end;margin-top:18px}
   #token-secret-modal button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
@@ -260,6 +264,31 @@ function pickerPage(): string {
   #bulk-toolbar button.stop{color:#f0883e;border-color:#4a3019}
   #bulk-toolbar button.respawn{color:#7cc4ff;border-color:#2d4a66}
   #bulk-toolbar button.kill{color:#f85149;border-color:#4a2329}
+  #bulk-toolbar button.broadcast{color:#a371f7;border-color:#3c2a59}
+  .actions button.send-btn{color:#a371f7;border-color:#3c2a59}
+  #sessions-filter{display:flex;gap:6px;align-items:center;margin-bottom:10px}
+  #sessions-filter input{flex:1;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none}
+  #sessions-filter input:focus{border-color:#2d4a66}
+  #sessions-filter button{background:#1c2128;color:#9aa0a6;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:11px ui-monospace,monospace;cursor:pointer}
+  #sessions-filter button:hover{background:#252b34;color:#e6e8eb}
+  #prompt-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:flex;align-items:flex-end;justify-content:center;z-index:62;padding:0;opacity:0;visibility:hidden;transition:opacity 160ms ease,visibility 0s 160ms}
+  #prompt-modal.open{opacity:1;visibility:visible;transition:opacity 160ms ease}
+  #prompt-modal .panel{background:#11141a;border:1px solid #1f2329;border-top-left-radius:12px;border-top-right-radius:12px;padding:18px 20px 20px;max-width:520px;width:100%;transform:translateY(20px);transition:transform 200ms ease;box-sizing:border-box}
+  #prompt-modal.open .panel{transform:translateY(0)}
+  #prompt-modal h3{margin:0 0 4px;font-size:14px;color:#e6e8eb}
+  #prompt-modal .sub{margin:0 0 10px;font-size:11px;color:#7a7f87}
+  #prompt-modal textarea{width:100%;box-sizing:border-box;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:10px 12px;font:13px ui-monospace,monospace;outline:none;resize:vertical;min-height:90px}
+  #prompt-modal textarea:focus{border-color:#2d4a66}
+  #prompt-modal .opts{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:#9aa0a6}
+  #prompt-modal .opts input{width:16px;height:16px;accent-color:#7cc4ff;margin:0}
+  #prompt-modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+  #prompt-modal button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:9px 18px;font:13px ui-monospace,monospace;cursor:pointer}
+  #prompt-modal button.primary{color:#a371f7;border-color:#3c2a59}
+  #prompt-modal button:disabled{opacity:.5;cursor:wait}
+  @media (min-width:601px){
+    #prompt-modal{align-items:center;padding:20px}
+    #prompt-modal .panel{border-radius:12px}
+  }
   #bulk-toolbar button:disabled{opacity:.35;cursor:not-allowed;background:#11141a}
   #bulk-count{color:#7a7f87;font-size:11px;margin-left:auto;white-space:nowrap}
   th.select-col,td.select-col{width:24px;padding-right:14px;text-align:left}
@@ -423,11 +452,16 @@ function pickerPage(): string {
     </div>
   </form>
 </div>
+<div id="sessions-filter">
+  <input id="sessions-filter-input" type="text" placeholder="filter by name or agent…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+  <button type="button" id="sessions-filter-clear" title="clear filter">×</button>
+</div>
 <div id="bulk-toolbar">
   <button id="new-btn" type="button" class="new" title="Spawn a new session">+ new</button>
   <button id="bulk-start" type="button" class="start" disabled title="Start every checked session that's currently exited">Start</button>
   <button id="bulk-stop" type="button" class="stop" disabled title="Stop every checked session that's currently running">Stop</button>
   <button id="bulk-respawn" type="button" class="respawn" disabled title="Respawn every checked session (kill + relaunch with persisted config)">Respawn</button>
+  <button id="bulk-broadcast" type="button" class="broadcast" disabled title="Send the same prompt to every checked running session">Broadcast</button>
   <button id="bulk-kill" type="button" class="kill" disabled title="Kill every checked session and remove its state record">Kill</button>
   <span id="bulk-count">0 selected</span>
 </div>
@@ -476,16 +510,31 @@ function pickerPage(): string {
   </div>
 </div>
 <div id="toast"></div>
+<div id="prompt-modal" aria-hidden="true">
+  <div class="panel">
+    <h3 id="prompt-title">Send prompt</h3>
+    <p class="sub" id="prompt-sub"></p>
+    <textarea id="prompt-text" placeholder="type your prompt…" rows="4"></textarea>
+    <div class="opts">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="prompt-enter" checked>append Enter</label>
+    </div>
+    <div class="actions">
+      <button type="button" id="prompt-cancel">cancel</button>
+      <button type="button" class="primary" id="prompt-send">send</button>
+    </div>
+  </div>
+</div>
 <div id="token-secret-modal" aria-hidden="true">
   <div class="panel">
     <h3 id="token-secret-title">Token created</h3>
     <p class="warn">Save this now — the token value is shown only once.</p>
+    <div id="token-secret-qr-wrap"><div id="token-secret-qr"></div><div class="copy-hint">scan from another device to pair</div></div>
     <label>token</label>
     <div class="secret-value" id="token-secret-value" title="tap to copy"></div>
     <div class="copy-hint">tap to copy</div>
     <label>pairing url</label>
     <div class="pair-url" id="token-secret-url" title="tap to copy"></div>
-    <div class="copy-hint">tap to copy · scannable as a QR if you load this URL in another browser</div>
+    <div class="copy-hint">tap to copy</div>
     <div class="actions">
       <button type="button" class="primary" id="token-secret-close">done</button>
     </div>
@@ -618,18 +667,21 @@ function pickerPage(): string {
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" title="edit name, cwd, flags, or env" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
+    const sendBtn = s.status === 'running'
+      ? '<button class="send-btn" data-action="send" data-name="' + escapeHtml(s.name) + '" title="send a prompt to this session without attaching the terminal" aria-label="send"><span class="icon">⤴</span><span class="label">send</span></button>'
+      : '';
     const resumeBtn = (s.hasHistory && s.conversationCount > 0)
       ? '<button class="resume-btn" data-action="resume" data-name="' + escapeHtml(s.name) + '" title="resume a past conversation for this agent + cwd" aria-label="resume"><span class="icon">☰</span><span class="label">' + s.conversationCount + '</span></button>'
       : '';
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
-    return '<tr data-name="' + escapeHtml(s.name) + '">' +
+    return '<tr data-name="' + escapeHtml(s.name) + '" data-agent="' + escapeHtml(s.agent) + '">' +
       '<td class="select-col"><input type="checkbox" class="row-select" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" aria-label="select ' + escapeHtml(s.name) + '"></td>' +
       '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></span></td>' +
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
-      '<td class="actions">' + resumeBtn + editBtn + '</td>' +
+      '<td class="actions">' + resumeBtn + sendBtn + editBtn + '</td>' +
       '</tr>';
   }
 
@@ -655,6 +707,7 @@ function pickerPage(): string {
   const bulkStart = document.getElementById('bulk-start');
   const bulkStop = document.getElementById('bulk-stop');
   const bulkRespawn = document.getElementById('bulk-respawn');
+  const bulkBroadcast = document.getElementById('bulk-broadcast');
   const bulkKill = document.getElementById('bulk-kill');
   const bulkCount = document.getElementById('bulk-count');
 
@@ -669,6 +722,7 @@ function pickerPage(): string {
     bulkStart.disabled = exited === 0;
     bulkStop.disabled = running === 0;
     bulkRespawn.disabled = total === 0;
+    bulkBroadcast.disabled = running === 0;
     bulkKill.disabled = total === 0;
     bulkCount.textContent = total + ' selected';
   }
@@ -712,6 +766,7 @@ function pickerPage(): string {
       }
       render(data);
       applySelectionAfterRender();
+      applyFilter();
       updateToolbarState();
       dot.classList.remove('stale','error');
       label.textContent = 'live';
@@ -933,6 +988,133 @@ function pickerPage(): string {
       openConvsModal(name);
       return;
     }
+    if (kind === 'send'){
+      openPromptModal({ kind: 'single', name: name });
+      return;
+    }
+  });
+
+  // ---- Sessions filter ----
+  // Client-side filter — matches by name OR agent substring (case-insensitive).
+  // Applied after every render so the poll doesn't blow it away. The filter
+  // value itself is in-memory only (not persisted) so a hard reload clears it.
+  const filterInput = document.getElementById('sessions-filter-input');
+  const filterClear = document.getElementById('sessions-filter-clear');
+  let filterText = '';
+  function applyFilter(){
+    const q = filterText.toLowerCase().trim();
+    container.querySelectorAll('tbody tr').forEach(function(tr){
+      if (!q){ tr.style.display = ''; return; }
+      const name = (tr.dataset.name || '').toLowerCase();
+      const agent = (tr.dataset.agent || '').toLowerCase();
+      tr.style.display = (name.includes(q) || agent.includes(q)) ? '' : 'none';
+    });
+  }
+  filterInput.addEventListener('input', function(){
+    filterText = filterInput.value;
+    applyFilter();
+  });
+  filterClear.addEventListener('click', function(){
+    filterInput.value = '';
+    filterText = '';
+    applyFilter();
+    filterInput.focus();
+  });
+
+  // ---- Prompt modal (one-shot send + broadcast) ----
+  // Shared modal. State held in promptTarget; submit handler reads it and
+  // either POSTs to one /send endpoint or fans out to N in parallel.
+  const promptModal = document.getElementById('prompt-modal');
+  const promptTitle = document.getElementById('prompt-title');
+  const promptSub = document.getElementById('prompt-sub');
+  const promptText = document.getElementById('prompt-text');
+  const promptEnter = document.getElementById('prompt-enter');
+  const promptCancel = document.getElementById('prompt-cancel');
+  const promptSend = document.getElementById('prompt-send');
+  let promptTarget = null;
+
+  function openPromptModal(target){
+    promptTarget = target;
+    if (target.kind === 'single'){
+      promptTitle.textContent = 'Send prompt';
+      promptSub.textContent = 'to ' + target.name;
+    } else {
+      promptTitle.textContent = 'Broadcast prompt';
+      const n = target.names.length;
+      const total = target.totalSelected || n;
+      const skipped = total - n;
+      if (skipped === 0){
+        promptSub.textContent = 'to ' + n + ' selected session' + (n === 1 ? '' : 's');
+      } else {
+        promptSub.textContent = 'to ' + n + ' of ' + total + ' selected · ' + skipped + ' skipped (not running)';
+      }
+    }
+    promptText.value = '';
+    promptEnter.checked = true;
+    promptModal.classList.add('open');
+    promptModal.setAttribute('aria-hidden', 'false');
+    setTimeout(function(){ promptText.focus(); }, 50);
+  }
+  function closePromptModal(){
+    promptModal.classList.remove('open');
+    promptModal.setAttribute('aria-hidden', 'true');
+    promptTarget = null;
+    promptText.value = '';
+  }
+  promptCancel.addEventListener('click', closePromptModal);
+  promptModal.addEventListener('click', function(e){
+    if (e.target === promptModal) closePromptModal();
+  });
+
+  async function sendPromptToSession(name, prompt, enter){
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(name) + '/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt: prompt, enter: enter }),
+      });
+      const body = await r.json().catch(function(){ return {}; });
+      return { name: name, ok: r.ok && body.ok !== false, error: body.error };
+    } catch(e){
+      return { name: name, ok: false, error: e.message || String(e) };
+    }
+  }
+
+  promptSend.addEventListener('click', async function(){
+    if (!promptTarget) return;
+    const prompt = promptText.value;
+    if (!prompt){
+      promptText.focus();
+      return;
+    }
+    promptSend.disabled = true;
+    const enter = promptEnter.checked;
+    try {
+      if (promptTarget.kind === 'single'){
+        const r = await sendPromptToSession(promptTarget.name, prompt, enter);
+        if (r.ok) showToast('sent → ' + r.name);
+        else showToast('send failed: ' + (r.error || 'unknown'), true);
+      } else {
+        const results = await Promise.all(promptTarget.names.map(function(n){
+          return sendPromptToSession(n, prompt, enter);
+        }));
+        const okCount = results.filter(function(r){ return r.ok; }).length;
+        const failCount = results.length - okCount;
+        if (failCount === 0) showToast('sent to ' + okCount + ' session' + (okCount === 1 ? '' : 's'));
+        else showToast(okCount + ' ok, ' + failCount + ' failed', failCount > 0);
+      }
+      closePromptModal();
+    } finally {
+      promptSend.disabled = false;
+    }
+  });
+
+  // Cmd/Ctrl+Enter submits from the textarea.
+  promptText.addEventListener('keydown', function(e){
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter'){
+      e.preventDefault();
+      promptSend.click();
+    }
   });
 
   // ---- Checkbox + select-all wiring ----
@@ -997,6 +1179,22 @@ function pickerPage(): string {
   });
   bulkRespawn.addEventListener('click', function(){
     bulkAction({ kind: 'respawn', verb: 'respawned' });
+  });
+  bulkBroadcast.addEventListener('click', function(){
+    // Broadcast hits the existing /send endpoint per-name, so it's a prompt
+    // surface, not a state-mutating fan-out. Filter to running sessions only
+    // — an exited tmux session can't receive sendKeys. We surface the math
+    // (M running of N selected, K skipped) in the modal subtitle so the
+    // user understands their exited selections didn't silently lose their
+    // checkmarks.
+    const runningNames = [...selected].filter(function(n){
+      return lastStatusByName.get(n) === 'running';
+    });
+    if (runningNames.length === 0){
+      showToast('no running sessions selected', true);
+      return;
+    }
+    openPromptModal({ kind: 'bulk', names: runningNames, totalSelected: selected.size });
   });
   bulkKill.addEventListener('click', async function(){
     const count = selected.size;
@@ -1063,6 +1261,10 @@ function pickerPage(): string {
     tokenSecretModal.setAttribute('aria-hidden', 'true');
     tokenSecretValue.textContent = '';
     tokenSecretUrl.textContent = '';
+    const qrSlot = document.getElementById('token-secret-qr');
+    const qrWrap = document.getElementById('token-secret-qr-wrap');
+    if (qrSlot) qrSlot.innerHTML = '';
+    if (qrWrap) qrWrap.classList.remove('show');
     refreshTokens();
   });
   tokenSecretModal.addEventListener('click', function(e){
@@ -1124,7 +1326,7 @@ function pickerPage(): string {
     const submitBtn = document.getElementById('token-create-submit');
     submitBtn.disabled = true;
     try {
-      const body = {};
+      const body = { pairingOrigin: location.origin };
       if (tokenCreateName.value.trim()) body.name = tokenCreateName.value.trim();
       // datetime-local emits "YYYY-MM-DDTHH:MM" in the user's local time.
       // Convert to a full UTC ISO string so the server stores it as a stable
@@ -1148,8 +1350,17 @@ function pickerPage(): string {
       if (!r.ok || data.ok === false) throw new Error(data.error || 'request failed');
       tokenCreateForm.classList.remove('open');
       tokenSecretValue.textContent = data.value;
-      const pairingUrl = location.origin + '/#token=' + encodeURIComponent(data.value);
+      const pairingUrl = data.pairingUrl || (location.origin + '/#token=' + encodeURIComponent(data.value));
       tokenSecretUrl.textContent = pairingUrl;
+      const qrWrap = document.getElementById('token-secret-qr-wrap');
+      const qrSlot = document.getElementById('token-secret-qr');
+      if (data.qrSvg){
+        qrSlot.innerHTML = data.qrSvg;
+        qrWrap.classList.add('show');
+      } else {
+        qrSlot.innerHTML = '';
+        qrWrap.classList.remove('show');
+      }
       tokenSecretModal.classList.add('open');
       tokenSecretModal.setAttribute('aria-hidden', 'false');
     } catch(err){
@@ -2921,9 +3132,10 @@ export function startServer(opts: ServeOptions): ServerHandle {
     }
     if (url.pathname === '/api/tokens' && method === 'POST') {
       try {
-        const body = (await readJsonBody(req)) as { name?: unknown; expiresAt?: unknown };
+        const body = (await readJsonBody(req)) as { name?: unknown; expiresAt?: unknown; pairingOrigin?: unknown };
         const name = typeof body.name === 'string' && body.name.length > 0 ? body.name : undefined;
         const expiresAt = typeof body.expiresAt === 'string' && body.expiresAt.length > 0 ? body.expiresAt : undefined;
+        const pairingOrigin = typeof body.pairingOrigin === 'string' && body.pairingOrigin.length > 0 ? body.pairingOrigin : undefined;
         if (expiresAt && isNaN(new Date(expiresAt).getTime())) {
           return sendJson(res, { ok: false, error: 'expiresAt must be an ISO-8601 timestamp' }, 400);
         }
@@ -2931,6 +3143,27 @@ export function startServer(opts: ServeOptions): ServerHandle {
           ...(name !== undefined ? { name } : {}),
           ...(expiresAt !== undefined ? { expiresAt } : {}),
         });
+        // Build the pairing URL using the same hash-form the printQr CLI
+        // emits. Client passes its own location.origin so the QR points at
+        // the URL the operator is actually using (tailscale-https most often,
+        // not localhost). Defensive fall-back: just the token value.
+        const pairingUrl = pairingOrigin
+          ? `${pairingOrigin.replace(/\/$/, '')}/#token=${encodeURIComponent(rec.token)}`
+          : undefined;
+        let qrSvg: string | undefined;
+        if (pairingUrl) {
+          try {
+            qrSvg = await QRCode.toString(pairingUrl, {
+              type: 'svg',
+              errorCorrectionLevel: 'M',
+              margin: 1,
+              width: 240,
+              color: { dark: '#e6e8eb', light: '#0b0c1000' },
+            });
+          } catch {
+            // QR render failure is non-fatal; the client still has the URL.
+          }
+        }
         return sendJson(
           res,
           {
@@ -2942,6 +3175,8 @@ export function startServer(opts: ServeOptions): ServerHandle {
               createdAt: rec.createdAt,
               ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}),
             },
+            ...(pairingUrl !== undefined ? { pairingUrl } : {}),
+            ...(qrSvg !== undefined ? { qrSvg } : {}),
           },
           201,
         );
