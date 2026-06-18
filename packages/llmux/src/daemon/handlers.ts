@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import qrcodeTerminal from 'qrcode-terminal';
@@ -8,7 +8,8 @@ import * as logBuffer from './log-buffer.ts';
 import * as state from './state.ts';
 import * as tmux from './tmux.ts';
 import * as authStore from './auth-store.ts';
-import { startServer, printBanner, buildAgentCommand, parseEnvText, mergeSpawnEnv } from './web/server.ts';
+import { startServer, printBanner, buildAgentCommand, parseEnvText, mergeSpawnEnv, editSession } from './web/server.ts';
+import { hostname } from 'node:os';
 import { getAddresses } from './net.ts';
 import type { ParsedArgs } from '../cli.ts';
 
@@ -499,11 +500,7 @@ export function handleTokenRename(args: ParsedArgs): void {
   console.log(`renamed ${rec.id} → "${rec.name ?? ''}"`);
 }
 
-export function handleRespawn(args: ParsedArgs): void {
-  tmux.requireTmux();
-  const target = args.positional[0];
-  if (!target) throw new Error('respawn requires <session>');
-
+function respawnOne(target: string): void {
   const session = state.get(target);
   if (!session) throw new Error(`no tracked session "${target}"`);
 
@@ -529,13 +526,46 @@ export function handleRespawn(args: ParsedArgs): void {
   console.log(`respawned ${target} (agent: ${session.agent}, cwd: ${session.cwd})`);
 }
 
+export function handleRespawn(args: ParsedArgs): void {
+  tmux.requireTmux();
+  const targets = args.positional;
+  if (targets.length === 0) throw new Error('restart requires one or more <session> names');
+  // Variadic: respawn each named session in turn. On a per-target failure
+  // the remaining ones still attempt — operators bulk-restarting a queue
+  // shouldn't lose every late session because the first one's tmux pane
+  // already died.
+  const errors: string[] = [];
+  for (const t of targets) {
+    try {
+      respawnOne(t);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`respawn ${t} failed: ${msg}`);
+      errors.push(t);
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(`${errors.length} of ${targets.length} respawn calls failed`);
+  }
+}
+
+function killOne(target: string): void {
+  const session = state.get(target);
+  if (!session) throw new Error(`no tracked session "${target}"`);
+  tmux.killSession(target);
+  state.forget(target);
+  console.log(`killed ${target}`);
+}
+
 export function handleKill(args: ParsedArgs): void {
   tmux.requireTmux();
-  const target = args.positional[0];
-  if (!target) throw new Error('kill requires <session> or `all`');
+  const targets = args.positional;
+  if (targets.length === 0) throw new Error('stop/kill requires one or more <session> names, or `all`');
   const cascade = Boolean(args.flags.cascade);
 
-  if (target === 'all') {
+  // `all` keyword — kill every tracked session. Only meaningful as the
+  // sole positional; mixing with names would be ambiguous.
+  if (targets.length === 1 && targets[0] === 'all') {
     const all = state.list();
     for (const s of all) {
       tmux.killSession(s.name);
@@ -546,10 +576,13 @@ export function handleKill(args: ParsedArgs): void {
     return;
   }
 
-  const session = state.get(target);
-  if (!session) throw new Error(`no tracked session "${target}"`);
-
+  // Cascade only applies to a single explicit target — descendants of N
+  // targets at once would be a weird semantic.
   if (cascade) {
+    if (targets.length !== 1) throw new Error('--cascade only valid with a single target');
+    const target = targets[0]!;
+    const session = state.get(target);
+    if (!session) throw new Error(`no tracked session "${target}"`);
     const queue: string[] = [target];
     const killed = new Set<string>();
     while (queue.length) {
@@ -564,7 +597,138 @@ export function handleKill(args: ParsedArgs): void {
     return;
   }
 
-  tmux.killSession(target);
-  state.forget(target);
-  console.log(`killed ${target}`);
+  // Variadic: kill each named session. Continue on per-target errors so a
+  // typo or missing record in the middle doesn't abort the rest of the batch.
+  const errors: string[] = [];
+  for (const t of targets) {
+    try {
+      killOne(t);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`kill ${t} failed: ${msg}`);
+      errors.push(t);
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(`${errors.length} of ${targets.length} kill calls failed`);
+  }
+}
+
+export function handleSessionEdit(args: ParsedArgs): void {
+  tmux.requireTmux();
+  const target = args.positional[0];
+  if (!target) throw new Error('edit requires <session>');
+  const patch: { name?: string; cwd?: string; flags?: string; env?: string } = {};
+  if (typeof args.flags.name === 'string') patch.name = args.flags.name;
+  if (typeof args.flags.cwd === 'string') patch.cwd = args.flags.cwd;
+  if (typeof args.flags.flags === 'string') patch.flags = args.flags.flags as string;
+  if (typeof args.flags.env === 'string') patch.env = args.flags.env as string;
+  if (Object.keys(patch).length === 0) {
+    throw new Error('edit requires at least one of --name, --cwd, --flags, --env');
+  }
+  const result = editSession(target, patch);
+  if (!result.ok) throw new Error(result.error);
+  console.log(`edited ${result.session.name} (agent: ${result.session.agent}, cwd: ${result.session.cwd})`);
+  if (result.session.flags !== undefined) console.log(`  flags: ${result.session.flags}`);
+  if (result.session.env !== undefined && Object.keys(result.session.env).length > 0) {
+    console.log('  env:');
+    for (const [k, v] of Object.entries(result.session.env)) console.log(`    ${k}=${v}`);
+  }
+  if (args.flags.apply) {
+    respawnOne(result.session.name);
+  } else {
+    console.log('(restart the session to apply: `llmux session restart ' + result.session.name + '`)');
+  }
+}
+
+export function handleLogsList(args: ParsedArgs): void {
+  const limitFlag = args.flags.limit as string | undefined;
+  const limit = limitFlag ? Math.max(1, Number(limitFlag)) : undefined;
+  const json = Boolean(args.flags.json);
+  const entries = logBuffer.getBuffer();
+  const slice = limit !== undefined ? entries.slice(-limit) : entries;
+  if (json) {
+    console.log(JSON.stringify(slice, null, 2));
+    return;
+  }
+  for (const e of slice) {
+    console.log(`${e.ts}  ${e.level.toUpperCase().padEnd(5)}  ${e.text}`);
+  }
+}
+
+export async function handleLogsTail(args: ParsedArgs): Promise<void> {
+  // Print the initial buffer (so the operator sees recent context), then
+  // subscribe to live entries until Ctrl-C. The subscription is in-process,
+  // so this verb is local-mode only — remote tailing goes through the SSE
+  // client in client.ts.
+  const since = args.flags.since as string | undefined;
+  const sinceMs = since ? Date.parse(since) : 0;
+  const initial = logBuffer.getBuffer().filter((e) => !since || Date.parse(e.ts) >= sinceMs);
+  for (const e of initial) {
+    console.log(`${e.ts}  ${e.level.toUpperCase().padEnd(5)}  ${e.text}`);
+  }
+  await new Promise<void>((resolve) => {
+    const unsubscribe = logBuffer.subscribe((entry) => {
+      console.log(`${entry.ts}  ${entry.level.toUpperCase().padEnd(5)}  ${entry.text}`);
+    });
+    const onSig = () => {
+      unsubscribe();
+      resolve();
+    };
+    process.once('SIGINT', onSig);
+    process.once('SIGTERM', onSig);
+  });
+}
+
+export function handleSettingsShow(args: ParsedArgs): void {
+  const cfg = loadConfig();
+  let yamlText = '';
+  if (cfg.sourcePath) {
+    try {
+      yamlText = readFileSync(cfg.sourcePath, 'utf8');
+    } catch {
+      yamlText = '(failed to read config file)';
+    }
+  }
+  let tmuxAvailable = false;
+  try {
+    tmux.requireTmux();
+    tmuxAvailable = true;
+  } catch {
+    tmuxAvailable = false;
+  }
+  const payload = {
+    host: hostname(),
+    configSource: cfg.sourcePath ?? null,
+    yamlText,
+    stateDir: state.stateDir(),
+    tmuxAvailable,
+    port: Number(process.env.LLMUXD_PORT ?? process.env.LLMUX_PORT ?? cfg.server.port ?? 3030),
+    listenHost: process.env.LLMUXD_HOST ?? '0.0.0.0',
+    env: {
+      LLMUXD_PORT: process.env.LLMUXD_PORT ?? null,
+      LLMUXD_HOST: process.env.LLMUXD_HOST ?? null,
+      LLMUX_PORT: process.env.LLMUX_PORT ?? null,
+      XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? null,
+    },
+  };
+  if (args.flags.json) {
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+  console.log(`host           ${payload.host}`);
+  console.log(`config source  ${payload.configSource ?? '(no .llmux.yaml found)'}`);
+  console.log(`state dir      ${payload.stateDir}`);
+  console.log(`tmux           ${payload.tmuxAvailable ? 'available' : 'NOT FOUND on PATH'}`);
+  console.log(`port           ${payload.port}`);
+  console.log(`listen host    ${payload.listenHost}`);
+  console.log('environment:');
+  for (const [k, v] of Object.entries(payload.env)) {
+    console.log(`  ${k.padEnd(16)} ${v ?? '(unset)'}`);
+  }
+  if (yamlText) {
+    console.log('');
+    console.log(`---  ${payload.configSource}  ---`);
+    console.log(yamlText.trimEnd());
+  }
 }

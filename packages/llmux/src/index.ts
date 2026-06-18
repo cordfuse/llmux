@@ -108,8 +108,10 @@ Session verbs (local by default; pass --server <url> to target a remote daemon):
   session list                                  list tracked sessions
   session start <agent> [--name N] [--cwd P]    spawn a new agent in tmux
                        [--flags "F"] [--env "K=V"] [--resume-from <id>]
-  session stop <name>                           kill + forget the session
-  session restart <name>                        kill + relaunch with persisted config
+  session stop <name> [<name>...]               kill + forget the session(s)
+  session restart <name> [<name>...]            kill + relaunch with persisted config
+  session edit <name> [--name N] [--cwd P]      patch persisted config of a tracked session
+                      [--flags "F"] [--env "K=V"] [--apply]
   session attach <name>                         open the terminal (tmux locally, WS remotely)
   session prompt <name> "<text>" [--no-enter]   send a prompt
   session broadcast <agent> "<text>"            send to every session of an agent type (local)
@@ -131,6 +133,13 @@ Token verbs (always local — managing the daemon-host's auth store):
 
 Agent verbs:
   agent list [--all] [--installed] [--json]     list agents (default: installed-only)
+
+Logs verbs (always local — reads the daemon's in-process ring buffer):
+  logs list [--limit N] [--json]                print buffered log lines (newest at the end)
+  logs tail [--since ISO]                       print buffer then live-tail until Ctrl-C
+
+Settings verbs (always local — diagnostic dump):
+  settings show [--json]                        config source, state dir, env, loaded YAML
 
 Global flags:
   --server <url>     route session/agent verbs to a remote daemon over HTTP
@@ -199,6 +208,9 @@ async function dispatchSession(verb: string | undefined, args: string[], env: Gl
       return;
     case 'restart':
       h.handleRespawn(parsed);
+      return;
+    case 'edit':
+      h.handleSessionEdit(parsed);
       return;
     case 'attach':
       h.handleChat(parsed);
@@ -272,6 +284,7 @@ function sessionLocalFlags() {
     'no-enter': { kind: 'boolean' as const, description: 'do not append Enter to prompt' },
     browser: { kind: 'boolean' as const, description: 'open in web browser (attach)' },
     it: { kind: 'boolean' as const, description: 'interactive (attach)' },
+    apply: { kind: 'boolean' as const, description: 'with `edit`: respawn the session after patching' },
     json: { kind: 'boolean' as const, description: 'emit JSON' },
   };
 }
@@ -372,6 +385,47 @@ async function dispatchAgent(verb: string | undefined, args: string[], env: Glob
   }
 }
 
+async function dispatchLogs(verb: string | undefined, args: string[]): Promise<void> {
+  if (!verb) {
+    printVerbHelp('logs', verb);
+    return;
+  }
+  const parsed = parseArgs(args, {
+    limit: { kind: 'string', description: 'max lines to print' },
+    since: { kind: 'string', description: 'ISO-8601 cutoff (tail: only entries at/after this ts)' },
+    json: { kind: 'boolean', description: 'emit JSON' },
+  });
+  switch (verb) {
+    case 'list':
+    case 'show':
+      h.handleLogsList(parsed);
+      return;
+    case 'tail':
+      await h.handleLogsTail(parsed);
+      return;
+    default:
+      throw new Error(`unknown logs verb "${verb}"`);
+  }
+}
+
+async function dispatchSettings(verb: string | undefined, args: string[]): Promise<void> {
+  if (!verb) {
+    printVerbHelp('settings', verb);
+    return;
+  }
+  const parsed = parseArgs(args, {
+    json: { kind: 'boolean', description: 'emit JSON' },
+  });
+  switch (verb) {
+    case 'show':
+    case 'list':
+      h.handleSettingsShow(parsed);
+      return;
+    default:
+      throw new Error(`unknown settings verb "${verb}"`);
+  }
+}
+
 // ----------------- main -----------------
 
 async function main(): Promise<void> {
@@ -403,6 +457,12 @@ async function main(): Promise<void> {
         return;
       case 'agent':
         await dispatchAgent(verb, remainder, env);
+        return;
+      case 'logs':
+        await dispatchLogs(verb, remainder);
+        return;
+      case 'settings':
+        await dispatchSettings(verb, remainder);
         return;
       // Backward-compat shorthand — some shells will already have `llmuxd serve`
       // wired up. These verbs sit at noun-position so all of rest.slice(1) is

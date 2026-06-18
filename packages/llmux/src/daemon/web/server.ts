@@ -3224,7 +3224,7 @@ function resumeConversation(
   return { ok: true, session: viewOf(refreshed, true) };
 }
 
-function editSession(
+export function editSession(
   oldName: string,
   patch: { name?: string; cwd?: string; flags?: string; env?: string },
 ): { ok: true; session: SessionView } | { ok: false; error: string } {
