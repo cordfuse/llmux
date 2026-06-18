@@ -215,7 +215,11 @@ function openWs(opts: {
   onError: (err: Error) => void;
 }): WsHandle {
   const u = new URL(opts.url);
-  if (opts.token && !u.searchParams.has('token')) u.searchParams.set('token', opts.token);
+  // v0.29.0: token now rides on the Authorization: Bearer upgrade header.
+  // Previously we appended ?token=… to the URL — which works but the URL is
+  // visible in server access logs, reverse-proxy logs, and the daemon's own
+  // ring buffer. Pairs with v0.22.0's URL-fragment fix for the web QR path,
+  // closing the URL-token surface end-to-end.
   const isSecure = u.protocol === 'wss:';
   if (isSecure) throw new Error('wss:// not supported by the built-in client yet — use ws:// (tailscale serve terminates TLS for browsers)');
   const port = u.port ? Number(u.port) : 80;
@@ -236,6 +240,7 @@ function openWs(opts: {
       `Connection: Upgrade`,
       `Sec-WebSocket-Key: ${key}`,
       `Sec-WebSocket-Version: 13`,
+      ...(opts.token ? [`Authorization: Bearer ${opts.token}`] : []),
       ``,
       ``,
     ];

@@ -5,6 +5,61 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-06-18
+
+### Security — at-rest token hashing (mac CR closeout)
+
+`auth.json` previously stored full plaintext SAS token values. Anyone
+with read access to the file — backup snapshots, dotfile syncs,
+co-tenant readers — could use the tokens directly against the daemon.
+v0.29.0 drops the plaintext: only the SHA-256 hash (hex) is persisted.
+
+- New `AuthToken` shape: `{ id, hash, name?, createdAt, expiresAt? }`
+- `validateAuthToken(candidate)`: parses the candidate's display id out
+  of the `sas_` prefix, finds THAT one record (avoids hashing every
+  stored token per request), then `crypto.timingSafeEqual` against the
+  stored hash. Generic `false` for both unknown-id and hash-mismatch
+  so observers can't tell from timing which case hit.
+- `createAuthToken()` return shape gained a temporary `token: string`
+  field — the only place the plaintext exists post-call. Callers can
+  surface it in the QR / "show once" modal then drop it. The on-disk
+  record never sees the plaintext.
+
+**Silent v1 → v2 migration on load.** Existing `auth.json` files with
+`version: 1` records are read, hashed in-place, and rewritten as
+`version: 2`. Operators see no churn — first daemon start under
+v0.29.0 transparently upgrades. The token VALUES remain valid; only
+the storage shape changes.
+
+SHA-256 is the right choice here, not bcrypt/argon2/scrypt. Tokens are
+256-bit random; brute-forcing is infeasible regardless of hash speed,
+and password-hash slowness would add per-request latency for zero
+security gain.
+
+### Security — CLI WS drops `?token=` URL form, uses `Authorization: Bearer` on upgrade
+
+Pairs with v0.22.0's URL-fragment fix for the web pairing QR. The CLI's
+hand-rolled WS client (`openWs` in `client.ts`) previously appended
+`?token=…` to the WebSocket URL — visible in server access logs,
+reverse-proxy logs, and the daemon's own ring buffer. v0.29.0 emits
+the token via an `Authorization: Bearer <token>` header on the
+upgrade request instead.
+
+Closes the URL-token surface end-to-end (web QR + WS CLI both clean
+now). Daemon-side already accepted Bearer-on-upgrade via the existing
+`extractToken(req)` fallback path; no server change needed.
+
+### Backwards compatibility
+
+- Existing tokens keep working — the migration only changes storage,
+  not the token values themselves.
+- Existing scripts using `--token sas_…` against `--server` URLs work
+  unchanged (the HTTP Authorization header path was already there).
+- CLI WS upgrades now send Bearer instead of `?token=` — the daemon
+  validated both before and after, so no operator action required.
+- File mode on `auth.json` stays at 0600 (defense in depth even though
+  the contents are no longer directly usable).
+
 ## [0.28.0] — 2026-06-18
 
 ### Added — Init prompts (daemon-wide + per-session)
