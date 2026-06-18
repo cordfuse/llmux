@@ -373,7 +373,12 @@ async function pickEndpointInteractively(port: number): Promise<{ label: string;
 }
 
 function printQr(url: string, token: string, label: string): void {
-  const deepLink = `${url.replace(/\/$/, '')}/?token=${encodeURIComponent(token)}`;
+  // URL fragment, not query string. Browsers do NOT send the fragment in the
+  // HTTP request — it stays purely client-side. The gate page reads it from
+  // window.location.hash, POSTs to /api/auth, and history.replaceStates the
+  // fragment off the visible URL. Result: same one-tap pairing UX, no token
+  // in server logs / referrer / reverse proxies / Tailscale serve access logs.
+  const deepLink = `${url.replace(/\/$/, '')}/#token=${encodeURIComponent(token)}`;
   console.log('');
   console.log(`QR for ${label}:`);
   console.log('');
