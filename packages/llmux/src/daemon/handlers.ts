@@ -9,6 +9,7 @@ import * as state from './state.ts';
 import * as tmux from './tmux.ts';
 import * as authStore from './auth-store.ts';
 import { startServer, printBanner, buildAgentCommand, parseEnvText, mergeSpawnEnv, editSession } from './web/server.ts';
+import * as turnqIntegration from './turnq-integration.ts';
 import { hostname } from 'node:os';
 import { getAddresses } from './net.ts';
 import type { ParsedArgs } from '../cli.ts';
@@ -182,6 +183,7 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
   // this path entirely (it goes through the resume handler).
   const cfg = loadConfig();
   const daemonInitPrompts = cfg.initPrompts ?? [];
+  const turnqEnabled = Boolean(cfg.turnq?.enabled);
 
   const parent = process.env.LLMUX_SESSION ?? null;
   const created: string[] = [];
@@ -197,7 +199,16 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
     // at spawn time. If .llmux.yaml changes later, existing sessions stick
     // with the snapshot they spawned under (intentional: change is opt-in
     // per session via `session edit --init`).
-    const composedInitPrompts = composeInitPrompts(daemonInitPrompts, cliInitPrompts);
+    //
+    // When turnq is on, generate a per-session marker and append a built-in
+    // marker-emission prompt as the LAST init prompt — LLM recency bias
+    // means the freshest context the agent has when the first real prompt
+    // lands is "remember to emit the marker."
+    const marker = turnqEnabled ? turnqIntegration.generateMarker() : undefined;
+    const operatorPrompts = composeInitPrompts(daemonInitPrompts, cliInitPrompts);
+    const composedInitPrompts = marker
+      ? [...(operatorPrompts ?? []), turnqIntegration.buildMarkerPrompt(marker)]
+      : operatorPrompts;
     tmux.newSession({
       name: sessionName,
       command: buildAgentCommand(agent, flagsOverride, effectiveResume),
@@ -211,14 +222,15 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
       ...(flagsOverride !== undefined ? { flags: flagsOverride } : {}),
       ...(envOverride !== undefined ? { env: envOverride } : {}),
       ...(effectiveResume !== undefined ? { resumeFrom: effectiveResume } : {}),
-      ...(composedInitPrompts !== undefined ? { initPrompts: composedInitPrompts } : {}),
+      ...(composedInitPrompts !== undefined && composedInitPrompts.length > 0 ? { initPrompts: composedInitPrompts } : {}),
+      ...(marker !== undefined ? { turnqMarker: marker } : {}),
       createdAt: new Date().toISOString(),
       parent,
       restart: 'on-failure',
     });
     created.push(sessionName);
     console.log(`spawned ${sessionName} (agent: ${agent.key}, cwd: ${cwd})`);
-    if (composedInitPrompts && !skipInit) {
+    if (composedInitPrompts && composedInitPrompts.length > 0 && !skipInit) {
       console.log(`  firing ${composedInitPrompts.length} init prompt${composedInitPrompts.length === 1 ? '' : 's'}...`);
       await fireInitPrompts(sessionName, agent, composedInitPrompts);
     }
@@ -262,7 +274,7 @@ export function handleStatus(args: ParsedArgs): void {
   for (const r of rows) console.log(fmt(r));
 }
 
-export function handleSend(args: ParsedArgs): void {
+export async function handleSend(args: ParsedArgs): Promise<void> {
   tmux.requireTmux();
   const [target, ...promptParts] = args.positional;
   if (!target || promptParts.length === 0) {
@@ -274,11 +286,13 @@ export function handleSend(args: ParsedArgs): void {
     throw new Error(`session "${session.name}" is in state but not live in tmux (exited?). Try \`llmux session restart ${session.name}\`.`);
   }
   const enter = !args.flags['no-enter'];
-  tmux.sendKeys(session.name, prompt, { enter });
+  const skipTurnq = Boolean(args.flags['no-turnq']);
+  const cfg = loadConfig();
+  await turnqIntegration.sendWithTurn(session.name, prompt, { enter, skipTurnq, turnqConfig: cfg.turnq });
   console.log(`sent ${prompt.length} bytes → ${session.name}${enter ? '' : ' (no-enter)'}`);
 }
 
-export function handleBroadcast(args: ParsedArgs): void {
+export async function handleBroadcast(args: ParsedArgs): Promise<void> {
   tmux.requireTmux();
   const [agentKey, ...promptParts] = args.positional;
   if (!agentKey || promptParts.length === 0) {
@@ -293,12 +307,22 @@ export function handleBroadcast(args: ParsedArgs): void {
     console.log(`no ${agentKey} sessions running`);
     return;
   }
+  const skipTurnq = Boolean(args.flags['no-turnq']);
+  const cfg = loadConfig();
   let n = 0;
-  for (const s of sessions) {
-    if (!tmux.hasSession(s.name)) continue;
-    tmux.sendKeys(s.name, prompt, { enter: true });
-    console.log(`sent → ${s.name}`);
-    n++;
+  // Broadcast fires per-name in parallel — each session has its own turnq
+  // channel so they're independent. If turnq is off, sendWithTurn falls
+  // through to plain sendKeys.
+  const results = await Promise.all(sessions.map(async (s) => {
+    if (!tmux.hasSession(s.name)) return { name: s.name, sent: false };
+    await turnqIntegration.sendWithTurn(s.name, prompt, { enter: true, skipTurnq, turnqConfig: cfg.turnq });
+    return { name: s.name, sent: true };
+  }));
+  for (const r of results) {
+    if (r.sent) {
+      console.log(`sent → ${r.name}`);
+      n++;
+    }
   }
   console.log(`broadcast to ${n}/${sessions.length} ${agentKey} sessions`);
 }

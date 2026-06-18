@@ -7,6 +7,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import QRCode from 'qrcode';
 import * as logBuffer from '../log-buffer.ts';
+import * as turnqIntegration from '../turnq-integration.ts';
 import type { IPty } from 'node-pty';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition, type Conversation } from '../agents.ts';
 import * as state from '../state.ts';
@@ -600,6 +601,13 @@ function pickerPage(): string {
       <div class="kv"><span class="key">LLMUXD_HOST</span><span class="val" id="settings-env-llmuxd-host">—</span></div>
       <div class="kv"><span class="key">LLMUX_PORT</span><span class="val" id="settings-env-llmux-port">—</span></div>
       <div class="kv"><span class="key">XDG_STATE_HOME</span><span class="val" id="settings-env-xdg">—</span></div>
+    </div>
+    <div class="about-card">
+      <h3>turnq (FIFO turn coordination)</h3>
+      <div class="kv"><span class="key">enabled</span><span class="val" id="settings-turnq-enabled">—</span></div>
+      <div class="kv"><span class="key">mode</span><span class="val" id="settings-turnq-mode">—</span></div>
+      <div class="kv"><span class="key">url</span><span class="val" id="settings-turnq-url">—</span></div>
+      <div class="kv"><span class="key">max-hold</span><span class="val" id="settings-turnq-maxhold">—</span></div>
     </div>
     <div class="about-card">
       <h3>Loaded YAML</h3>
@@ -1683,6 +1691,11 @@ function pickerPage(): string {
       settingsEnvLlmuxPort.textContent = data.env.LLMUX_PORT || '(unset)';
       settingsEnvXdg.textContent = data.env.XDG_STATE_HOME || '(unset)';
       settingsYaml.textContent = data.yamlText || '(no .llmux.yaml found)';
+      const turnq = data.turnq || { enabled: false, mode: 'disabled' };
+      document.getElementById('settings-turnq-enabled').textContent = turnq.enabled ? 'yes' : 'no';
+      document.getElementById('settings-turnq-mode').textContent = turnq.mode || 'disabled';
+      document.getElementById('settings-turnq-url').textContent = turnq.url || '(local flock)';
+      document.getElementById('settings-turnq-maxhold').textContent = turnq.maxHoldMs ? (turnq.maxHoldMs + 'ms') : '—';
     } catch(e){
       settingsConfigSource.textContent = 'failed to load: ' + (e.message || String(e));
     }
@@ -3636,6 +3649,14 @@ export function startServer(opts: ServeOptions): ServerHandle {
           LLMUX_PORT: process.env.LLMUX_PORT ?? null,
           XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? null,
         },
+        turnq: cfg?.turnq
+          ? {
+              enabled: Boolean(cfg.turnq.enabled),
+              url: cfg.turnq.url ?? null,
+              mode: cfg.turnq.url ? 'distributed' : 'local',
+              maxHoldMs: cfg.turnq.maxHoldMs ?? 300_000,
+            }
+          : { enabled: false, url: null, mode: 'disabled', maxHoldMs: null },
       });
     }
 
@@ -3678,15 +3699,20 @@ export function startServer(opts: ServeOptions): ServerHandle {
       if (mSend) {
         const name = decodeURIComponent(mSend[1]!);
         try {
-          const body = (await readJsonBody(req)) as { prompt?: unknown; enter?: unknown };
+          const body = (await readJsonBody(req)) as { prompt?: unknown; enter?: unknown; skipTurnq?: unknown };
           if (typeof body.prompt !== 'string' || body.prompt.length === 0) {
             return sendJson(res, { ok: false, error: 'prompt required' }, 400);
           }
           if (!state.get(name)) return sendJson(res, { ok: false, error: `no tracked session "${name}"` }, 404);
           if (!tmux.hasSession(name)) return sendJson(res, { ok: false, error: `session "${name}" is not running` }, 409);
           const enter = body.enter !== false; // default true; explicitly false to suppress
+          const skipTurnq = body.skipTurnq === true;
           try {
-            tmux.sendKeys(name, body.prompt, { enter });
+            await turnqIntegration.sendWithTurn(name, body.prompt, {
+              enter,
+              skipTurnq,
+              turnqConfig: opts.config?.turnq,
+            });
           } catch (err) {
             return sendJson(res, { ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
           }
@@ -3824,9 +3850,32 @@ function attachSession(ws: WebSocket, sessionName: string): void {
     return;
   }
 
+  // turnq marker strip: if this session has a turnqMarker, hide any line
+  // containing `<<LLMUX_DONE_xxxxxxxx>>` from the WS stream so the agent's
+  // turn-completion signal doesn't clutter the operator's xterm view. CLI
+  // tmux-attach still sees it (would require modifying tmux output). Cheap
+  // string scan — only fires when turnqMarker is set on the session.
+  const sessionRecord = state.get(sessionName);
+  const markerNeedle = sessionRecord?.turnqMarker ? `<<${sessionRecord.turnqMarker}>>` : null;
+  let pending = '';
   term.onData((d) => {
     try {
-      ws.send(d);
+      if (!markerNeedle) {
+        ws.send(d);
+        return;
+      }
+      // Buffer until we have at least one complete line ending — we can't
+      // strip a partial marker spread across two chunks.
+      pending += d;
+      const lastNewline = pending.lastIndexOf('\n');
+      if (lastNewline < 0) return;
+      const complete = pending.slice(0, lastNewline + 1);
+      pending = pending.slice(lastNewline + 1);
+      const filtered = complete
+        .split('\n')
+        .filter((line) => !line.includes(markerNeedle))
+        .join('\n');
+      if (filtered.length > 0) ws.send(filtered);
     } catch {
       term?.kill();
     }

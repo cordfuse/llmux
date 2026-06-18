@@ -217,10 +217,10 @@ async function dispatchSession(verb: string | undefined, args: string[], env: Gl
       h.handleChat(parsed);
       return;
     case 'prompt':
-      h.handleSend(parsed);
+      await h.handleSend(parsed);
       return;
     case 'broadcast':
-      h.handleBroadcast(parsed);
+      await h.handleBroadcast(parsed);
       return;
     case 'resume': {
       const name = parsed.positional[0];
@@ -283,6 +283,7 @@ function sessionLocalFlags() {
     latest: { kind: 'boolean' as const, description: 'resume the most recent conversation' },
     'resume-from': { kind: 'string' as const, description: 'native conversation id to resume at spawn time' },
     'no-enter': { kind: 'boolean' as const, description: 'do not append Enter to prompt' },
+    'no-turnq': { kind: 'boolean' as const, description: 'skip turnq FIFO turn coordination for this send (default: honor turnq.enabled)' },
     browser: { kind: 'boolean' as const, description: 'open in web browser (attach)' },
     it: { kind: 'boolean' as const, description: 'interactive (attach)' },
     apply: { kind: 'boolean' as const, description: 'with `edit`: respawn the session after patching' },
