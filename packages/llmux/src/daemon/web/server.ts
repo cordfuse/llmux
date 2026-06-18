@@ -130,6 +130,91 @@ function pickerPage(): string {
   h1{font-size:18px;margin:0}
   h1 .brand{color:#7cc4ff;letter-spacing:.08em;font-weight:600}
   h1 .host{color:#a371f7;font-weight:500}
+  #nav-toggle{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;font-size:18px;line-height:1;margin-right:10px;flex:0 0 auto;transition:background 150ms ease,border-color 150ms ease}
+  #nav-toggle:hover{background:#252b34;border-color:#3a414b}
+  #nav-toggle:active{transform:scale(.94)}
+  /* Two-row header: controls (hamburger + meta) on row 1, title on row 2.
+     Keeps the h1 from being crushed between the hamburger and the "+ new
+     session" button on portrait phones. */
+  header{flex-direction:column;align-items:stretch;gap:8px}
+  header .header-controls{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  #nav-drawer{position:fixed;top:0;left:-300px;width:280px;height:100dvh;background:#0e1116;border-right:1px solid #1f2329;transition:left 220ms ease;z-index:55;padding:18px 0;box-sizing:border-box;display:flex;flex-direction:column}
+  #nav-drawer.open{left:0}
+  #nav-backdrop{position:fixed;inset:0;background:rgba(11,12,16,.55);z-index:54;opacity:0;visibility:hidden;transition:opacity 180ms ease,visibility 0s 180ms}
+  #nav-backdrop.show{opacity:1;visibility:visible;transition:opacity 180ms ease}
+  #nav-drawer .nav-header{padding:0 20px 16px;border-bottom:1px solid #1f2329;display:flex;flex-direction:column;gap:4px}
+  #nav-drawer .nav-brand{color:#7cc4ff;font-weight:600;letter-spacing:.08em;font-size:15px}
+  #nav-drawer .nav-host{color:#a371f7;font-size:12px}
+  #nav-drawer nav{flex:1;display:flex;flex-direction:column;padding:8px 0;overflow-y:auto}
+  #nav-drawer a{display:flex;align-items:center;gap:10px;padding:12px 20px;color:#c9d1d9;text-decoration:none;font-size:14px;border-left:3px solid transparent;cursor:pointer}
+  #nav-drawer a:hover{background:#11141a}
+  #nav-drawer a.active{border-left-color:#7cc4ff;color:#7cc4ff;background:#11141a}
+  #nav-drawer a .nav-icon{font-size:16px;width:20px;text-align:center;color:inherit}
+  #nav-drawer .nav-footer{padding:10px 20px 0;border-top:1px solid #1f2329;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;align-items:center}
+  .page{display:none}
+  .page.active{display:block}
+  .tokens-toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+  .tokens-toolbar button{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  .tokens-toolbar button.danger{color:#f85149;border-color:#4a2329}
+  .tokens-toolbar button:hover:not(:disabled){background:#252b34}
+  .tokens-toolbar button:disabled{opacity:.4;cursor:not-allowed}
+  #page-tokens .token-actions{text-align:right;white-space:nowrap}
+  #page-tokens .token-actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:6px 10px;font:12px ui-monospace,monospace;cursor:pointer;margin-left:6px;transition:background 150ms ease,border-color 150ms ease}
+  #page-tokens .token-actions button.danger{color:#f85149;border-color:#4a2329}
+  #page-tokens .token-actions button:hover{background:#252b34;border-color:#3a414b}
+  #page-tokens .token-actions button.danger:hover{background:#2a1c1f}
+  #page-tokens .token-actions button:active{transform:scale(.95)}
+  #page-tokens .token-id{font-family:ui-monospace,monospace;color:#7cc4ff;font-size:12px;word-break:break-all}
+  #page-tokens .token-name{font-weight:500;word-break:break-word}
+  #page-tokens .token-name .unnamed{color:#7a7f87;font-style:italic;font-weight:normal}
+  #page-tokens .token-when{color:#9aa0a6;font-size:11px}
+  #page-tokens .token-expired{color:#f0883e;font-size:11px}
+  /* Mobile: collapse the token table — drop expires col, tighten padding,
+     stack action buttons vertically so they don't crowd against the data. */
+  @media (max-width:600px){
+    #page-tokens table th:nth-child(4),#page-tokens table td:nth-child(4){display:none}
+    #page-tokens table th,#page-tokens table td{padding:8px 6px;font-size:12px}
+    #page-tokens .token-actions{padding-left:0}
+    #page-tokens .token-actions button{display:block;width:100%;margin:4px 0 0;padding:7px 8px}
+    #page-tokens .token-actions button:first-child{margin-top:0}
+  }
+  #token-create-form{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:14px;margin-bottom:14px;display:none}
+  #token-create-form.open{display:block}
+  #token-create-form h3{margin:0 0 12px;font-size:13px;color:#c9d1d9;font-weight:600}
+  #token-create-form .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  #token-create-form label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em}
+  #token-create-form input{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none;width:100%;box-sizing:border-box}
+  #token-create-form input:focus{border-color:#2d4a66}
+  #token-create-form .actions{display:flex;gap:8px;justify-content:flex-end}
+  #token-create-form button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  #token-create-form button.primary{color:#7cc4ff;border-color:#2d4a66}
+  #token-secret-modal{position:fixed;inset:0;background:rgba(11,12,16,.85);display:flex;align-items:center;justify-content:center;z-index:60;padding:20px;opacity:0;visibility:hidden;transition:opacity 160ms ease,visibility 0s 160ms}
+  #token-secret-modal.open{opacity:1;visibility:visible;transition:opacity 160ms ease}
+  #token-secret-modal .panel{background:#11141a;border:1px solid #1f2329;border-radius:10px;padding:22px;max-width:460px;width:100%;transform:translateY(8px) scale(.97);transition:transform 200ms ease}
+  #token-secret-modal.open .panel{transform:translateY(0) scale(1)}
+  #token-secret-modal h3{margin:0 0 6px;font-size:15px;color:#7ee787}
+  #token-secret-modal .warn{margin:0 0 14px;font-size:12px;color:#d29922}
+  #token-secret-modal label{display:block;font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
+  #token-secret-modal .secret-value{font-family:ui-monospace,monospace;background:#0b0c10;color:#7ee787;padding:10px 12px;border:1px solid #1f4528;border-radius:6px;word-break:break-all;font-size:12px;cursor:pointer}
+  #token-secret-modal .secret-value:hover{background:#0d1f10}
+  #token-secret-modal .pair-url{font-family:ui-monospace,monospace;background:#0b0c10;color:#7cc4ff;padding:10px 12px;border:1px solid #2d4a66;border-radius:6px;word-break:break-all;font-size:11px;cursor:pointer}
+  #token-secret-modal .pair-url:hover{background:#11141a}
+  #token-secret-modal .copy-hint{font-size:10px;color:#7a7f87;margin-top:4px}
+  #token-secret-modal .actions{display:flex;justify-content:flex-end;margin-top:18px}
+  #token-secret-modal button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  #token-secret-modal button.primary{color:#7cc4ff;border-color:#2d4a66}
+  #about-grid{display:grid;grid-template-columns:1fr;gap:14px}
+  .about-card{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:16px}
+  .about-card h3{margin:0 0 10px;font-size:13px;color:#7cc4ff;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+  .about-card .kv{display:flex;justify-content:space-between;gap:14px;padding:6px 0;border-bottom:1px solid #1f2329;font-size:13px}
+  .about-card .kv:last-child{border-bottom:none}
+  .about-card .kv .key{color:#9aa0a6}
+  .about-card .kv .val{color:#e6e8eb;font-family:ui-monospace,monospace;text-align:right;word-break:break-word}
+  .about-card .kv .val.host{color:#a371f7}
+  .about-card .kv .val.version{color:#7cc4ff}
+  @media (min-width:601px){
+    #about-grid{grid-template-columns:1fr 1fr}
+  }
   #meta{color:#7a7f87;font-size:11px;display:flex;gap:10px;align-items:center}
   #refresh-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ee787;transition:background .25s;box-shadow:0 0 6px #7ee78766}
   #refresh-dot.stale{background:#9aa0a6;box-shadow:none}
@@ -160,8 +245,17 @@ function pickerPage(): string {
   .actions button .icon{font-size:13px;line-height:1;display:inline-block;vertical-align:middle}
   .actions button:disabled{opacity:.5;cursor:wait}
   #bulk-toolbar{display:flex;gap:6px;align-items:center;margin-bottom:10px;padding:8px 10px;background:#11141a;border:1px solid #1f2329;border-radius:8px;flex-wrap:wrap}
-  #bulk-toolbar button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:6px 12px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease}
+  #bulk-toolbar button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:6px 12px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease;flex:0 0 auto}
+  /* Portrait phones: 5 buttons can't share a row at 12px/12px padding.
+     Tighten the buttons and force the count chip to its own row so the
+     button row stays tidy. */
+  @media (max-width:600px){
+    #bulk-toolbar{gap:4px;padding:6px 8px}
+    #bulk-toolbar button{padding:5px 8px;font-size:11px}
+    #bulk-count{flex-basis:100%;margin-left:0;text-align:right;padding-top:2px}
+  }
   #bulk-toolbar button:hover:not(:disabled){background:#252b34;border-color:#3a414b}
+  #bulk-toolbar button.new{color:#7cc4ff;border-color:#2d4a66}
   #bulk-toolbar button.start{color:#7ee787;border-color:#1f4528}
   #bulk-toolbar button.stop{color:#f0883e;border-color:#4a3019}
   #bulk-toolbar button.respawn{color:#7cc4ff;border-color:#2d4a66}
@@ -269,16 +363,34 @@ function pickerPage(): string {
   }
 </style></head>
 <body>
-<header>
-  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · Sessions</h1>
-  <div id="meta">
-    <button id="new-btn" type="button">+ new session</button>
-    <span id="refresh-dot" title="updates every 3s"></span>
-    <span id="refresh-label">live</span>
-    <span>·</span>
+<div id="nav-backdrop" aria-hidden="true"></div>
+<aside id="nav-drawer" aria-hidden="true">
+  <div class="nav-header">
+    <span class="nav-brand">LLMUX</span>
+    <span class="nav-host">${escapeHtml(host)}</span>
+  </div>
+  <nav>
+    <a data-page="sessions" class="active"><span class="nav-icon">▦</span>Sessions</a>
+    <a data-page="tokens"><span class="nav-icon">⚿</span>Tokens</a>
+    <a data-page="about"><span class="nav-icon">ⓘ</span>About</a>
+  </nav>
+  <div class="nav-footer">
     <span>v${escapeHtml(DAEMON_VERSION)}</span>
   </div>
+</aside>
+<header>
+  <div class="header-controls">
+    <button id="nav-toggle" type="button" aria-label="open navigation" title="open navigation">☰</button>
+    <div id="meta">
+      <span id="refresh-dot" title="updates every 3s"></span>
+      <span id="refresh-label">live</span>
+      <span>·</span>
+      <span>v${escapeHtml(DAEMON_VERSION)}</span>
+    </div>
+  </div>
+  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · <span id="page-title">Sessions</span></h1>
 </header>
+<div id="page-sessions" class="page active">
 <div id="new-form" aria-hidden="true">
   <h3 id="new-title" class="form-title">new session</h3>
   <form id="new-session-form">
@@ -312,6 +424,7 @@ function pickerPage(): string {
   </form>
 </div>
 <div id="bulk-toolbar">
+  <button id="new-btn" type="button" class="new" title="Spawn a new session">+ new</button>
   <button id="bulk-start" type="button" class="start" disabled title="Start every checked session that's currently exited">Start</button>
   <button id="bulk-stop" type="button" class="stop" disabled title="Stop every checked session that's currently running">Stop</button>
   <button id="bulk-respawn" type="button" class="respawn" disabled title="Respawn every checked session (kill + relaunch with persisted config)">Respawn</button>
@@ -319,7 +432,65 @@ function pickerPage(): string {
   <span id="bulk-count">0 selected</span>
 </div>
 <div id="list-container">${renderSessionTable(sessions)}</div>
+</div>
+<div id="page-tokens" class="page">
+  <div class="tokens-toolbar">
+    <button id="token-new-btn" type="button">+ new token</button>
+    <button id="token-revoke-all-btn" type="button" class="danger">revoke all</button>
+  </div>
+  <div id="token-create-form">
+    <h3>new token</h3>
+    <form id="token-create-form-el">
+      <div class="field">
+        <label for="token-create-name">name (optional)</label>
+        <input id="token-create-name" type="text" placeholder="phone-mac, ci, etc." autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="token-create-expiry">expires (optional)</label>
+        <input id="token-create-expiry" type="datetime-local" autocomplete="off">
+      </div>
+      <div class="actions">
+        <button type="button" id="token-create-cancel">cancel</button>
+        <button type="submit" class="primary" id="token-create-submit">create</button>
+      </div>
+    </form>
+  </div>
+  <div id="tokens-list-container">loading…</div>
+</div>
+<div id="page-about" class="page">
+  <div id="about-grid">
+    <div class="about-card">
+      <h3>Daemon</h3>
+      <div class="kv"><span class="key">host</span><span class="val host" id="about-host">${escapeHtml(host)}</span></div>
+      <div class="kv"><span class="key">version</span><span class="val version">${escapeHtml(DAEMON_VERSION)}</span></div>
+      <div class="kv"><span class="key">sessions</span><span class="val" id="about-session-count">—</span></div>
+      <div class="kv"><span class="key">auth</span><span class="val" id="about-auth-status">—</span></div>
+      <div class="kv"><span class="key">active tokens</span><span class="val" id="about-token-count">—</span></div>
+    </div>
+    <div class="about-card">
+      <h3>Web UI</h3>
+      <div class="kv"><span class="key">page</span><span class="val" id="about-page">${escapeHtml(host)}</span></div>
+      <div class="kv"><span class="key">poll interval</span><span class="val">3s</span></div>
+      <div class="kv"><span class="key">your client</span><span class="val">cookie auth</span></div>
+    </div>
+  </div>
+</div>
 <div id="toast"></div>
+<div id="token-secret-modal" aria-hidden="true">
+  <div class="panel">
+    <h3 id="token-secret-title">Token created</h3>
+    <p class="warn">Save this now — the token value is shown only once.</p>
+    <label>token</label>
+    <div class="secret-value" id="token-secret-value" title="tap to copy"></div>
+    <div class="copy-hint">tap to copy</div>
+    <label>pairing url</label>
+    <div class="pair-url" id="token-secret-url" title="tap to copy"></div>
+    <div class="copy-hint">tap to copy · scannable as a QR if you load this URL in another browser</div>
+    <div class="actions">
+      <button type="button" class="primary" id="token-secret-close">done</button>
+    </div>
+  </div>
+</div>
 <div id="confirm-modal" aria-hidden="true">
   <div class="panel">
     <h3 id="confirm-title">Kill session?</h3>
@@ -375,6 +546,62 @@ function pickerPage(): string {
   function escapeHtml(s){
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
+
+  // ---- Nav drawer + page routing ----
+  // The web UI grew beyond a single Sessions table — Tokens management and
+  // an About panel ride alongside it now. The hamburger menu is the entry
+  // point; each "page" is just a div toggled by adding/removing .active.
+  // Last-viewed page persists in localStorage so a hard reload keeps the
+  // operator on the same screen.
+  const ROUTES = ['sessions', 'tokens', 'about'];
+  const PAGE_TITLES = { sessions: 'Sessions', tokens: 'Tokens', about: 'About' };
+  const navToggle = document.getElementById('nav-toggle');
+  const navDrawer = document.getElementById('nav-drawer');
+  const navBackdrop = document.getElementById('nav-backdrop');
+  const pageTitle = document.getElementById('page-title');
+
+  function openDrawer(){
+    navDrawer.classList.add('open');
+    navDrawer.setAttribute('aria-hidden', 'false');
+    navBackdrop.classList.add('show');
+    navBackdrop.setAttribute('aria-hidden', 'false');
+  }
+  function closeDrawer(){
+    navDrawer.classList.remove('open');
+    navDrawer.setAttribute('aria-hidden', 'true');
+    navBackdrop.classList.remove('show');
+    navBackdrop.setAttribute('aria-hidden', 'true');
+  }
+  navToggle.addEventListener('click', openDrawer);
+  navBackdrop.addEventListener('click', closeDrawer);
+
+  function showPage(name){
+    if (ROUTES.indexOf(name) === -1) name = 'sessions';
+    ROUTES.forEach(function(r){
+      const el = document.getElementById('page-' + r);
+      if (el) el.classList.toggle('active', r === name);
+      const link = navDrawer.querySelector('a[data-page="' + r + '"]');
+      if (link) link.classList.toggle('active', r === name);
+    });
+    pageTitle.textContent = PAGE_TITLES[name];
+    try { localStorage.setItem('llmux.page', name); } catch(_){}
+    closeDrawer();
+    if (name === 'tokens') refreshTokens();
+    if (name === 'about') refreshAbout();
+  }
+  navDrawer.querySelectorAll('a[data-page]').forEach(function(a){
+    a.addEventListener('click', function(e){
+      e.preventDefault();
+      showPage(a.dataset.page);
+    });
+  });
+  // Restore last-viewed page (default sessions).
+  let initialPage = 'sessions';
+  try {
+    const saved = localStorage.getItem('llmux.page');
+    if (saved && ROUTES.indexOf(saved) !== -1) initialPage = saved;
+  } catch(_){}
+  showPage(initialPage);
 
   function relativeTime(iso){
     const ms = Date.now() - new Date(iso).getTime();
@@ -786,6 +1013,250 @@ function pickerPage(): string {
     if (!ok) return;
     bulkAction({ kind: 'kill', verb: 'killed' });
   });
+
+  // ---- Tokens page ----
+  // CRUD on /api/tokens. The create response contains the only chance to
+  // see the token value — we surface it in the secret modal with a copy
+  // hint and the pairing URL. After that the value is gone; rename + revoke
+  // are the only remaining ops on a known id.
+  const tokensListContainer = document.getElementById('tokens-list-container');
+  const tokenNewBtn = document.getElementById('token-new-btn');
+  const tokenRevokeAllBtn = document.getElementById('token-revoke-all-btn');
+  const tokenCreateForm = document.getElementById('token-create-form');
+  const tokenCreateFormEl = document.getElementById('token-create-form-el');
+  const tokenCreateName = document.getElementById('token-create-name');
+  const tokenCreateExpiry = document.getElementById('token-create-expiry');
+  const tokenCreateCancel = document.getElementById('token-create-cancel');
+  const tokenSecretModal = document.getElementById('token-secret-modal');
+  const tokenSecretValue = document.getElementById('token-secret-value');
+  const tokenSecretUrl = document.getElementById('token-secret-url');
+  const tokenSecretClose = document.getElementById('token-secret-close');
+
+  async function copyText(text){
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText){
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch(_){}
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      return true;
+    } catch(_){
+      return false;
+    }
+  }
+  tokenSecretValue.addEventListener('click', async function(){
+    if (await copyText(tokenSecretValue.textContent)) showToast('token copied');
+  });
+  tokenSecretUrl.addEventListener('click', async function(){
+    if (await copyText(tokenSecretUrl.textContent)) showToast('url copied');
+  });
+  tokenSecretClose.addEventListener('click', function(){
+    tokenSecretModal.classList.remove('open');
+    tokenSecretModal.setAttribute('aria-hidden', 'true');
+    tokenSecretValue.textContent = '';
+    tokenSecretUrl.textContent = '';
+    refreshTokens();
+  });
+  tokenSecretModal.addEventListener('click', function(e){
+    if (e.target === tokenSecretModal) tokenSecretClose.click();
+  });
+
+  function tokenRowHtml(t){
+    const name = t.name
+      ? '<span class="token-name">' + escapeHtml(t.name) + '</span>'
+      : '<span class="token-name"><span class="unnamed">(unnamed)</span></span>';
+    const created = new Date(t.createdAt).toISOString().slice(0, 16).replace('T', ' ');
+    const expiresVal = t.expiresAt ? new Date(t.expiresAt) : null;
+    let expires = '<span class="token-when">—</span>';
+    if (expiresVal){
+      const expired = expiresVal.getTime() < Date.now();
+      expires = expired
+        ? '<span class="token-expired">expired ' + escapeHtml(expiresVal.toISOString().slice(0, 16).replace('T', ' ')) + '</span>'
+        : '<span class="token-when">' + escapeHtml(expiresVal.toISOString().slice(0, 16).replace('T', ' ')) + '</span>';
+    }
+    return '<tr data-id="' + escapeHtml(t.id) + '">' +
+      '<td class="token-id">' + escapeHtml(t.id) + '</td>' +
+      '<td>' + name + '</td>' +
+      '<td class="token-when">' + escapeHtml(created) + '</td>' +
+      '<td>' + expires + '</td>' +
+      '<td class="token-actions">' +
+        '<button data-action="rename" data-id="' + escapeHtml(t.id) + '" data-name="' + escapeHtml(t.name || '') + '">rename</button>' +
+        '<button class="danger" data-action="revoke" data-id="' + escapeHtml(t.id) + '" data-name="' + escapeHtml(t.name || t.id) + '">revoke</button>' +
+      '</td>' +
+      '</tr>';
+  }
+
+  async function refreshTokens(){
+    try {
+      const r = await fetch('/api/tokens', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const list = await r.json();
+      if (!Array.isArray(list) || list.length === 0){
+        tokensListContainer.innerHTML = '<div class="empty">no tokens — auth is disabled. Mint one with <strong>+ new token</strong>.</div>';
+        return;
+      }
+      const rows = list.map(tokenRowHtml).join('');
+      tokensListContainer.innerHTML = '<table><thead><tr><th>id</th><th>name</th><th>created</th><th>expires</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    } catch(e){
+      tokensListContainer.innerHTML = '<div class="empty">failed to load tokens: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+  }
+
+  tokenNewBtn.addEventListener('click', function(){
+    tokenCreateForm.classList.add('open');
+    tokenCreateName.value = '';
+    tokenCreateExpiry.value = '';
+    tokenCreateName.focus();
+  });
+  tokenCreateCancel.addEventListener('click', function(){
+    tokenCreateForm.classList.remove('open');
+  });
+  tokenCreateFormEl.addEventListener('submit', async function(e){
+    e.preventDefault();
+    const submitBtn = document.getElementById('token-create-submit');
+    submitBtn.disabled = true;
+    try {
+      const body = {};
+      if (tokenCreateName.value.trim()) body.name = tokenCreateName.value.trim();
+      // datetime-local emits "YYYY-MM-DDTHH:MM" in the user's local time.
+      // Convert to a full UTC ISO string so the server stores it as a stable
+      // absolute instant — operators in different timezones see the same
+      // expiry on the token list page.
+      if (tokenCreateExpiry.value){
+        const localTs = new Date(tokenCreateExpiry.value);
+        if (isNaN(localTs.getTime())){
+          showToast('invalid expiry', true);
+          submitBtn.disabled = false;
+          return;
+        }
+        body.expiresAt = localTs.toISOString();
+      }
+      const r = await fetch('/api/tokens', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (!r.ok || data.ok === false) throw new Error(data.error || 'request failed');
+      tokenCreateForm.classList.remove('open');
+      tokenSecretValue.textContent = data.value;
+      const pairingUrl = location.origin + '/#token=' + encodeURIComponent(data.value);
+      tokenSecretUrl.textContent = pairingUrl;
+      tokenSecretModal.classList.add('open');
+      tokenSecretModal.setAttribute('aria-hidden', 'false');
+    } catch(err){
+      showToast('create failed: ' + (err.message || err), true);
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  tokensListContainer.addEventListener('click', async function(e){
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const id = btn.dataset.id;
+    const labelName = btn.dataset.name || id;
+    if (action === 'rename'){
+      const next = prompt('rename token "' + labelName + '" to:', btn.dataset.name || '');
+      if (next === null) return;
+      try {
+        const r = await fetch('/api/tokens/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: next }),
+        });
+        const data = await r.json();
+        if (!r.ok || data.ok === false) throw new Error(data.error || 'request failed');
+        showToast('renamed');
+        refreshTokens();
+      } catch(err){
+        showToast('rename failed: ' + (err.message || err), true);
+      }
+      return;
+    }
+    if (action === 'revoke'){
+      const ok = await askConfirm({
+        title: 'Revoke token?',
+        body: 'Revoke <code>' + escapeHtmlSafe(labelName) + '</code> (id: <code>' + escapeHtmlSafe(id) + '</code>). Any device or script using this token will be locked out.',
+        okLabel: 'revoke',
+        destructive: true,
+      });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/tokens/' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await r.json();
+        if (!r.ok || data.ok === false) throw new Error(data.error || 'request failed');
+        showToast('revoked');
+        refreshTokens();
+      } catch(err){
+        showToast('revoke failed: ' + (err.message || err), true);
+      }
+    }
+  });
+
+  tokenRevokeAllBtn.addEventListener('click', async function(){
+    const ok = await askConfirm({
+      title: 'Revoke ALL tokens?',
+      body: 'Remove every token from the auth store. Every paired phone or browser tab will be logged out; every script using a bearer token will break. Auth will be disabled until you create a fresh token.',
+      okLabel: 'revoke all',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await fetch('/api/tokens', { method: 'DELETE' });
+      const data = await r.json();
+      if (!r.ok || data.ok === false) throw new Error(data.error || 'request failed');
+      showToast('revoked ' + (data.removed || 0) + ' token' + ((data.removed || 0) === 1 ? '' : 's'));
+      refreshTokens();
+    } catch(err){
+      showToast('revoke failed: ' + (err.message || err), true);
+    }
+  });
+
+  // ---- About page ----
+  // Reads /health for live counts. Endpoint already existed; we just call
+  // it once on page-show plus a quiet 5s tick while the page is active.
+  const aboutHost = document.getElementById('about-host');
+  const aboutSessionCount = document.getElementById('about-session-count');
+  const aboutAuthStatus = document.getElementById('about-auth-status');
+  const aboutTokenCount = document.getElementById('about-token-count');
+  const aboutPage = document.getElementById('about-page');
+  let aboutTimer = null;
+
+  async function refreshAbout(){
+    try {
+      const [healthR, tokensR] = await Promise.all([
+        fetch('/health', { cache: 'no-store' }),
+        fetch('/api/tokens', { cache: 'no-store' }).catch(function(){ return null; }),
+      ]);
+      const health = await healthR.json();
+      aboutSessionCount.textContent = String(health.sessions);
+      aboutAuthStatus.textContent = health.authEnabled ? 'required' : 'open';
+      if (tokensR){
+        const tokens = await tokensR.json();
+        aboutTokenCount.textContent = String(Array.isArray(tokens) ? tokens.length : 0);
+      }
+      aboutPage.textContent = location.origin;
+    } catch(_){
+      aboutSessionCount.textContent = '—';
+      aboutAuthStatus.textContent = 'offline';
+      aboutTokenCount.textContent = '—';
+    }
+    // Re-tick only while the About page is the active route.
+    if (document.getElementById('page-about').classList.contains('active')){
+      clearTimeout(aboutTimer);
+      aboutTimer = setTimeout(refreshAbout, 5000);
+    }
+  }
 
   // ---- New / Edit session form ----
   const newBtn = document.getElementById('new-btn');
@@ -2430,6 +2901,90 @@ export function startServer(opts: ServeOptions): ServerHandle {
     if (url.pathname === '/api/sessions' && method === 'GET') {
       return sendJson(res, listSessionViews());
     }
+
+    // ---- Token management (CRUD) ----
+    // List: never includes the token VALUE — only id / name / timestamps.
+    // Create: returns the value ONCE. After the response is sent, the
+    //   plaintext is unreachable from the daemon's REST surface again.
+    //   Mirrors the CLI's "show once" semantics.
+    // Patch: rename only (mutate the .name field; empty string clears).
+    // Delete by id: revoke a single token.
+    // Delete (no id): revoke all tokens.
+    if (url.pathname === '/api/tokens' && method === 'GET') {
+      const list = authStore.listAuthTokens().map((t) => ({
+        id: t.id,
+        ...(t.name !== undefined ? { name: t.name } : {}),
+        createdAt: t.createdAt,
+        ...(t.expiresAt !== undefined ? { expiresAt: t.expiresAt } : {}),
+      }));
+      return sendJson(res, list);
+    }
+    if (url.pathname === '/api/tokens' && method === 'POST') {
+      try {
+        const body = (await readJsonBody(req)) as { name?: unknown; expiresAt?: unknown };
+        const name = typeof body.name === 'string' && body.name.length > 0 ? body.name : undefined;
+        const expiresAt = typeof body.expiresAt === 'string' && body.expiresAt.length > 0 ? body.expiresAt : undefined;
+        if (expiresAt && isNaN(new Date(expiresAt).getTime())) {
+          return sendJson(res, { ok: false, error: 'expiresAt must be an ISO-8601 timestamp' }, 400);
+        }
+        const rec = authStore.createAuthToken({
+          ...(name !== undefined ? { name } : {}),
+          ...(expiresAt !== undefined ? { expiresAt } : {}),
+        });
+        return sendJson(
+          res,
+          {
+            ok: true,
+            value: rec.token,
+            token: {
+              id: rec.id,
+              ...(rec.name !== undefined ? { name: rec.name } : {}),
+              createdAt: rec.createdAt,
+              ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}),
+            },
+          },
+          201,
+        );
+      } catch (err) {
+        return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
+      }
+    }
+    if (url.pathname === '/api/tokens' && method === 'DELETE') {
+      const before = authStore.listAuthTokens().length;
+      const removed = authStore.revokeAllAuthTokens();
+      return sendJson(res, { ok: true, removed, before });
+    }
+    const tokenIdMatch = url.pathname.match(/^\/api\/tokens\/([^/]+)$/);
+    if (tokenIdMatch) {
+      const id = decodeURIComponent(tokenIdMatch[1]!);
+      if (method === 'PATCH') {
+        try {
+          const body = (await readJsonBody(req)) as { name?: unknown };
+          if (typeof body.name !== 'string') {
+            return sendJson(res, { ok: false, error: 'name must be a string (pass "" to clear)' }, 400);
+          }
+          const rec = authStore.renameAuthToken(id, body.name);
+          if (!rec) return sendJson(res, { ok: false, error: `no token with id "${id}"` }, 404);
+          return sendJson(res, {
+            ok: true,
+            token: {
+              id: rec.id,
+              ...(rec.name !== undefined ? { name: rec.name } : {}),
+              createdAt: rec.createdAt,
+              ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}),
+            },
+          });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
+        }
+      }
+      if (method === 'DELETE') {
+        const ok = authStore.revokeAuthToken(id);
+        if (!ok) return sendJson(res, { ok: false, error: `no token with id "${id}"` }, 404);
+        return sendJson(res, { ok: true });
+      }
+    }
+
     if (url.pathname === '/api/agents' && method === 'GET') {
       const installed = Object.entries(DEFAULT_AGENTS)
         .filter(([, def]) => isAgentInstalled(def))
