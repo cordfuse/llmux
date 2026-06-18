@@ -5,6 +5,51 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.24.1] — 2026-06-18
+
+### Added — One-shot send-prompt (web), Broadcast, QR for new tokens, Sessions filter
+
+Four web-side feature pickups against the CLI surface and v0.24.0 UX gap list.
+
+**One-shot prompt per row.** Each running Sessions row gets a new `⤴ send`
+button alongside resume/edit. Click opens a shared prompt modal with a
+textarea + "append Enter" toggle (default on) + Cmd/Ctrl+Enter to send.
+POSTs to the existing `/api/sessions/:name/send` endpoint. Faster than
+attaching xterm for one-line follow-ups on mobile. Hidden on exited rows
+(can't sendKeys to a dead tmux session).
+
+**Broadcast.** New toolbar button (purple, between Respawn and Kill).
+Enabled when ≥ 1 checked row is running. Opens the same prompt modal,
+sub-text reads "to N selected sessions". Fans out per-name POSTs in
+parallel; exited rows are filtered out of the target set client-side.
+
+**QR for new tokens.** Added `qrcode` package (server-side SVG render).
+Token-create response now includes `pairingUrl` and `qrSvg` (200x200 SVG,
+dark-theme colors, transparent background) when the client posts its
+`location.origin` as `pairingOrigin`. The token-secret modal shows the
+QR above the token + URL fields. SVG is wiped from the DOM when the
+modal closes.
+
+**Sessions filter.** Text input above the bulk toolbar, matches by name
+OR agent (case-insensitive substring). `×` button to clear. Applied
+after every poll-render so the auto-refresh doesn't blow it away. Value
+is in-memory only (hard reload clears).
+
+### REST API change
+
+`POST /api/tokens` now accepts an optional `pairingOrigin` (string) in the
+body — typically the client's `location.origin`. When present, response
+includes `pairingUrl` (the `#token=…` fragment form) and `qrSvg` (SVG
+markup, ready to inline). Both omitted if `pairingOrigin` is absent or
+QR rendering fails. Pure addition; v0.24.0 callers unaffected.
+
+### Build
+
+`qrcode` added to dependencies. tsup build externalises it (along with
+`node-pty`, `ws`, `yaml`, `qrcode-terminal`) so it stays as a runtime
+dep rather than getting bundled into `dist/index.js`. `@types/qrcode`
+added to devDependencies.
+
 ## [0.24.0] — 2026-06-18
 
 ### Added — hamburger nav + multi-page web UI scaffolding
