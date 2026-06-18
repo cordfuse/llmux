@@ -37,6 +37,9 @@ const DAEMON_VERSION = readDaemonVersion();
 export interface ServeOptions {
   port: number;
   host: string;
+  /** Loaded YAML config. Surfaced by /api/settings; defaults to whatever
+   *  `loadConfig()` returns if the caller doesn't pass anything. */
+  config?: import('../config.ts').LlmuxConfig;
 }
 
 const XTERM_CSS = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css';
@@ -218,7 +221,28 @@ function pickerPage(): string {
   .about-card .kv .val.version{color:#7cc4ff}
   @media (min-width:601px){
     #about-grid{grid-template-columns:1fr 1fr}
+    #settings-grid{grid-template-columns:1fr 1fr}
   }
+  #settings-grid{display:grid;grid-template-columns:1fr;gap:14px}
+  #settings-grid .about-card{box-sizing:border-box}
+  #settings-grid .yaml-blob{margin:0;padding:10px 12px;background:#0b0c10;color:#7ee787;border:1px solid #1f2329;border-radius:6px;font:11px ui-monospace,monospace;line-height:1.5;overflow-x:auto;white-space:pre;max-height:280px}
+  .agents-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;font-size:12px;color:#9aa0a6;flex-wrap:wrap;gap:10px}
+  .agents-bar #agents-summary{color:#c9d1d9}
+  .agents-toggle label{display:flex;align-items:center;gap:6px;cursor:pointer}
+  .agents-toggle input{width:16px;height:16px;accent-color:#7cc4ff;margin:0}
+  #page-agents .agent-row{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:14px 16px;margin-bottom:10px}
+  #page-agents .agent-row.missing{opacity:.65}
+  #page-agents .agent-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+  #page-agents .agent-name{font-weight:600;color:#e6e8eb;font-size:14px}
+  #page-agents .agent-key{font-family:ui-monospace,monospace;color:#7a7f87;font-size:11px}
+  #page-agents .agent-status{font-size:10px;padding:2px 7px;border-radius:3px;border:1px solid;letter-spacing:.04em;text-transform:uppercase}
+  #page-agents .agent-status.ok{color:#7ee787;border-color:#235828;background:#0d1f10}
+  #page-agents .agent-status.miss{color:#7a7f87;border-color:#262c34;background:#0e1116}
+  #page-agents .agent-running{color:#7cc4ff;font-size:11px;margin-left:auto}
+  #page-agents .agent-install{font:11px ui-monospace,monospace;color:#c9d1d9;background:#0b0c10;border:1px solid #1f2329;border-radius:4px;padding:6px 8px;margin-top:4px;word-break:break-all;cursor:pointer;transition:background 150ms ease}
+  #page-agents .agent-install:hover{background:#11141a}
+  #page-agents .agent-docs{font-size:11px;color:#7cc4ff;text-decoration:none;margin-top:6px;display:inline-block}
+  #page-agents .agent-docs:hover{text-decoration:underline}
   #meta{color:#7a7f87;font-size:11px;display:flex;gap:10px;align-items:center}
   #refresh-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ee787;transition:background .25s;box-shadow:0 0 6px #7ee78766}
   #refresh-dot.stale{background:#9aa0a6;box-shadow:none}
@@ -249,14 +273,18 @@ function pickerPage(): string {
   .actions button .icon{font-size:13px;line-height:1;display:inline-block;vertical-align:middle}
   .actions button:disabled{opacity:.5;cursor:wait}
   #bulk-toolbar{display:flex;gap:6px;align-items:center;margin-bottom:10px;padding:8px 10px;background:#11141a;border:1px solid #1f2329;border-radius:8px;flex-wrap:wrap}
+  #bulk-toolbar .bulk-action-row{display:flex;gap:6px;flex:1;min-width:0;align-items:center}
   #bulk-toolbar button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:6px 12px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease;flex:0 0 auto}
-  /* Portrait phones: 5 buttons can't share a row at 12px/12px padding.
-     Tighten the buttons and force the count chip to its own row so the
-     button row stays tidy. */
+  /* Portrait phones: 6 buttons can't fit at any readable size. Make the
+     button row a horizontal-scroll strip — swipe to see Kill if needed —
+     and put the count chip on its own row below. Hide the scrollbar so
+     it doesn't draw visual chrome. */
   @media (max-width:600px){
-    #bulk-toolbar{gap:4px;padding:6px 8px}
-    #bulk-toolbar button{padding:5px 8px;font-size:11px}
-    #bulk-count{flex-basis:100%;margin-left:0;text-align:right;padding-top:2px}
+    #bulk-toolbar{flex-direction:column;align-items:stretch;gap:6px;padding:6px 8px}
+    #bulk-toolbar .bulk-action-row{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+    #bulk-toolbar .bulk-action-row::-webkit-scrollbar{display:none}
+    #bulk-toolbar button{padding:5px 10px;font-size:11px}
+    #bulk-count{flex-basis:auto;margin-left:0;text-align:right;padding-top:0}
   }
   #bulk-toolbar button:hover:not(:disabled){background:#252b34;border-color:#3a414b}
   #bulk-toolbar button.new{color:#7cc4ff;border-color:#2d4a66}
@@ -401,6 +429,8 @@ function pickerPage(): string {
   <nav>
     <a data-page="sessions" class="active"><span class="nav-icon">▦</span>Sessions</a>
     <a data-page="tokens"><span class="nav-icon">⚿</span>Tokens</a>
+    <a data-page="agents"><span class="nav-icon">⌬</span>Agents</a>
+    <a data-page="settings"><span class="nav-icon">⚙</span>Settings</a>
     <a data-page="about"><span class="nav-icon">ⓘ</span>About</a>
   </nav>
   <div class="nav-footer">
@@ -457,12 +487,14 @@ function pickerPage(): string {
   <button type="button" id="sessions-filter-clear" title="clear filter">×</button>
 </div>
 <div id="bulk-toolbar">
-  <button id="new-btn" type="button" class="new" title="Spawn a new session">+ new</button>
-  <button id="bulk-start" type="button" class="start" disabled title="Start every checked session that's currently exited">Start</button>
-  <button id="bulk-stop" type="button" class="stop" disabled title="Stop every checked session that's currently running">Stop</button>
-  <button id="bulk-respawn" type="button" class="respawn" disabled title="Respawn every checked session (kill + relaunch with persisted config)">Respawn</button>
-  <button id="bulk-broadcast" type="button" class="broadcast" disabled title="Send the same prompt to every checked running session">Broadcast</button>
-  <button id="bulk-kill" type="button" class="kill" disabled title="Kill every checked session and remove its state record">Kill</button>
+  <div class="bulk-action-row">
+    <button id="new-btn" type="button" class="new" title="Spawn a new session">+ new</button>
+    <button id="bulk-start" type="button" class="start" disabled title="Start every checked session that's currently exited">Start</button>
+    <button id="bulk-stop" type="button" class="stop" disabled title="Stop every checked session that's currently running">Stop</button>
+    <button id="bulk-respawn" type="button" class="respawn" disabled title="Respawn every checked session (kill + relaunch with persisted config)">Respawn</button>
+    <button id="bulk-broadcast" type="button" class="broadcast" disabled title="Send the same prompt to every checked running session">Broadcast</button>
+    <button id="bulk-kill" type="button" class="kill" disabled title="Kill every checked session and remove its state record">Kill</button>
+  </div>
   <span id="bulk-count">0 selected</span>
 </div>
 <div id="list-container">${renderSessionTable(sessions)}</div>
@@ -506,6 +538,41 @@ function pickerPage(): string {
       <div class="kv"><span class="key">page</span><span class="val" id="about-page">${escapeHtml(host)}</span></div>
       <div class="kv"><span class="key">poll interval</span><span class="val">3s</span></div>
       <div class="kv"><span class="key">your client</span><span class="val">cookie auth</span></div>
+    </div>
+  </div>
+</div>
+<div id="page-agents" class="page">
+  <div class="agents-bar">
+    <span id="agents-summary">loading…</span>
+    <div class="agents-toggle">
+      <label><input type="checkbox" id="agents-show-missing" checked> show missing</label>
+    </div>
+  </div>
+  <div id="agents-list-container">loading…</div>
+</div>
+<div id="page-settings" class="page">
+  <div id="settings-grid">
+    <div class="about-card">
+      <h3>Discovery</h3>
+      <div class="kv"><span class="key">config source</span><span class="val" id="settings-config-source">—</span></div>
+      <div class="kv"><span class="key">state dir</span><span class="val" id="settings-state-dir">—</span></div>
+      <div class="kv"><span class="key">tmux on PATH</span><span class="val" id="settings-tmux">—</span></div>
+    </div>
+    <div class="about-card">
+      <h3>Listen</h3>
+      <div class="kv"><span class="key">port</span><span class="val" id="settings-port">—</span></div>
+      <div class="kv"><span class="key">host</span><span class="val" id="settings-listen-host">—</span></div>
+    </div>
+    <div class="about-card">
+      <h3>Environment</h3>
+      <div class="kv"><span class="key">LLMUXD_PORT</span><span class="val" id="settings-env-llmuxd-port">—</span></div>
+      <div class="kv"><span class="key">LLMUXD_HOST</span><span class="val" id="settings-env-llmuxd-host">—</span></div>
+      <div class="kv"><span class="key">LLMUX_PORT</span><span class="val" id="settings-env-llmux-port">—</span></div>
+      <div class="kv"><span class="key">XDG_STATE_HOME</span><span class="val" id="settings-env-xdg">—</span></div>
+    </div>
+    <div class="about-card">
+      <h3>Loaded YAML</h3>
+      <pre id="settings-yaml" class="yaml-blob">—</pre>
     </div>
   </div>
 </div>
@@ -602,8 +669,8 @@ function pickerPage(): string {
   // point; each "page" is just a div toggled by adding/removing .active.
   // Last-viewed page persists in localStorage so a hard reload keeps the
   // operator on the same screen.
-  const ROUTES = ['sessions', 'tokens', 'about'];
-  const PAGE_TITLES = { sessions: 'Sessions', tokens: 'Tokens', about: 'About' };
+  const ROUTES = ['sessions', 'tokens', 'agents', 'settings', 'about'];
+  const PAGE_TITLES = { sessions: 'Sessions', tokens: 'Tokens', agents: 'Agents', settings: 'Settings', about: 'About' };
   const navToggle = document.getElementById('nav-toggle');
   const navDrawer = document.getElementById('nav-drawer');
   const navBackdrop = document.getElementById('nav-backdrop');
@@ -637,6 +704,8 @@ function pickerPage(): string {
     closeDrawer();
     if (name === 'tokens') refreshTokens();
     if (name === 'about') refreshAbout();
+    if (name === 'agents') refreshAgents();
+    if (name === 'settings') refreshSettings();
   }
   navDrawer.querySelectorAll('a[data-page]').forEach(function(a){
     a.addEventListener('click', function(e){
@@ -1466,6 +1535,118 @@ function pickerPage(): string {
     if (document.getElementById('page-about').classList.contains('active')){
       clearTimeout(aboutTimer);
       aboutTimer = setTimeout(refreshAbout, 5000);
+    }
+  }
+
+  // ---- Agents page ----
+  // Lists every agent the daemon knows about (installed + missing). Counts
+  // running sessions per-agent from the current poll's session list. Reuses
+  // /api/agents/all which the new-session help modal already calls.
+  const agentsListContainer = document.getElementById('agents-list-container');
+  const agentsSummary = document.getElementById('agents-summary');
+  const agentsShowMissing = document.getElementById('agents-show-missing');
+  let agentsCache = null;
+
+  function agentRowHtml(a, runningCount){
+    const status = a.installed
+      ? '<span class="agent-status ok">installed</span>'
+      : '<span class="agent-status miss">missing</span>';
+    const runningBadge = runningCount > 0
+      ? '<span class="agent-running">' + runningCount + ' running</span>'
+      : '';
+    const install = a.installHint
+      ? '<div class="agent-install" data-copy="' + escapeHtml(a.installHint) + '" title="tap to copy">' + escapeHtml(a.installHint) + '</div>'
+      : '';
+    const docs = a.docsUrl
+      ? '<a class="agent-docs" href="' + escapeHtml(a.docsUrl) + '" target="_blank" rel="noopener">docs ↗</a>'
+      : '';
+    return '<div class="agent-row ' + (a.installed ? '' : 'missing') + '">' +
+      '<div class="agent-head">' +
+        '<span class="agent-name">' + escapeHtml(a.displayName) + '</span>' +
+        '<span class="agent-key">' + escapeHtml(a.key) + '</span>' +
+        status + runningBadge +
+      '</div>' +
+      install + docs +
+      '</div>';
+  }
+
+  function renderAgents(){
+    if (!agentsCache) return;
+    // Build the running-count map from the Sessions page DOM — every tr
+    // carries data-agent + a .state-running/.state-exited cell. We read
+    // from the DOM rather than re-polling /api/sessions to keep the
+    // Agents page free of its own poll loop.
+    const runByAgent = new Map();
+    container.querySelectorAll('tbody tr').forEach(function(tr){
+      const agent = tr.dataset.agent;
+      const stateCell = tr.querySelector('.state-running');
+      if (agent && stateCell){
+        runByAgent.set(agent, (runByAgent.get(agent) || 0) + 1);
+      }
+    });
+    const showMissing = agentsShowMissing.checked;
+    const visible = agentsCache.filter(function(a){ return showMissing || a.installed; });
+    if (visible.length === 0){
+      agentsListContainer.innerHTML = '<div class="empty">no agents to show</div>';
+    } else {
+      agentsListContainer.innerHTML = visible.map(function(a){
+        return agentRowHtml(a, runByAgent.get(a.key) || 0);
+      }).join('');
+    }
+    const installedCount = agentsCache.filter(function(a){ return a.installed; }).length;
+    agentsSummary.textContent = installedCount + ' of ' + agentsCache.length + ' installed on this host';
+  }
+
+  async function refreshAgents(){
+    try {
+      const r = await fetch('/api/agents/all', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      agentsCache = await r.json();
+      renderAgents();
+    } catch(e){
+      agentsListContainer.innerHTML = '<div class="empty">failed to load agents: ' + escapeHtml(e.message || String(e)) + '</div>';
+    }
+  }
+  agentsShowMissing.addEventListener('change', renderAgents);
+  agentsListContainer.addEventListener('click', async function(e){
+    const target = e.target.closest('[data-copy]');
+    if (!target) return;
+    const text = target.dataset.copy;
+    if (await copyText(text)) showToast('copied');
+  });
+
+  // ---- Settings page ----
+  // Read-only diagnostic info: where the daemon thinks its config + state
+  // live, what envs are active, what YAML is loaded. The /api/settings
+  // endpoint is added in this release.
+  const settingsConfigSource = document.getElementById('settings-config-source');
+  const settingsStateDir = document.getElementById('settings-state-dir');
+  const settingsTmux = document.getElementById('settings-tmux');
+  const settingsPort = document.getElementById('settings-port');
+  const settingsListenHost = document.getElementById('settings-listen-host');
+  const settingsYaml = document.getElementById('settings-yaml');
+  const settingsEnvLlmuxdPort = document.getElementById('settings-env-llmuxd-port');
+  const settingsEnvLlmuxdHost = document.getElementById('settings-env-llmuxd-host');
+  const settingsEnvLlmuxPort = document.getElementById('settings-env-llmux-port');
+  const settingsEnvXdg = document.getElementById('settings-env-xdg');
+
+  async function refreshSettings(){
+    try {
+      const r = await fetch('/api/settings', { cache: 'no-store' });
+      if (!r.ok) throw new Error('http ' + r.status);
+      const data = await r.json();
+      settingsConfigSource.textContent = data.configSource || '(no .llmux.yaml found; using defaults)';
+      settingsStateDir.textContent = data.stateDir || '—';
+      settingsTmux.textContent = data.tmuxAvailable ? 'yes' : 'no';
+      settingsPort.textContent = String(data.port);
+      settingsListenHost.textContent = data.listenHost || '0.0.0.0';
+      settingsEnvLlmuxdPort.textContent = data.env.LLMUXD_PORT || '(unset)';
+      settingsEnvLlmuxdHost.textContent = data.env.LLMUXD_HOST || '(unset)';
+      settingsEnvLlmuxPort.textContent = data.env.LLMUX_PORT || '(unset)';
+      settingsEnvXdg.textContent = data.env.XDG_STATE_HOME || '(unset)';
+      settingsYaml.textContent = data.yamlText || '(no .llmux.yaml found)';
+    } catch(e){
+      settingsConfigSource.textContent = 'failed to load: ' + (e.message || String(e));
     }
   }
 
@@ -3243,6 +3424,38 @@ export function startServer(opts: ServeOptions): ServerHandle {
       }));
       return sendJson(res, all);
     }
+
+    // ---- Settings (read-only diagnostic) ----
+    // Surface what the daemon resolved for its config path / state dir /
+    // listen address, plus the verbatim YAML text for visual inspection.
+    // No mutation surface; this is a debug aid for operators wondering
+    // "where did this daemon think its config was."
+    if (url.pathname === '/api/settings' && method === 'GET') {
+      const cfg = opts.config;
+      let yamlText = '';
+      if (cfg?.sourcePath) {
+        try { yamlText = readFileSync(cfg.sourcePath, 'utf8'); } catch { yamlText = '(failed to read config file)'; }
+      }
+      let tmuxAvailable = false;
+      try { tmux.requireTmux(); tmuxAvailable = true; } catch { tmuxAvailable = false; }
+      return sendJson(res, {
+        version: DAEMON_VERSION,
+        host: hostname(),
+        configSource: cfg?.sourcePath ?? null,
+        yamlText,
+        stateDir: state.stateDir(),
+        tmuxAvailable,
+        port: opts.port,
+        listenHost: opts.host,
+        env: {
+          LLMUXD_PORT: process.env.LLMUXD_PORT ?? null,
+          LLMUXD_HOST: process.env.LLMUXD_HOST ?? null,
+          LLMUX_PORT: process.env.LLMUX_PORT ?? null,
+          XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? null,
+        },
+      });
+    }
+
     if (url.pathname === '/api/sessions' && method === 'POST') {
       try {
         const body = (await readJsonBody(req)) as { agent?: unknown; name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown; resumeFrom?: unknown };

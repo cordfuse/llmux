@@ -5,6 +5,40 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-06-18
+
+### Added — Agents screen + Settings screen
+
+Two new nav items, separate Settings as requested. Both are read-only
+diagnostic views.
+
+**Agents screen** lists every agent the daemon knows about. Each row
+shows display name, key, install status (✓ installed / · missing),
+running session count (badge), install hint (tap to copy), and a
+docs link. A "show missing" toggle hides uninstalled agents.
+
+Running-session counts come from the Sessions page DOM so this screen
+doesn't add its own poll loop — the 3s session poll keeps the badges
+fresh whenever Sessions has been visited at least once.
+
+**Settings screen** is pure read-only diagnostic data:
+- Discovery: where the YAML came from (or "no .llmux.yaml found"),
+  state dir path, tmux availability
+- Listen: resolved port + host the daemon is bound to
+- Environment: LLMUXD_PORT / LLMUXD_HOST / LLMUX_PORT / XDG_STATE_HOME
+  (each shown as either the set value or `(unset)`)
+- Loaded YAML: verbatim content of the discovered .llmux.yaml
+
+### REST API addition
+
+- `GET /api/settings` — returns the daemon's resolved config source +
+  YAML text + state dir + listen port/host + env vars + version.
+  Read-only diagnostic. v0.24.1 callers unaffected.
+- `ServeOptions.config` is now an optional field (the loaded
+  `LlmuxConfig`). When passed, `/api/settings` surfaces the source
+  path + YAML content. `handleServe` in handlers.ts passes the loaded
+  config through.
+
 ## [0.24.1] — 2026-06-18
 
 ### Added — One-shot send-prompt (web), Broadcast, QR for new tokens, Sessions filter
