@@ -846,6 +846,7 @@ function pickerPage(): string {
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" data-init="' + escapeHtml(JSON.stringify(s.initPrompts || [])) + '" title="edit name, cwd, flags, env, init prompts" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
+    const killBtn = '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" title="kill this session and remove its state record" aria-label="kill"><span class="icon">✕</span><span class="label">kill</span></button>';
     const sendBtn = s.status === 'running'
       ? '<button class="send-btn" data-action="send" data-name="' + escapeHtml(s.name) + '" title="send a prompt to this session without attaching the terminal" aria-label="send"><span class="icon">⤴</span><span class="label">send</span></button>'
       : '';
@@ -860,7 +861,7 @@ function pickerPage(): string {
       '<td>' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
-      '<td class="actions">' + resumeBtn + sendBtn + editBtn + '</td>' +
+      '<td class="actions">' + resumeBtn + sendBtn + editBtn + killBtn + '</td>' +
       '</tr>';
   }
 
@@ -1169,6 +1170,32 @@ function pickerPage(): string {
     }
     if (kind === 'send'){
       openPromptModal({ kind: 'single', name: name });
+      return;
+    }
+    if (kind === 'kill'){
+      // Per-row Kill — v0.31.2 home for the verb after the bulk toolbar's
+      // 6-button overflow drove it off-fold on portrait phones. The same
+      // askConfirm gate that guarded bulk Kill now guards the per-row tap.
+      (async function(){
+        const ok = await askConfirm({
+          title: 'Kill session?',
+          body: 'Terminate <code>' + escapeHtmlSafe(name) + '</code> and remove its state record. The agent process will be killed. This cannot be undone.',
+          okLabel: 'kill',
+          destructive: true,
+        });
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          const r = await fetch('/api/sessions/' + encodeURIComponent(name) + '/kill', { method: 'POST' });
+          const data = await r.json().catch(function(){ return {}; });
+          if (!r.ok || data.ok === false) throw new Error(data.error || 'kill failed');
+          showToast('killed ' + name);
+          poll();
+        } catch(e){
+          showToast('kill failed: ' + (e.message || e), true);
+          btn.disabled = false;
+        }
+      })();
       return;
     }
   });
