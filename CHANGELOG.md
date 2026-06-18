@@ -5,6 +5,26 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.31.2] — 2026-06-18
+
+### Added — Per-row Kill icon on every Sessions row
+
+v0.31.1 moved Kill out of the bulk toolbar and into the per-session
+edit form. Discoverability cost: an operator looking at the table
+saw no Kill verb anywhere and had to open the edit form first to
+find it. That defeated the original motivation (which was Kill's
+poor discoverability when it lived off the right edge of the bulk
+toolbar).
+
+v0.31.2 adds a red `✕ kill` icon button on every row, sitting next
+to the existing per-row Edit pencil + Resume + Send icons. Same
+`askConfirm` gate as before. The previously-added in-form Kill button
+stays — operators already mid-edit can still kill from there without
+closing the form, but the discoverable home is the per-row icon.
+
+Click → confirm modal → `POST /api/sessions/<name>/kill` → toast +
+poll. Identical to the v0.31.1 flow, just visible from the table.
+
 ## [0.31.1] — 2026-06-18
 
 ### Changed — Kill moved out of the bulk toolbar into the per-session edit form
