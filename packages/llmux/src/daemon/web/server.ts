@@ -464,10 +464,18 @@ function pickerPage(): string {
   #convs-modal .actions{display:flex;justify-content:flex-end}
   #convs-modal button.close-btn{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
   #convs-modal button.close-btn:hover{background:#252b34}
+  /* On desktop the inline agent line inside name-block is redundant with
+     the dedicated AGENT column, so suppress it. */
+  .name-block .agent-inline{display:none}
   /* Mobile: hide cwd column, show under name */
   @media (max-width: 600px){
     body{padding:14px 8px 72px}
     th.cwd-col,td.cwd-col{display:none}
+    /* Hide the dedicated AGENT column — it's redundant when the session name
+       defaults to the agent key; rowHtml() emits an "agent-inline" line in
+       name-block when name and agent differ, which only renders on mobile. */
+    th.agent-col,td.agent-col{display:none}
+    .name-block .agent-inline{display:block;color:#7a7f87;font-size:11px;margin-top:2px}
     .name-block .cwd{display:block;margin-top:3px;max-width:100%}
     th,td{padding:8px 4px;font-size:13px}
     .name-block{max-width:42vw}
@@ -475,6 +483,16 @@ function pickerPage(): string {
     /* Buttons collapse to icon-only — long-press surfaces title= for label. */
     .actions button .label{display:none}
     .actions button{padding:5px 6px;min-width:28px;justify-content:center;margin-left:2px}
+  }
+  /* Sub-420px viewports (Pixel/Galaxy portrait, Steve's screenshot) — tighten
+     button width further so 4 per-row icons (Conversations / Resume / Edit /
+     Kill on a session with history) still fit without clipping the right
+     edge of the viewport. */
+  @media (max-width: 420px){
+    .actions button{padding:5px 4px;min-width:24px;margin-left:1px}
+    .actions button .icon{font-size:12px}
+    .name-block{max-width:38vw}
+    th,td{padding:7px 3px;font-size:12px}
   }
   @media (min-width: 601px){
     .name-block .cwd{display:none}
@@ -855,10 +873,18 @@ function pickerPage(): string {
       : '';
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
+    // On mobile the AGENT column is hidden via CSS (it's redundant when the
+    // session name defaults to the agent key); we surface a small inline
+    // "agent: X" line inside the name-block so the agent is still visible
+    // when the name differs from the agent. The name-block agent line is
+    // hidden on desktop where the dedicated AGENT column is visible.
+    const agentInNameBlock = s.agent !== s.name
+      ? '<span class="agent-inline">' + escapeHtml(s.agent) + '</span>'
+      : '';
     return '<tr data-name="' + escapeHtml(s.name) + '" data-agent="' + escapeHtml(s.agent) + '">' +
       '<td class="select-col"><input type="checkbox" class="row-select" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" aria-label="select ' + escapeHtml(s.name) + '"></td>' +
-      '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></span></td>' +
-      '<td>' + escapeHtml(s.agent) + '</td>' +
+      '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + agentInNameBlock + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></span></td>' +
+      '<td class="agent-col">' + escapeHtml(s.agent) + '</td>' +
       '<td class="' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
       '<td class="actions">' + resumeBtn + sendBtn + editBtn + killBtn + '</td>' +
@@ -871,7 +897,7 @@ function pickerPage(): string {
       return;
     }
     const rows = sessions.map(rowHtml).join('');
-    container.innerHTML = '<table><thead><tr><th class="select-col"><input type="checkbox" id="select-all" aria-label="select all"></th><th>name</th><th>agent</th><th>state</th><th class="cwd-col">cwd</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    container.innerHTML = '<table><thead><tr><th class="select-col"><input type="checkbox" id="select-all" aria-label="select all"></th><th>name</th><th class="agent-col">agent</th><th>state</th><th class="cwd-col">cwd</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
   // ---- Bulk selection state ----
@@ -2250,7 +2276,7 @@ function renderSessionTable(_sessions: SessionView[]): string {
   // keeps the page layout stable while the real rows load in.
   return `<table><thead><tr>
     <th class="select-col"><input type="checkbox" id="select-all" aria-label="select all" disabled></th>
-    <th>name</th><th>agent</th><th>state</th><th class="cwd-col">cwd</th><th></th>
+    <th>name</th><th class="agent-col">agent</th><th>state</th><th class="cwd-col">cwd</th><th></th>
   </tr></thead><tbody><tr><td colspan="6" style="padding:14px;color:#7a7f87;text-align:center">loading sessions…</td></tr></tbody></table>`;
 }
 
