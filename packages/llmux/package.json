@@ -1,6 +1,6 @@
 {
   "name": "@cordfuse/llmux",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "description": "tmux-based AI agent dispatcher — REST/WS daemon + CLI client in one binary",
   "license": "MIT",
   "type": "module",
@@ -11,6 +11,7 @@
     "bin",
     "dist",
     "src",
+    "scripts",
     "README.md",
     "LICENSE"
   ],
@@ -23,6 +24,7 @@
     "build": "tsup src/index.ts --target node20 --format esm --out-dir dist --external node-pty --external ws --external yaml --external qrcode-terminal --clean",
     "prepublishOnly": "cp ../../README.md ../../LICENSE . && npm run build",
     "postpublish": "rm -f README.md LICENSE",
+    "postinstall": "node scripts/fix-pty-permissions.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

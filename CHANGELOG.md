@@ -5,6 +5,49 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.22.1] — 2026-06-18
+
+### Fixed — web terminal broken on every fresh macOS install (F6, BLOCKER)
+
+node-pty's published tarball ships its macOS `spawn-helper` binaries
+(`prebuilds/darwin-arm64/spawn-helper`, `prebuilds/darwin-x64/spawn-helper`)
+at mode `0644` instead of `0755`. macOS uses `posix_spawnp` on this
+helper to open a pty, and `posix_spawnp` on a non-executable file
+fails — every WS terminal attach died with `4040 spawn failed:
+posix_spawnp failed` surfaced to the user as the misleading "session
+ended — The tmux session is no longer running."
+
+Linux is unaffected (forkpty, no helper exec), so cachy-side testing
+never saw it. Mac caught it on a fresh `npm i -g @cordfuse/llmux`
+install of v0.21.3.
+
+Fix is a small `postinstall` script (`scripts/fix-pty-permissions.mjs`)
+that `chmod 0755`'s the two darwin helpers if they exist. Runs on every
+consumer install. Defensive: any failure (read-only fs, node-pty not
+present, etc.) is swallowed so the postinstall hook can never break a
+fresh install.
+
+Operators on macOS already running v0.21.3 with the manual chmod
+workaround can either re-install to pick up the auto-fix, or just
+leave the workaround in place — both work.
+
+### Fixed — `--flag value` rejected values starting with `-` (F1)
+
+`llmux session start --flags "--model opus"` (the documented form)
+errored with `--flags requires a value` because the parser treated any
+`-`-prefixed next token as a new flag rather than the previous flag's
+value. The `--flags="--model opus"` equals form worked. This
+contradicted both the inline `--help` text and the v0.21.2 audit's
+inert-flag fix narrative (`--flags` was wired but unreachable).
+
+Parser now only errors on truly-missing values (`next === undefined`).
+Trade-off: if you typo `--name --cwd /tmp` intending to chain two
+flags, the parser silently accepts `--cwd` as the value of `--name`
+and `/tmp` as a positional. Standard parser tradeoff — matches Node's
+`util.parseArgs` default behavior and most modern CLIs.
+
+`--flag=value` form continues to work identically.
+
 ## [0.22.0] — 2026-06-18
 
 ### Security — pairing QR now uses URL fragment, not query string
