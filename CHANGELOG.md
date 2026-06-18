@@ -5,6 +5,67 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-06-18
+
+### Added — hamburger nav + multi-page web UI scaffolding
+
+The Sessions page is no longer the only screen. The web UI got a
+slide-out hamburger drawer (top-left) with three nav targets:
+
+- **Sessions** — the existing page, unchanged
+- **Tokens** — full CRUD on auth tokens (see below)
+- **About** — daemon info, version, hostname, live session + token counts
+
+Last-viewed page persists in `localStorage` (key `llmux.page`) so a hard
+reload keeps the operator on the same screen. The global "+ new session"
+header button is hidden on non-Sessions screens to avoid confusion.
+
+### Added — Tokens screen + REST API
+
+`/api/tokens` REST surface, mirrors the CLI verbs:
+
+- `GET    /api/tokens`        — list (id / name / createdAt / expiresAt; never the value)
+- `POST   /api/tokens`        — create. Response includes the value ONCE (`{value, token}`). 201 on success.
+- `PATCH  /api/tokens/:id`    — rename (body: `{name}`; empty string clears)
+- `DELETE /api/tokens/:id`    — revoke a single token
+- `DELETE /api/tokens`        — revoke all (returns `{removed, before}`)
+
+The Tokens web screen wraps it:
+
+- **+ new token** button → inline create form (name + optional ISO-8601 expiry)
+- Create success → modal showing the token value (tap to copy) + the
+  pairing URL with the fragment form (`https://host:port/#token=…`).
+  The value is shown once; closing the modal clears it.
+- **rename** (per-row) → browser `prompt()` for the new name; PATCH on submit
+- **revoke** (per-row) → confirm modal → DELETE
+- **revoke all** → confirm modal → DELETE on the collection
+
+Closes the install-time blocker for the mobile-first pitch: every new
+device pairing previously required SSH to the daemon host. Now any
+authenticated browser session can mint a fresh pairing token + show the
+URL to scan or paste on a second device.
+
+### Added — About screen
+
+Live daemon info: host, version, sessions count, auth status, active
+token count, web client info. Polls `/health` + `/api/tokens` every 5s
+while the About page is the active screen.
+
+### CSS / layout
+
+- New nav drawer + backdrop, slide-in from left, dim background overlay
+- `.page` containers (only one `.active` at a time)
+- Tokens screen styling: table + per-row action buttons, inline create
+  form, token-secret reveal modal with "tap to copy" hint
+- About screen: card grid (1-col mobile, 2-col desktop)
+
+### Backwards compatibility
+
+- Existing Sessions page rendering / behavior unchanged
+- CLI surface unchanged
+- New REST routes are additive; no existing route changed
+- `localStorage` key `llmux.page` is the only new client-side state
+
 ## [0.23.0] — 2026-06-18
 
 ### Added — multi-select bulk toolbar on the Sessions web UI
