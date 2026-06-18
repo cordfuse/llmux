@@ -1774,13 +1774,10 @@ function gatePage(reason: 'missing' | 'invalid'): string {
   const form = document.getElementById('auth-form');
   const input = document.getElementById('token');
   const msg = document.getElementById('msg');
-  form.addEventListener('submit', async function(e){
-    e.preventDefault();
-    const token = input.value.trim();
-    if (!token) return;
-    msg.textContent = '';
+
+  async function submitToken(token, { silent } = {}){
     const btn = form.querySelector('button');
-    btn.disabled = true;
+    if (!silent) btn.disabled = true;
     try {
       const r = await fetch('/api/auth', {
         method: 'POST',
@@ -1789,24 +1786,54 @@ function gatePage(reason: 'missing' | 'invalid'): string {
       });
       if (!r.ok) {
         const body = await r.json().catch(function(){ return {}; });
-        msg.textContent = body.error || 'token rejected';
-        btn.disabled = false;
-        input.focus();
-        input.select();
-        return;
+        if (!silent) {
+          msg.textContent = body.error || 'token rejected';
+          btn.disabled = false;
+          input.focus();
+          input.select();
+        }
+        return false;
       }
-      // Cookie set by server; reload the originally requested URL so the
-      // user lands where they wanted, not at /. Strip any stale ?token= from
-      // the URL — if we left it, the canonical-url rule on the next request
-      // would invalidate the cookie we just set (infinite gate loop).
+      // Cookie set. Strip any token from the URL — both ?token= and #token=
+      // — before navigating so the auth credential isn't left behind in
+      // browser history or the address bar. Leaving ?token= here would also
+      // re-fire the server's canonical-url 302 rule and invalidate our cookie.
       const params = new URLSearchParams(location.search);
       params.delete('token');
       const query = params.toString();
       location.href = location.pathname + (query ? '?' + query : '');
+      return true;
     } catch(err){
-      msg.textContent = 'request failed: ' + (err.message || err);
-      btn.disabled = false;
+      if (!silent) {
+        msg.textContent = 'request failed: ' + (err.message || err);
+        btn.disabled = false;
+      }
+      return false;
     }
+  }
+
+  // First-tap pairing: token rides in the URL fragment (#token=…), which
+  // browsers never send to the server. Read it, POST it, strip it. If this
+  // path fires the user never sees the unlock form.
+  const hash = location.hash || '';
+  if (hash.startsWith('#token=')) {
+    const fragToken = decodeURIComponent(hash.slice('#token='.length));
+    // Strip the fragment from the visible URL immediately (before the POST
+    // resolves) so the address bar doesn't briefly show the token.
+    try { history.replaceState(null, '', location.pathname + location.search); } catch(_){}
+    if (fragToken) {
+      submitToken(fragToken, { silent: true }).then(function(ok){
+        if (!ok) input.focus();
+      });
+    }
+  }
+
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    const token = input.value.trim();
+    if (!token) return;
+    msg.textContent = '';
+    submitToken(token);
   });
   input.focus();
 })();
@@ -2216,13 +2243,19 @@ export function startServer(opts: ServeOptions): ServerHandle {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const method = req.method ?? 'GET';
 
-    // ---- Deep-link auth: ?token=<sas> on any path ----
-    // When ?token= is present, the URL is canonical — it overrides any existing
-    // cookie. Valid → 302 + set cookie + clean redirect. Invalid → clear the
-    // cookie (so a stale prior session doesn't mask the rejection) + serve the
-    // gate so the test is visible.
+    // ---- Deep-link auth: ?token=<sas> on any path (LEGACY) ----
+    // v0.22.0 moved first-tap pairing to a URL fragment (#token=) so the
+    // credential never reaches the server in the request line. This branch
+    // stays for one release to keep older QRs working, with a one-shot
+    // operator warning that surfaces the URL-borne credential in logs.
+    // Valid → 302 + set cookie + clean redirect. Invalid → clear the cookie
+    // (so a stale prior session doesn't mask the rejection) + serve the gate.
     const queryToken = url.searchParams.get('token');
     if (queryToken) {
+      console.warn(
+        `[llmux] deprecated: ?token= in URL — visible in server / proxy / browser logs. ` +
+        `Regenerate the pairing QR with \`llmux token create --qr\` on v0.22.0+ to use the fragment form.`,
+      );
       if (authStore.validateAuthToken(queryToken)) {
         url.searchParams.delete('token');
         const cleanPath = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');

@@ -5,6 +5,52 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-06-18
+
+### Security — pairing QR now uses URL fragment, not query string
+
+Pairing tokens previously rode in the URL query string (`?token=sas_…`).
+TLS protects them on the wire, but the server, any reverse proxy
+(Tailscale serve, Caddy, nginx), the operator's terminal scrollback,
+the phone browser's history, and the `Referer` header on outbound links
+all saw the credential in plaintext.
+
+QR URLs now use the **URL fragment** (`#token=sas_…`). Browsers never
+send the fragment in the HTTP request — it stays purely client-side.
+The gate page reads `window.location.hash`, POSTs the token to
+`/api/auth`, and `history.replaceState`s the fragment off the visible
+URL before the auth POST completes. Server logs, proxy logs, browser
+history, and referrer headers no longer see the token.
+
+Same one-tap pairing UX. No CLI changes — the CLI was already clean
+(`Authorization: Bearer` header from `--token` / `LLMUX_TOKEN`).
+
+### Backwards compatibility
+
+`?token=` URLs still work for one release so any QR already scanned or
+in-flight continues to function. A one-line operator warning prints
+to the daemon console whenever `?token=` is consumed:
+
+```
+[llmux] deprecated: ?token= in URL — visible in server / proxy / browser logs.
+Regenerate the pairing QR with `llmux token create --qr` on v0.22.0+ to use the fragment form.
+```
+
+A future release will drop the legacy path entirely.
+
+### Known follow-ups (NOT in this release)
+
+The fragment fix closes the URL-token leak on the web pairing path
+only. Two adjacent items mac flagged are scoped for separate work:
+
+- **CLI WS still passes `?token=` on the WebSocket URL** (`client.ts`
+  `openWs`). Browsers can't set `Authorization` on the WS upgrade
+  directly, but the CLI's hand-rolled WS client can. Same operator-log
+  exposure, less severe (CLI is operator-machine local). Backlog.
+- **At-rest token hashing.** Tokens are stored plaintext in `auth.json`
+  (0600). Mac's CR proposes SHA-256 hash + `crypto.timingSafeEqual` +
+  silent `version 1 → 2` migration. Worth doing, separate change.
+
 ## [0.21.3] — 2026-06-17
 
 ### Fixed — `token create --qr` produced wrong URL on non-default ports
