@@ -5,6 +5,92 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.31.0] — 2026-06-18
+
+### Added — Settings page is now writable (daemon init prompts + turnq from the web UI)
+
+Two cards on the Settings page changed from read-only displays to
+inline editors:
+
+- **DAEMON INIT PROMPTS** — textarea (one prompt per line) + Save button.
+  Replaces the prior "edit `.llmux.yaml` on the daemon host" placeholder.
+  Wipe semantics match the session-edit modal: leaving the textarea
+  empty saves an empty list, no prompts fire on spawn.
+- **TURNQ (FIFO turn coordination)** — enabled (checkbox), url (text;
+  empty = local flock mode), max-hold ms (number) + Save button.
+  Mode (`local` / `distributed` / `disabled`) is derived live from
+  enabled + url and shown as a read-only badge.
+
+Both cards persist edits to a new **runtime overlay file** at
+`~/.config/llmux/overrides.yaml` rather than mutating the operator's
+hand-edited base config. The base file (`.llmux.yaml` or
+`~/.config/llmux/config.yaml`) keeps its comments + formatting
+pristine. The daemon loads base + overlay at every `loadConfig()`
+call; the web server reloads its in-process snapshot after every
+write so the WebSocket attach path's turnq lookup picks up the new
+state without a daemon restart. Delete the overlay file to revert
+all UI edits to the on-disk base in one shot.
+
+The Settings page surfaces both:
+- **LOADED YAML** — the base file as it exists on disk (unchanged).
+  Now shows an `overlay active` badge next to the header when the
+  overlay file exists and has applied content.
+- **ACTIVE OVERRIDES** — a new card (visible only when an overlay is
+  applied) that shows the verbatim overlay YAML so the operator can
+  see exactly what was written by the UI.
+
+### Added — `PUT /api/settings/init-prompts` and `PUT /api/settings/turnq`
+
+Behind the same auth as the existing `GET /api/settings`. Both bodies
+are JSON; both return the updated effective values + an `overlayActive`
+flag. Schemas (truncated):
+
+```http
+PUT /api/settings/init-prompts
+{ "initPrompts": ["seed prompt", "another"] }
+
+PUT /api/settings/turnq
+{ "enabled": true, "url": "http://turnq.example.com:3003", "maxHoldMs": 30000 }
+```
+
+### Added — `loadOverride()` / `saveOverride()` / `overridePath()` in config.ts
+
+Atomic writes (write-to-tmp + rename) so a partial write can't tear
+the overlay file. `loadBaseConfig()` is exposed as the pre-overlay
+primitive in case future callers need the on-disk base without
+overlay merging.
+
+### Fixed — Settings page bottom padding clipping under fixed footer
+
+`.page` gained `padding-bottom:56px` so the last card on long pages
+(now including the editable Settings cards) doesn't hide under the
+fixed `auth required` footer.
+
+## [0.30.1] — 2026-06-18
+
+### Fixed — session-list page timed out on operator boxes with large Claude transcripts
+
+`viewOf()` called `agentDef.history.listConversations(cwd).length` on
+every render of the Sessions page to populate the conversation-count
+badge. `listConversations` reads + parses every `.jsonl` transcript
+in `~/.claude/projects/<encoded-cwd>/`. On long-running operator
+boxes that directory can hold hundreds of MB (a single transcript can
+exceed 50MB). `readFileSync` + `split('\n')` over all of them on
+every 3s poll blocked the event loop for ~1s per render and
+catastrophically longer when a session's cwd happened to map to a
+densely-populated `/tmp` directory — Steve's daemon's `/` route was
+timing out at 10s with the phone unable to load any page.
+
+Fix: new optional `countConversations(cwd)` method on
+`AgentHistoryAdapter`. `claudeHistory` overrides with a
+directory-only `readdirSync().filter(.jsonl).length` — no file reads.
+`viewOf` prefers it when available; falls back to the old parsed
+count for adapters that don't override.
+
+`listConversations` (the full parse) still fires when the operator
+opens the Resume modal on a row — that's a one-shot deliberate
+action, not a background poll.
+
 ## [0.30.0] — 2026-06-18
 
 ### Added — turnq integration (FIFO turn coordination)

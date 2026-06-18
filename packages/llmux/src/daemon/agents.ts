@@ -13,6 +13,15 @@ export interface Conversation {
 export interface AgentHistoryAdapter {
   /** Past conversations for this agent in this cwd, newest-first. */
   listConversations(cwd: string): Conversation[];
+  /**
+   * Fast count of past conversations for this agent in this cwd. Used by
+   * the session-list view's badge so a render doesn't have to parse every
+   * transcript file just to display a number. Defaults to
+   * listConversations(cwd).length if an adapter doesn't override — but
+   * Claude Code transcripts can run hundreds of MB, so claudeHistory
+   * overrides this with a directory-only count.
+   */
+  countConversations?(cwd: string): number;
   /** Build the launch flag fragment to resume a specific conversation. */
   resumeFlag(conversationId: string): string;
 }
@@ -132,6 +141,19 @@ const claudeHistory: AgentHistoryAdapter = {
       }
     }
     return out.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  },
+  countConversations(cwd: string): number {
+    // Fast directory-only count — does NOT parse any transcript file.
+    // The session-list view calls this on every poll; parsing was reading
+    // hundreds of MB per render before, blocking the event loop for
+    // seconds and timing the page out.
+    const dir = join(homedir(), '.claude', 'projects', encodeClaudeCwd(cwd));
+    if (!existsSync(dir)) return 0;
+    try {
+      return readdirSync(dir).filter((f) => f.endsWith('.jsonl')).length;
+    } catch {
+      return 0;
+    }
   },
   resumeFlag(id: string): string {
     return `--resume ${id}`;
