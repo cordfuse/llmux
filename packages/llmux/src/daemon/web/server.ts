@@ -397,6 +397,8 @@ function pickerPage(): string {
   #new-form .actions{display:flex;gap:8px;justify-content:flex-end}
   #new-form button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:12px ui-monospace,monospace;cursor:pointer}
   #new-form button.primary{color:#7cc4ff;border-color:#2d4a66}
+  #new-form button.destructive{color:#f85149;border-color:#4a2329;margin-right:auto}
+  #new-form button.destructive:hover{background:#2a181a;border-color:#6e3338}
   #new-form button:hover{background:#252b34}
   #new-form button:disabled{opacity:.5;cursor:wait}
   #new-form .hint{font-size:11px;color:#7a7f87;margin-top:-4px;margin-bottom:10px}
@@ -542,6 +544,7 @@ function pickerPage(): string {
     </div>
     <div id="new-init-hint" class="hint">Daemon-wide prompts are configured in .llmux.yaml (see Settings → Daemon init prompts). These per-session prompts fire after the daemon ones.</div>
     <div class="actions">
+      <button type="button" id="new-kill" class="destructive" hidden title="Kill this session and remove its state record (web-UI replacement for the bulk Kill button removed in v0.31.1)">kill</button>
       <button type="button" id="new-cancel">cancel</button>
       <button type="submit" class="primary" id="new-submit">spawn</button>
     </div>
@@ -558,7 +561,6 @@ function pickerPage(): string {
     <button id="bulk-stop" type="button" class="stop" disabled title="Stop every checked session that's currently running">Stop</button>
     <button id="bulk-respawn" type="button" class="respawn" disabled title="Respawn every checked session (kill + relaunch with persisted config)">Respawn</button>
     <button id="bulk-broadcast" type="button" class="broadcast" disabled title="Send the same prompt to every checked running session">Broadcast</button>
-    <button id="bulk-kill" type="button" class="kill" disabled title="Kill every checked session and remove its state record">Kill</button>
   </div>
   <span id="bulk-count">0 selected</span>
 </div>
@@ -885,7 +887,6 @@ function pickerPage(): string {
   const bulkStop = document.getElementById('bulk-stop');
   const bulkRespawn = document.getElementById('bulk-respawn');
   const bulkBroadcast = document.getElementById('bulk-broadcast');
-  const bulkKill = document.getElementById('bulk-kill');
   const bulkCount = document.getElementById('bulk-count');
 
   function updateToolbarState(){
@@ -900,7 +901,6 @@ function pickerPage(): string {
     bulkStop.disabled = running === 0;
     bulkRespawn.disabled = total === 0;
     bulkBroadcast.disabled = running === 0;
-    bulkKill.disabled = total === 0;
     bulkCount.textContent = total + ' selected';
   }
 
@@ -1375,20 +1375,35 @@ function pickerPage(): string {
     }
     openPromptModal({ kind: 'bulk', names: runningNames, totalSelected: selected.size });
   });
-  bulkKill.addEventListener('click', async function(){
-    const count = selected.size;
-    if (count === 0) return;
-    const names = [...selected];
+  // Per-session Kill lives inside the edit form (formMode.edit). The bulk
+  // Kill button was removed in v0.31.1 — at 6 toolbar buttons it was hanging
+  // off the right edge of portrait phones and discoverable only via horizontal
+  // scroll. Killing is destructive enough that one-at-a-time-from-the-edit-
+  // form is the correct rhythm; bulk Stop covers the common cleanup case.
+  const newKillBtn = document.getElementById('new-kill');
+  newKillBtn.addEventListener('click', async function(){
+    if (!formMode || !formMode.edit) return;
+    const name = formMode.edit;
     const ok = await askConfirm({
-      title: count === 1 ? 'Kill session?' : 'Kill ' + count + ' sessions?',
-      body: count === 1
-        ? 'Terminate <code>' + escapeHtmlSafe(names[0]) + '</code> and remove its state record. The agent process will be killed. This cannot be undone.'
-        : 'Terminate ' + count + ' sessions and remove their state records. The agent processes will be killed. This cannot be undone.',
+      title: 'Kill session?',
+      body: 'Terminate <code>' + escapeHtmlSafe(name) + '</code> and remove its state record. The agent process will be killed. This cannot be undone.',
       okLabel: 'kill',
       destructive: true,
     });
     if (!ok) return;
-    bulkAction({ kind: 'kill', verb: 'killed' });
+    newKillBtn.disabled = true;
+    try {
+      const r = await fetch('/api/sessions/' + encodeURIComponent(name) + '/kill', { method: 'POST' });
+      const data = await r.json().catch(function(){ return {}; });
+      if (!r.ok || data.ok === false) throw new Error(data.error || 'kill failed');
+      showToast('killed ' + name);
+      closeForm();
+      poll();
+    } catch(e){
+      showToast('kill failed: ' + (e.message || e), true);
+    } finally {
+      newKillBtn.disabled = false;
+    }
   });
 
   // ---- Tokens page ----
@@ -2060,6 +2075,7 @@ function pickerPage(): string {
     newCwdHint.hidden = true;
     newFlagsHint.hidden = false;
     newEnvHint.hidden = false;
+    newKillBtn.hidden = true;
     newForm.classList.add('open');
     newForm.setAttribute('aria-hidden', 'false');
     await loadAgents();
@@ -2082,6 +2098,7 @@ function pickerPage(): string {
     newCwdHint.hidden = false;
     newFlagsHint.hidden = false;
     newEnvHint.hidden = false;
+    newKillBtn.hidden = false;
     newForm.classList.add('open');
     newForm.setAttribute('aria-hidden', 'false');
     await loadAgents();

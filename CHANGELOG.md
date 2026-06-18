@@ -5,6 +5,32 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.31.1] — 2026-06-18
+
+### Changed — Kill moved out of the bulk toolbar into the per-session edit form
+
+On portrait-phone viewports the bulk toolbar's six buttons (`+ new`,
+`Start`, `Stop`, `Respawn`, `Broadcast`, `Kill`) didn't fit; the
+horizontal swipe-scroll made `Kill` only visible when the operator
+swiped, and the visual hint that anything was hidden was an eyelash
+of the next button on the right edge — easy to miss.
+
+Decision: Kill leaves the bulk toolbar. Stop already covers the
+everyday "shut this thing down" case; Kill (which tears down the
+tmux process and removes the state record) is destructive enough
+that one-at-a-time-from-the-edit-form is the correct rhythm. The new
+home for the verb is a red destructive button at the bottom-left of
+the per-session edit form, only visible when the form is in edit
+mode (hidden during `+ new`). The same `askConfirm` gate that
+guarded the bulk Kill now guards the per-session Kill.
+
+API: no change. `POST /api/sessions/<name>/kill` is the same endpoint
+the bulk path called per-session under the hood.
+
+CLI: no change. `llmux session kill <name> [<name>...]` still
+supports variadic kill from the terminal for operators who want
+batch destructive operations without the click ceremony.
+
 ## [0.31.0] — 2026-06-18
 
 ### Added — Settings page is now writable (daemon init prompts + turnq from the web UI)
