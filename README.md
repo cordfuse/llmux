@@ -37,9 +37,13 @@ trick for token refresh.
 like, `tmux attach -t <name>` still works exactly as you'd expect —
 llmux just adds the unified surface on top.)
 
-> **Status:** v0.30.0 — daemon + CLI client consolidated into one binary
-> (`llmux`). Auth, tokens, mobile picker, conversation resume, Claude
-> Code history adapter shipped. See [CHANGELOG.md](./CHANGELOG.md).
+> **Status:** stable. One binary (`llmux`) covers daemon + CLI client.
+> Auth + tokens, mobile picker with per-row destructive actions,
+> conversation resume, Claude Code history adapter, daemon-wide + per-
+> session init prompts, optional turnq FIFO turn coordination, an
+> editable Settings page with a runtime overlay file, and in-process
+> log tailing have all shipped. See [CHANGELOG.md](./CHANGELOG.md)
+> for the per-version detail.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/cli.gif" width="85%" alt="CLI tour — version, installed agents, session list, JSON output">
@@ -251,11 +255,13 @@ Localhost requests bypass auth; remote requests require a Bearer token.
 ## Noun-prefix surface
 
 ```
-session   list / start / stop / restart / attach / prompt / broadcast
-          / resume / history
+session   list / start / stop / restart / edit / attach / prompt /
+          broadcast / resume / history
 server    start
-token     create / list / revoke
+token     create / list / rename / revoke (single or --all)
 agent     list  [--all] [--installed] [--json]
+logs      list / tail
+settings  show
 ```
 
 Global flags: `--server <url>`, `--token <sas>`, `--help`, `--version`.
@@ -366,7 +372,7 @@ The server-start banner picks up the mapping automatically (any port, not
 just 3443/3080) and surfaces the resulting URLs:
 
 ```
-llmux v0.30.0
+llmux v0.31.4
 
   ▸ Tailscale HTTPS  https://<host>.tailnet.ts.net:3443
   ▸ Tailscale HTTP   http://<host>.tailnet.ts.net:3080
@@ -458,6 +464,54 @@ and `sessions[]` (auto-spawn list).
 These are reserved for future wiring — setting them has no effect yet.
 If you need any of these surfaces, file an issue and they can be
 prioritised.
+
+### Runtime overlay (`~/.config/llmux/overrides.yaml`)
+
+The web UI's Settings page is editable for two fields — daemon-wide
+`initPrompts` and the `turnq` subconfig. Edits never touch the
+base `.llmux.yaml` (its comments + formatting stay pristine);
+they write to a separate **runtime overlay** at
+`~/.config/llmux/overrides.yaml`.
+
+```yaml
+# llmux runtime overrides — written by the Settings page in the web UI.
+# Layered on top of the base .llmux.yaml / config.yaml at load time.
+# Delete this file to revert all UI edits to the on-disk base config.
+initPrompts:
+  - seed prompt
+turnq:
+  enabled: true
+  maxHoldMs: 30000
+```
+
+Behaviour:
+
+- `loadConfig()` reads the base, then layers the overlay on top.
+  Overlay fields win.
+- Atomic writes (write-to-tmp + rename) so a partial write can't tear
+  the file.
+- Delete the overlay file to revert all UI edits in one shot.
+- The Settings page shows an `overlay active` badge + an "Active
+  overrides" card with the verbatim overlay YAML when the overlay
+  exists, so operators can see exactly what was written.
+
+## Settings + logs from the CLI
+
+The web UI's Settings + Logs screens have CLI equivalents for headless
+use:
+
+```bash
+llmux settings show              # config source, state dir, env, loaded YAML
+llmux settings show --json       # same payload, structured
+
+llmux logs list [--limit N]      # last N buffered log lines (default 200)
+llmux logs tail                  # initial buffer + live-tail until Ctrl-C
+llmux logs tail --since <ISO>    # tail from a specific timestamp
+```
+
+The daemon keeps a 500-line in-process ring buffer. Both verbs read
+from it locally; there's no remote `--server` mode (logs are
+local-only by design).
 
 ## Environment
 
