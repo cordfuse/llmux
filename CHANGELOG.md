@@ -5,6 +5,44 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.33.1] — 2026-06-19
+
+### Fixed — `killSession` reaps the full process tree, not just the tmux pane
+
+`tmux kill-session` only terminates processes still attached to the
+pane's process group. Some agent CLIs — confirmed for **gemini**,
+mechanism shared with its forks **qwen** and **agy** — re-exec
+themselves with `node --max-old-space-size=...` and call `setsid()`
+to detach from the pane's pgrp. Result: `tmux kill-session` couldn't
+reach them, and they survived as orphans reparented to init/launchd.
+
+v0.33.0's auto-respawn on `resumeFrom` change compounded the leak —
+every form-picker rebind orphaned the previous gemini node tree.
+Operators using the new RESUME FROM dropdown to rebind would
+accumulate orphans rapidly.
+
+Fix in `daemon/tmux.ts::killSession`:
+
+1. **Before** calling `tmux kill-session`, snapshot the pane's
+   descendant tree via `tmux list-panes -t <name> -F '#{pane_pid}'`
+   plus a `ps -A -o pid=,ppid=` walk (cross-platform — same syntax
+   works on Linux + macOS, no per-platform branch needed).
+2. Call `tmux kill-session` to reap the pane and anything still in
+   its pgrp.
+3. `SIGKILL` every descendant we captured that's still alive
+   (iterating child-first so intermediate shells don't keep
+   grandchildren reparented). Also SIGKILL the root in case some
+   wrappers forked early and the original is no longer tmux's
+   direct child.
+
+Guard against ever killing the daemon's own pid (defense-in-depth
+— the parent-walk shouldn't reach us, but cheap insurance).
+
+**Reported by mac**, validated on macOS arm64 / node 22.22.1 in
+isolated repro. Verified on cachy with a rebind loop: spawn gemini
+→ 3 procs, PATCH `resumeFrom` (auto-respawn) → 3 procs, stop →
+0 gemini procs. No accumulation across rebinds.
+
 ## [0.33.0] — 2026-06-19
 
 ### Added — "Resume from" picker inside the add/edit session form

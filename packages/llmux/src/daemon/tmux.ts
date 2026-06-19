@@ -84,11 +84,88 @@ export function sendKeys(name: string, text: string, opts: { enter?: boolean } =
   }
 }
 
+/**
+ * Read the pane's root pid (the immediate process tmux spawned to run
+ * the agent's command). For the multi-window edge case we only take the
+ * first; llmux sessions are always single-window single-pane.
+ */
+function paneRootPid(name: string): number | undefined {
+  const r = spawnSync('tmux', ['list-panes', '-t', name, '-F', '#{pane_pid}'], { stdio: 'pipe' });
+  if (r.status !== 0) return undefined;
+  const first = r.stdout.toString().trim().split('\n')[0];
+  const pid = Number(first);
+  return Number.isFinite(pid) && pid > 0 ? pid : undefined;
+}
+
+/**
+ * Walk the process table and collect every descendant of rootPid
+ * (root NOT included). Cross-platform via `ps -A -o pid=,ppid=` —
+ * works on both Linux and macOS without per-platform branches.
+ *
+ * Why we need this: some agent CLIs (gemini and its forks — qwen, agy)
+ * re-exec themselves with `node --max-old-space-size=...` and call
+ * setsid() / detach from the tmux pane's process group. `tmux kill-
+ * session` only reaps processes still attached to the pane's pgrp,
+ * so those re-execs survive and accumulate as orphans. We capture
+ * the tree BEFORE killing tmux (after kill we can't query the pane
+ * pid anymore) and SIGKILL the survivors AFTER tmux releases the
+ * pane. v0.33.0's auto-respawn-on-resume-rebind made this acute —
+ * every rebind was leaking the prior gemini tree.
+ */
+function descendantPids(rootPid: number): number[] {
+  const r = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], { stdio: 'pipe' });
+  if (r.status !== 0) return [];
+  const children = new Map<number, number[]>();
+  for (const line of r.stdout.toString().split('\n')) {
+    const m = line.trim().match(/^(\d+)\s+(\d+)$/);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const ppid = Number(m[2]);
+    if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue;
+    const arr = children.get(ppid) ?? [];
+    arr.push(pid);
+    children.set(ppid, arr);
+  }
+  const out: number[] = [];
+  const queue: number[] = [rootPid];
+  const seen = new Set<number>([rootPid]);
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const child of children.get(cur) ?? []) {
+      if (seen.has(child)) continue;
+      seen.add(child);
+      out.push(child);
+      queue.push(child);
+    }
+  }
+  return out;
+}
+
 export function killSession(name: string): void {
   if (!hasSession(name)) return;
+  // Snapshot the descendant tree BEFORE killing — after tmux kill-session
+  // we can't ask tmux for the pane pid anymore.
+  const root = paneRootPid(name);
+  const tree = root !== undefined ? descendantPids(root) : [];
   const r = spawnSync('tmux', ['kill-session', '-t', name], { stdio: 'pipe' });
   if (r.status !== 0) {
     throw new Error(`tmux kill-session failed: ${r.stderr.toString().trim() || `exit ${r.status}`}`);
+  }
+  // Reap any orphans tmux couldn't get to (setsid'd re-execs). SIGKILL
+  // directly — these are agent processes the operator already ordered
+  // killed; no shutdown protocol to honor. Iterate child-first so
+  // intermediate shells don't keep grandchildren reparented to init.
+  // Guard against killing our own daemon pid (can never happen via this
+  // walk, but cheap belt-and-suspenders).
+  const ourPid = process.pid;
+  for (const pid of tree.slice().reverse()) {
+    if (pid === ourPid) continue;
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+  }
+  // Also SIGKILL the root in case kill-session didn't take it down (some
+  // wrappers fork early and the original is no longer tmux's direct child).
+  if (root !== undefined && root !== ourPid) {
+    try { process.kill(root, 'SIGKILL'); } catch { /* gone */ }
   }
 }
 
