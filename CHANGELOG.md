@@ -5,6 +5,37 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.31.5] — 2026-06-18
+
+### Docs — README sync to current surface
+
+Status line dropped its stale `v0.30.0` pin and now describes the
+shipped feature set (auth + tokens, mobile picker with per-row
+destructive actions, conversation resume, init prompts, optional
+turnq, editable Settings + runtime overlay, in-process log tailing)
+without a version pin so it stops going stale on every patch.
+
+Noun-prefix surface section expanded to match `llmux --help`:
+
+- `session edit` (was missing)
+- `token rename` + `revoke --all` (were missing)
+- `logs list` + `logs tail` (whole verb was missing)
+- `settings show` (whole verb was missing)
+
+Added two new sections:
+
+- **Runtime overlay** — documents `~/.config/llmux/overrides.yaml`,
+  the file the web UI's Settings page writes to. Explains the base +
+  overlay merge semantics, atomic write guarantee, and the
+  "delete-to-revert" workflow.
+- **Settings + logs from the CLI** — documents `llmux settings show`
+  and `llmux logs list / tail` for headless use, noting that logs
+  are local-only by design (no `--server` mode).
+
+Bumped the Tailscale serve banner example from `v0.30.0` to `v0.31.4`.
+
+No code changes; published to refresh the README in the npm tarball.
+
 ## [0.31.4] — 2026-06-18
 
 ### Changed — Mobile column-drop choice swapped: STATE hides instead of AGENT
