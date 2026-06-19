@@ -39,11 +39,13 @@ llmux just adds the unified surface on top.)
 
 > **Status:** stable. One binary (`llmux`) covers daemon + CLI client.
 > Auth + tokens, mobile picker with per-row destructive actions,
-> conversation resume, Claude Code history adapter, daemon-wide + per-
-> session init prompts, optional turnq FIFO turn coordination, an
-> editable Settings page with a runtime overlay file, and in-process
-> log tailing have all shipped. See [CHANGELOG.md](./CHANGELOG.md)
-> for the per-version detail.
+> conversation resume across all six Cordfuse-supported agents
+> (claude, codex, gemini, agy, opencode, qwen) with a bound-conversation
+> indicator on the session row and an in-form "resume from" picker,
+> daemon-wide + per-session init prompts, optional turnq FIFO turn
+> coordination, an editable Settings page with a runtime overlay file,
+> and in-process log tailing have all shipped.
+> See [CHANGELOG.md](./CHANGELOG.md) for the per-version detail.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/cli.gif" width="85%" alt="CLI tour — version, installed agents, session list, JSON output">
@@ -324,12 +326,43 @@ the tmux session so changes take effect immediately.
 
 ## Conversation resume
 
-For agents with a history adapter (Claude Code today; codex/gemini/etc.
-coming), the row gets a `☰ N` button. Tap it to see past conversations in the
-session's cwd; pick one to relaunch the agent with its `--resume <id>` flag.
-State preserves the binding across restarts so respawn keeps you on the
-same conversation. Use `llmux session resume <name> --latest` from the CLI
-for the same flow.
+Every Cordfuse-supported agent ships with a history adapter — the row's
+`☰ N` button counts past conversations in the session's cwd and the
+picker lists them newest-first. Pick one and llmux respawns the agent
+with the right resume flag.
+
+| Agent | Storage | Resume flag |
+|---|---|---|
+| `claude`   | `~/.claude/projects/<encoded-cwd>/<id>.jsonl` | `--resume <id>` |
+| `codex`    | `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` | `resume <id>` (subcommand) |
+| `gemini`   | `~/.gemini/tmp/<dir>/chats/session-*.jsonl` (filtered by `projectHash == sha256(cwd)`) | `--session-file <path>` |
+| `agy`      | `~/.gemini/antigravity-cli/history.jsonl` (one line per prompt, grouped by `conversationId`) | `--conversation <id>` |
+| `opencode` | `~/.local/share/opencode/opencode.db` (sqlite via `better-sqlite3`) | `--session <id>` |
+| `qwen`     | `~/.qwen/tmp/<dir>/chats/session-*.jsonl` (Gemini-fork storage) | `--resume <id>` |
+
+The selected conversation id is persisted on the session record so
+respawn keeps you on the same conversation. The picked conversation
+also gets surfaced two ways:
+
+- **Per-row**: a small purple `↻ <title>` line under the session name,
+  visible at a glance from the table.
+- **Picker modal**: the bound conversation gets a left-border accent +
+  subtle background tint so it's unmistakable in long lists.
+
+You can pick a conversation up front when spawning a session, too —
+the new-session form (and the edit form) has a `RESUME FROM` dropdown
+populated by `GET /api/conversations?agent=<key>&cwd=<path>`. Changing
+the bound conversation from the edit form auto kill+respawns the
+session so the new binding takes effect immediately.
+
+From the CLI:
+
+```bash
+llmux session resume <name> --latest          # most recent conversation
+llmux session resume <name> --conversation <id>
+llmux session history <name>                  # list past conversations + ids
+llmux session start opencode --resume-from ses_<id>  # spawn pre-bound
+```
 
 ## Auth
 
@@ -372,7 +405,7 @@ The server-start banner picks up the mapping automatically (any port, not
 just 3443/3080) and surfaces the resulting URLs:
 
 ```
-llmux v0.31.4
+llmux v0.33.1
 
   ▸ Tailscale HTTPS  https://<host>.tailnet.ts.net:3443
   ▸ Tailscale HTTP   http://<host>.tailnet.ts.net:3080

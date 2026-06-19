@@ -5,6 +5,25 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.33.2] — 2026-06-19
+
+### Docs — README sync to the v0.32.x / v0.33.x surface
+
+Three updates against the v0.31.6 README baseline:
+
+- **Status line** no longer says "Claude Code history adapter" —
+  describes resume across all six Cordfuse-supported agents (claude,
+  codex, gemini, agy, opencode, qwen) plus the bound-conversation
+  indicator and in-form resume picker
+- **Conversation resume section** rewritten with a per-agent storage
+  + resume-flag table covering all six adapters, documents the
+  per-row `↻ <title>` badge + picker highlight + `RESUME FROM`
+  form field, lists the CLI verbs (`session resume`,
+  `session history`, `session start --resume-from`)
+- **Tailscale serve banner example** bumped `v0.31.4` → `v0.33.1`
+
+No code changes; published to refresh the README in the npm tarball.
+
 ## [0.33.1] — 2026-06-19
 
 ### Fixed — `killSession` reaps the full process tree, not just the tmux pane
