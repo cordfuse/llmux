@@ -5,6 +5,53 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.32.3] — 2026-06-19
+
+### Added — Bound-conversation indicator on the row + picker
+
+The `session.resumeFrom` state record was already persistent (each
+`respawnSession` rebuilds the launch command with the resume flag), but
+nothing in the UI told the operator which conversation was currently
+bound. Adding two visual surfaces:
+
+**Per-row indicator**. When a session is bound to a conversation, a
+small purple `↻ <title>` line appears under the session name. Title
+comes from a new optional `lookupTitle(cwd, id)` method on
+`AgentHistoryAdapter`, falling back to the truncated id when the
+adapter can't find the conversation (deleted / archived / never
+existed).
+
+`lookupTitle` is a fast single-record fetch — each adapter implements
+the most direct lookup it can rather than walking the full set:
+
+- **claude** — opens `~/.claude/projects/<encoded-cwd>/<id>.jsonl`
+  directly (one file)
+- **codex** — finds the file with the matching uuid suffix
+  (`rollout-<ts>-<uuid>.jsonl`), then walks for the first non-synthetic
+  user message
+- **gemini / qwen** — walks the same `chats/` tree, stops at the first
+  session whose `sessionId` matches
+- **agy** — single-file scan for the first display matching
+  `conversationId`
+- **opencode** — `SELECT title FROM session WHERE id = ? LIMIT 1`
+
+The full `listConversations` parse is reserved for the deliberate
+"open the Resume picker" action; `lookupTitle` is what fires on every
+session-list poll when a session has a `resumeFrom` set.
+
+**Picker highlight**. The Resume picker modal was already prepending
+`↻` to the bound conversation's title (with class `conv-current` =
+purple bold). This release also adds a left-border accent + subtle
+background tint on the same row via a new `has-current` class on the
+conv button, so the bound row is unmistakable in a long list (the
+operator's opencode picker on cachy has 408 rows in the
+crosstalk-runtime cwd).
+
+### API addition — `SessionView.resumeFromTitle`
+
+`/api/sessions` now returns `resumeFromTitle` alongside `resumeFrom`
+when the session is bound and the adapter resolved a title.
+
 ## [0.32.2] — 2026-06-19
 
 ### Added — OpenCode history adapter (sqlite-backed, completes the official 6)
