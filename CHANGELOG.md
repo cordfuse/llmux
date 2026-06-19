@@ -5,6 +5,67 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.33.3] — 2026-06-19
+
+### Changed — OpenCode adapter swapped from `node:sqlite` to `better-sqlite3`
+
+Per mac's CR
+(`<NAS>/multiagent-chat/2026-06-19T1422-mac-to-cachy-swap-opencode-sqlite-to-better-sqlite3-keep-node20.md`)
+and Steve's direction. Two reasons the prior `node:sqlite` choice
+needed fixing:
+
+1. **Silent feature gap.** `engines.node` is `>=20` but `node:sqlite`
+   is stable from `>=22.5` only. On node 20.x and 22.0-22.4 the prior
+   `createRequire('node:sqlite')` try/catch swallowed the failure and
+   opencode just had no resume picker with no signal to the operator.
+   A capability gap with zero signal is the worst outcome.
+2. **Experimental API warning leak.** `node:sqlite` emits an
+   `ExperimentalWarning: SQLite is an experimental feature and might
+   change at any time` on module load. Mac confirmed at 14:31Z that
+   this leaked into the operator's interactive CLI output on
+   `llmux session resume`:
+
+   ```
+   ocval resumed from ses_1b02…
+   (node:85372) ExperimentalWarning: SQLite is an experimental feature …
+   ```
+
+### Why better-sqlite3 specifically (not better-sqlite3-was-too-broad-an-objection)
+
+Mac's earlier F6 reasoning ("avoid another native dep like node-pty")
+was reconsidered: node-pty's F6 bug was a *separately-exec'd*
+`spawn-helper` binary losing its `+x` bit. **better-sqlite3 has no
+exec'd helper** — it's a single `dlopen`'d `.node` addon. So it is
+NOT exposed to the F6 failure mode. Its only real risk is "no
+prebuild for the operator's node-ABI/arch + no build toolchain", and
+`prebuild-install` ships prebuilds for all common targets. It's also
+synchronous, which fits the existing adapter interface.
+
+### Implementation diff (localized to opencode — the other five
+adapters are filesystem/jsonl, no change)
+
+- Removed `loadNodeSqlite()` cache + `createRequire('node:sqlite')`
+  try/catch + `nodeRequire` import
+- Added `import Database from 'better-sqlite3'`
+- New helper `openOpencodeDb()` opens with `{ readonly: true,
+  fileMustExist: true }` — `readonly` keeps us off opencode's WAL
+  writer, `fileMustExist` avoids creating an empty DB on a typo path
+- Added `better-sqlite3` to `dependencies`,
+  `@types/better-sqlite3` to `devDependencies`
+- Added `--external better-sqlite3` to the tsup build so the native
+  binary isn't bundled into `dist/index.js`
+
+`engines.node` stays `>=20`.
+
+### Verification on cachy
+
+- Build green, typecheck clean
+- Daemon log: **no ExperimentalWarning** anywhere
+- CLI `llmux session history opencode`: returns 74 rows for the
+  `~/Repos` cwd, matches v0.32.2's numbers exactly, **no warning leak**
+- `/api/conversations?agent=opencode&cwd=...` returns the same count
+  + sample title as before
+
 ## [0.33.2] — 2026-06-19
 
 ### Docs — README sync to the v0.32.x / v0.33.x surface
