@@ -5,6 +5,63 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-06-19
+
+### Added — Conversation history adapters for `codex` and `agy`
+
+The Resume button (☰ N) and `llmux session resume <name> --latest |
+--conversation <id>` previously worked only for Claude Code. v0.32.0
+wires two more agents to the same picker + CLI flow.
+
+**Codex (`codex`).** Sessions stored at
+`~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`. The
+adapter walks the dated subtree, identifies each session's cwd from
+the leading `session_meta` event, and filters by the operator's
+session cwd. Title extraction skips Codex's synthetic
+"user-role" messages (`# AGENTS.md instructions ...`, the
+`<environment_context>` / `<permissions>` / `<user_instructions>` /
+`<turn_aborted>` blocks) and surfaces the first real prompt.
+
+`countConversations` opens just the first line of each .jsonl
+(chunked read up to 256KB — the leading `session_meta` event itself
+can be 20-35KB on disk) so the session-list view's badge doesn't
+parse full transcripts on every poll.
+
+Resume flag: `resume <id>` — Codex uses sub-command-style resume,
+not a `--resume` flag. The agent's default global flag
+(`--dangerously-bypass-approvals-and-sandbox`) is verified to accept
+trailing sub-commands, so the resulting command is
+`codex --dangerously-bypass-approvals-and-sandbox resume <id>`.
+
+**Antigravity (`agy`).** Stores every interactive prompt as a single
+line in `~/.gemini/antigravity-cli/history.jsonl`:
+`{display, timestamp, workspace, conversationId?}`. The adapter
+reads the file, filters by `workspace == cwd`, and groups by
+`conversationId` to reconstruct conversations. First `display` is
+the title; first/last timestamps frame `startedAt` /
+`lastMessageAt`; `messageCount` is the count of prompts in the
+group.
+
+Resume flag: `--conversation <id>`. Composes as
+`agy --dangerously-skip-permissions --conversation <id>`.
+
+### Not yet wired
+
+- **`gemini`** — stores sessions at `~/.gemini/tmp/<projectKey>/chats/
+  session-*.jsonl` but the mapping between cwd and `<projectKey>`
+  is inconsistent across local installs (some are project basenames,
+  some are SHA-256 hashes of the absolute cwd). Needs more research
+  before shipping.
+- **`opencode`** — sessions live in `~/.local/share/opencode/opencode.db`
+  (SQLite). Pulling in a sqlite3 dependency for one adapter is
+  heavier than warranted; deferred until there's a JS-only need.
+- **`qwen`** — no filesystem-visible conversation log we could find
+  (only empty `tmp/<projectHash>/logs.json` placeholders).
+- **`amp` / `grok` / `aider` / `continue` / `kiro` / `cursor` /
+  `plandex` / `goose` / `copilot`** — these aren't part of the
+  Cordfuse "official 6" set and weren't priorities for this sprint.
+  Adapters can be added per-agent as those agents see real usage.
+
 ## [0.31.6] — 2026-06-19
 
 ### Docs — README PWA wording removed

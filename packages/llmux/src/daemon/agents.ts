@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
 
@@ -160,6 +160,276 @@ const claudeHistory: AgentHistoryAdapter = {
   },
 };
 
+/**
+ * Codex CLI stores each session as
+ * `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`. The
+ * directory tree is global (not partitioned by cwd), so we have to open
+ * each .jsonl to discover its cwd from the first event (`session_meta`
+ * with `payload.cwd`). `countConversations` opens the first line only;
+ * `listConversations` reads the whole file to extract title + boundary
+ * timestamps + message count.
+ *
+ * Synthetic user messages (`<environment_context>...`, `<permissions...`,
+ * developer system prompts) are skipped when picking the title so the
+ * picker shows the real conversation opener.
+ *
+ * Resume flag: `resume <id>` (codex CLI uses subcommand-style resume).
+ * Validated that the agent's default global flag accepts trailing
+ * subcommand: `codex --dangerously-bypass-approvals-and-sandbox resume <id>`.
+ */
+function readFirstNonEmptyLine(fpath: string): string | undefined {
+  // Read chunks until the first newline is found. Codex .jsonl session
+  // files are big (full transcripts) but the leading session_meta event
+  // itself can be ~20-35KB once the base_instructions blob is embedded.
+  // We chunk-read up to 256KB and bail if we still haven't seen a \n
+  // (something is wrong with the file — likely not really JSONL).
+  try {
+    const fd = openSync(fpath, 'r');
+    try {
+      const chunkSize = 65536;
+      const maxBytes = 262144;
+      let acc = '';
+      let offset = 0;
+      const buf = Buffer.alloc(chunkSize);
+      while (offset < maxBytes) {
+        const n = readSync(fd, buf, 0, buf.length, offset);
+        if (n <= 0) break;
+        acc += buf.subarray(0, n).toString('utf8');
+        const nl = acc.indexOf('\n');
+        if (nl >= 0) return acc.slice(0, nl);
+        offset += n;
+      }
+      return acc.length > 0 ? acc : undefined;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+function walkCodexSessionFiles(): string[] {
+  const root = join(homedir(), '.codex', 'sessions');
+  if (!existsSync(root)) return [];
+  const files: string[] = [];
+  const stack: string[] = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      const full = join(dir, name);
+      try {
+        const st = statSync(full);
+        if (st.isDirectory()) stack.push(full);
+        else if (st.isFile() && name.startsWith('rollout-') && name.endsWith('.jsonl')) {
+          files.push(full);
+        }
+      } catch {
+        // skip unreadable
+      }
+    }
+  }
+  return files;
+}
+
+function codexSessionCwd(fpath: string): string | undefined {
+  const first = readFirstNonEmptyLine(fpath);
+  if (!first) return undefined;
+  try {
+    const evt = JSON.parse(first) as { type?: string; payload?: { cwd?: string } };
+    if (evt.type === 'session_meta' && typeof evt.payload?.cwd === 'string') {
+      return evt.payload.cwd;
+    }
+  } catch {
+    // not parseable
+  }
+  return undefined;
+}
+
+function isCodexSyntheticUserText(text: string): boolean {
+  // Codex prepends several synthetic "user" messages at session start +
+  // mid-session that aren't real operator input:
+  //   - `# AGENTS.md instructions for <path>` — auto-injected AGENTS.md
+  //   - `<environment_context>...</environment_context>` — cwd / shell
+  //   - `<permissions>...` — sandbox profile recap
+  //   - `<user_instructions>...` — user_instructions config blob
+  //   - `<turn_aborted>...` — user Ctrl+C signal recap
+  return text.startsWith('<environment_context>') ||
+         text.startsWith('<permissions') ||
+         text.startsWith('<user_instructions>') ||
+         text.startsWith('<turn_aborted>') ||
+         text.startsWith('# AGENTS.md instructions');
+}
+
+const codexHistory: AgentHistoryAdapter = {
+  listConversations(cwd: string): Conversation[] {
+    const files = walkCodexSessionFiles();
+    const out: Conversation[] = [];
+    for (const fpath of files) {
+      let raw: string;
+      try {
+        raw = readFileSync(fpath, 'utf8');
+      } catch {
+        continue;
+      }
+      const lines = raw.split('\n').filter((l) => l.length > 0);
+      if (lines.length === 0) continue;
+      let id: string | undefined;
+      let sessionCwd: string | undefined;
+      let title: string | undefined;
+      let firstTs: string | undefined;
+      let lastTs: string | undefined;
+      for (const line of lines) {
+        let evt: {
+          type?: string;
+          timestamp?: string;
+          payload?: { cwd?: string; id?: string; role?: string; content?: unknown };
+        };
+        try {
+          evt = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (evt.timestamp) {
+          if (!firstTs) firstTs = evt.timestamp;
+          lastTs = evt.timestamp;
+        }
+        if (evt.type === 'session_meta' && evt.payload) {
+          if (typeof evt.payload.cwd === 'string') sessionCwd = evt.payload.cwd;
+          if (typeof evt.payload.id === 'string') id = evt.payload.id;
+        }
+        if (!title && evt.type === 'response_item' && evt.payload?.role === 'user') {
+          const c = evt.payload.content;
+          if (Array.isArray(c)) {
+            for (const block of c) {
+              if (typeof block === 'object' && block !== null) {
+                const b = block as { type?: string; text?: string };
+                if (typeof b.text === 'string' && !isCodexSyntheticUserText(b.text)) {
+                  title = b.text.split('\n')[0]!.slice(0, 100).trim();
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      if (!sessionCwd || sessionCwd !== cwd || !id) continue;
+      const stat = statSync(fpath);
+      out.push({
+        id,
+        title: title ?? '(no opener)',
+        startedAt: firstTs ?? new Date(stat.ctimeMs).toISOString(),
+        lastMessageAt: lastTs ?? new Date(stat.mtimeMs).toISOString(),
+        messageCount: lines.length,
+      });
+    }
+    return out.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  },
+  countConversations(cwd: string): number {
+    // Open first line only of each file — codex jsonl can be huge but the
+    // session_meta is always the first event. Avoids parsing transcripts
+    // on every session-list poll.
+    const files = walkCodexSessionFiles();
+    let count = 0;
+    for (const fpath of files) {
+      if (codexSessionCwd(fpath) === cwd) count++;
+    }
+    return count;
+  },
+  resumeFlag(id: string): string {
+    return `resume ${id}`;
+  },
+};
+
+/**
+ * Antigravity CLI (`agy`) writes a single file at
+ * `~/.gemini/antigravity-cli/history.jsonl` — every interactive prompt
+ * from every session appends one line: `{display, timestamp, workspace,
+ * conversationId?}`. Conversations are reconstructed by grouping lines
+ * with the same `conversationId` and matching `workspace`. The first
+ * recorded line without a `conversationId` is a one-off (no
+ * conversation row).
+ *
+ * Resume flag: `--conversation <id>`. `agy -c` for the most recent
+ * conversation also exists but isn't surfaced here — the picker is
+ * always by-id.
+ */
+interface AgyHistoryLine {
+  display?: string;
+  timestamp?: number;
+  workspace?: string;
+  conversationId?: string;
+}
+
+function readAgyHistory(): AgyHistoryLine[] {
+  const fpath = join(homedir(), '.gemini', 'antigravity-cli', 'history.jsonl');
+  if (!existsSync(fpath)) return [];
+  let raw: string;
+  try {
+    raw = readFileSync(fpath, 'utf8');
+  } catch {
+    return [];
+  }
+  const out: AgyHistoryLine[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line) continue;
+    try {
+      out.push(JSON.parse(line) as AgyHistoryLine);
+    } catch {
+      // skip malformed
+    }
+  }
+  return out;
+}
+
+const agyHistory: AgentHistoryAdapter = {
+  listConversations(cwd: string): Conversation[] {
+    const lines = readAgyHistory();
+    const groups = new Map<string, AgyHistoryLine[]>();
+    for (const line of lines) {
+      if (line.workspace !== cwd) continue;
+      if (!line.conversationId) continue;
+      const arr = groups.get(line.conversationId) ?? [];
+      arr.push(line);
+      groups.set(line.conversationId, arr);
+    }
+    const out: Conversation[] = [];
+    for (const [id, items] of groups) {
+      const sorted = items.slice().sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+      const first = sorted[0]!;
+      const last = sorted[sorted.length - 1]!;
+      const firstTs = first.timestamp ? new Date(first.timestamp).toISOString() : new Date(0).toISOString();
+      const lastTs = last.timestamp ? new Date(last.timestamp).toISOString() : firstTs;
+      const title = (first.display ?? '(no opener)').split('\n')[0]!.slice(0, 100).trim();
+      out.push({
+        id,
+        title: title || '(no opener)',
+        startedAt: firstTs,
+        lastMessageAt: lastTs,
+        messageCount: items.length,
+      });
+    }
+    return out.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+  },
+  countConversations(cwd: string): number {
+    // Single-file scan, count distinct conversationIds matching cwd.
+    const lines = readAgyHistory();
+    const ids = new Set<string>();
+    for (const line of lines) {
+      if (line.workspace === cwd && line.conversationId) ids.add(line.conversationId);
+    }
+    return ids.size;
+  },
+  resumeFlag(id: string): string {
+    return `--conversation ${id}`;
+  },
+};
+
 const which = (cmd: string): boolean => {
   const pathDirs = (process.env.PATH ?? '').split(delimiter);
   for (const dir of pathDirs) {
@@ -184,8 +454,8 @@ const copilotInstalled = (): boolean => {
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory },
-  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex' },
-  agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install' },
+  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory },
+  agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install', history: agyHistory },
   gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli' },
   qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code' },
   // OpenCode's --dangerously-skip-permissions only applies to `opencode run`
