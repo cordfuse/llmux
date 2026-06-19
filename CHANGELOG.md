@@ -5,6 +5,63 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.33.0] — 2026-06-19
+
+### Added — "Resume from" picker inside the add/edit session form
+
+Resume binding was previously only reachable via the per-row `☰`
+picker on an existing session. v0.33.0 adds the same picker as a
+field inside the new-session form AND the edit form, so operators
+can:
+
+- Spawn a brand-new session pre-bound to a past conversation (with
+  no in-between "spawn, then open picker, then resume" sequence)
+- Change the bound conversation from inside the edit form (next to
+  the other respawn-on-change fields like cwd)
+- See the current binding pre-selected as `↻ <title> · <ago> · N msgs`
+  when opening edit on a bound session
+
+The select shows `(N past conversations)` in the field's label suffix
+when conversations exist, or `(no past conversations for this agent
++ cwd)` when none — so an empty dropdown reads as expected, not
+broken.
+
+### Added — `GET /api/conversations?agent=<key>&cwd=<path>`
+
+New endpoint for listing past conversations of an arbitrary
+(agent, cwd) combo — used by the +new form which doesn't have a
+session record yet. The existing `/api/sessions/<name>/conversations`
+endpoint stays for session-scoped lookups; this one is the
+agent-scoped equivalent.
+
+### Changed — `editSession()` and `PATCH /api/sessions/<name>` accept `resumeFrom`
+
+The patch type for `editSession` gained `resumeFrom?: string | null`.
+Semantics:
+
+- `undefined` → no change (preserves existing binding)
+- `string` → sets the binding to that conversation id
+- `null` or `""` → explicit clear (no binding, fresh start on next
+  respawn)
+
+When `resumeFrom` changes on a running session, llmux auto kill +
+respawns the agent so the new binding takes effect immediately —
+mirroring the existing auto-respawn behavior on cwd changes.
+
+### Changed — `/api/agents` now reports `hasHistory`
+
+So the JS form knows whether to skip the `(no past conversations)`
+fetch entirely for adapter-less agents. Same field shape as
+`SessionView.hasHistory`.
+
+### Bug fix — edit button's `data-resume` attribute
+
+The per-row Edit button's `data-` attributes didn't carry
+`resumeFrom`, so `openEditForm` was always receiving
+`row.resumeFrom === undefined` and the pre-select never fired even
+on bound sessions. Added `data-resume="<id>"` to the button + read
+it in the click delegator.
+
 ## [0.32.3] — 2026-06-19
 
 ### Added — Bound-conversation indicator on the row + picker

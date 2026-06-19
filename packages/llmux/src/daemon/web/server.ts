@@ -410,6 +410,7 @@ function pickerPage(): string {
   #new-form button:hover{background:#252b34}
   #new-form button:disabled{opacity:.5;cursor:wait}
   #new-form .hint{font-size:11px;color:#7a7f87;margin-top:-4px;margin-bottom:10px}
+  #new-form .field-suffix{color:#7a7f87;font-size:10px;font-weight:400;margin-left:6px;text-transform:none;letter-spacing:0}
   footer{position:fixed;bottom:0;left:0;right:0;background:#0b0c10;border-top:1px solid #1f2329;padding:10px 16px;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;gap:10px}
   footer .warn{color:#d29922}
   footer .ok{color:#7ee787}
@@ -569,6 +570,13 @@ function pickerPage(): string {
       <textarea id="new-env" rows="3" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="KEY=VALUE one per line"></textarea>
     </div>
     <div id="new-env-hint" class="hint" hidden></div>
+    <div class="field">
+      <label for="new-resume-from">resume from <span class="field-suffix" id="new-resume-from-count"></span></label>
+      <select id="new-resume-from" autocomplete="off">
+        <option value="">(none — fresh start)</option>
+      </select>
+    </div>
+    <div id="new-resume-from-hint" class="hint">Past conversations for this agent + cwd. Takes effect on next respawn; changing this on a running session auto-restarts to apply.</div>
     <div class="field">
       <label for="new-init">init prompts (session level)</label>
       <textarea id="new-init" rows="4" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="one prompt per line — fired into the agent after spawn; composed AFTER daemon.initPrompts from .llmux.yaml"></textarea>
@@ -876,7 +884,7 @@ function pickerPage(): string {
   function rowHtml(s){
     const cls = 'state-' + s.status;
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
-    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" data-init="' + escapeHtml(JSON.stringify(s.initPrompts || [])) + '" title="edit name, cwd, flags, env, init prompts" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
+    const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" data-init="' + escapeHtml(JSON.stringify(s.initPrompts || [])) + '" data-resume="' + escapeHtml(s.resumeFrom || '') + '" title="edit name, cwd, flags, env, init prompts, resume binding" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
     const killBtn = '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" title="kill this session and remove its state record" aria-label="kill"><span class="icon">✕</span><span class="label">kill</span></button>';
     const sendBtn = s.status === 'running'
       ? '<button class="send-btn" data-action="send" data-name="' + escapeHtml(s.name) + '" title="send a prompt to this session without attaching the terminal" aria-label="send"><span class="icon">⤴</span><span class="label">send</span></button>'
@@ -1207,7 +1215,7 @@ function pickerPage(): string {
       try { env = JSON.parse(btn.dataset.env || '{}'); } catch(_){}
       let initPrompts = [];
       try { initPrompts = JSON.parse(btn.dataset.init || '[]'); } catch(_){}
-      openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd, flags: btn.dataset.flags, env: env, initPrompts: initPrompts });
+      openEditForm({ name: name, agent: btn.dataset.agent, cwd: btn.dataset.cwd, flags: btn.dataset.flags, env: env, initPrompts: initPrompts, resumeFrom: btn.dataset.resume || '' });
       return;
     }
     if (kind === 'resume'){
@@ -2072,6 +2080,8 @@ function pickerPage(): string {
   const newFlags = document.getElementById('new-flags');
   const newEnv = document.getElementById('new-env');
   const newInit = document.getElementById('new-init');
+  const newResumeFrom = document.getElementById('new-resume-from');
+  const newResumeFromCount = document.getElementById('new-resume-from-count');
   const newCwdHint = document.getElementById('new-cwd-hint');
   const newFlagsHint = document.getElementById('new-flags-hint');
   const newEnvHint = document.getElementById('new-env-hint');
@@ -2159,6 +2169,7 @@ function pickerPage(): string {
     newInit.value = '';
     syncFlagsHint(newAgent.value);
     syncEnvHint(newAgent.value);
+    refreshResumeFromOptions(newAgent.value, newCwd.value, '');
     newAgent.focus();
   }
 
@@ -2189,8 +2200,70 @@ function pickerPage(): string {
     newInit.value = Array.isArray(row.initPrompts) ? row.initPrompts.join('\\n') : '';
     syncFlagsHint(newAgent.value);
     syncEnvHint(newAgent.value);
+    refreshResumeFromOptions(newAgent.value, newCwd.value, row.resumeFrom || '');
     newName.focus();
     newName.select();
+  }
+
+  // Populates the "resume from" select with conversations for the
+  // (agent, cwd) combo. Pre-selects selectedId when given. Called from
+  // openNewForm + openEditForm and re-fired whenever the operator
+  // changes the agent dropdown or the cwd input.
+  let resumeFromReqToken = 0;
+  function relTimeShort(iso){
+    const ms = Date.now() - new Date(iso).getTime();
+    if (isNaN(ms) || ms < 0) return '';
+    if (ms < 60000) return 'now';
+    const m = Math.floor(ms/60000);
+    if (m < 60) return m + 'm ago';
+    const h = Math.floor(m/60);
+    if (h < 24) return h + 'h ago';
+    const d = Math.floor(h/24);
+    return d + 'd ago';
+  }
+  async function refreshResumeFromOptions(agentKey, cwd, selectedId){
+    const token = ++resumeFromReqToken;
+    // Reset to just the empty-pick default while loading.
+    newResumeFrom.innerHTML = '<option value="">(none — fresh start)</option>';
+    newResumeFromCount.textContent = '';
+    if (!agentKey) return;
+    const agentMeta = agentList.find(function(x){ return x.key === agentKey; });
+    if (!agentMeta || !agentMeta.hasHistory) {
+      newResumeFromCount.textContent = '(this agent has no history adapter)';
+      return;
+    }
+    const cwdParam = cwd && cwd.length > 0 ? cwd : '~';
+    try {
+      const r = await fetch('/api/conversations?agent=' + encodeURIComponent(agentKey) + '&cwd=' + encodeURIComponent(cwdParam), { cache: 'no-store' });
+      if (token !== resumeFromReqToken) return; // raced — newer request in flight
+      if (!r.ok) throw new Error('http ' + r.status);
+      const list = await r.json();
+      if (!Array.isArray(list) || list.length === 0){
+        newResumeFromCount.textContent = '(no past conversations for this agent + cwd)';
+        return;
+      }
+      const sortedSelectedFirst = selectedId
+        ? list.slice().sort(function(a, b){
+            if (a.id === selectedId) return -1;
+            if (b.id === selectedId) return 1;
+            return 0;
+          })
+        : list;
+      const opts = sortedSelectedFirst.map(function(c){
+        const isCurrent = c.id === selectedId;
+        const when = relTimeShort(c.lastMessageAt);
+        const titleShort = c.title.length > 60 ? c.title.slice(0, 60) + '…' : c.title;
+        const prefix = isCurrent ? '↻ ' : '';
+        return '<option value="' + escapeHtmlSafe(c.id) + '"' + (isCurrent ? ' selected' : '') + '>' +
+          escapeHtmlSafe(prefix + titleShort + ' · ' + when + ' · ' + c.messageCount + ' msgs') +
+          '</option>';
+      }).join('');
+      newResumeFrom.innerHTML = '<option value="">(none — fresh start)</option>' + opts;
+      newResumeFromCount.textContent = '(' + list.length + ' past conversation' + (list.length === 1 ? '' : 's') + ')';
+    } catch(e){
+      if (token !== resumeFromReqToken) return;
+      newResumeFromCount.textContent = '(failed to load: ' + (e.message || e) + ')';
+    }
   }
 
   newAgent.addEventListener('change', function(){
@@ -2201,6 +2274,17 @@ function pickerPage(): string {
       syncFlagsHint(newAgent.value);
       syncEnvHint(newAgent.value);
     }
+    refreshResumeFromOptions(newAgent.value, newCwd.value, '');
+  });
+  // Debounced cwd → conversation refresh so a typing operator doesn't
+  // spam the daemon. 280ms is the inter-keystroke threshold the rest of
+  // the form uses (filter input + send modal).
+  let cwdResumeDebounce;
+  newCwd.addEventListener('input', function(){
+    clearTimeout(cwdResumeDebounce);
+    cwdResumeDebounce = setTimeout(function(){
+      refreshResumeFromOptions(newAgent.value, newCwd.value, newResumeFrom.value);
+    }, 280);
   });
 
   newBtn.addEventListener('click', function(){
@@ -2226,11 +2310,15 @@ function pickerPage(): string {
     newSubmit.disabled = true;
     const originalLabel = newSubmit.textContent;
     try {
+      // resumeFrom: explicit string id binds; empty string clears the
+      // binding. Always sent on both POST and PATCH so the operator can
+      // wipe a stale binding from the form.
+      const resumeFrom = newResumeFrom.value;
       if (formMode && formMode.edit){
         newSubmit.textContent = 'saving…';
         // For edit, always send flags + env so input values are canonical.
         // name/cwd still only sent if user typed (so blank = no change).
-        const body = { flags: flags, env: env, initPrompts: initPrompts };
+        const body = { flags: flags, env: env, initPrompts: initPrompts, resumeFrom: resumeFrom };
         if (name) body.name = name;
         if (cwd) body.cwd = cwd;
         const r = await fetch('/api/sessions/' + encodeURIComponent(formMode.edit), {
@@ -2253,6 +2341,7 @@ function pickerPage(): string {
         body.flags = flags;
         body.env = env;
         if (initPrompts.length > 0) body.initPrompts = initPrompts;
+        if (resumeFrom) body.resumeFrom = resumeFrom;
         const r = await fetch('/api/sessions', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -3506,7 +3595,7 @@ function resumeConversation(
 
 export function editSession(
   oldName: string,
-  patch: { name?: string; cwd?: string; flags?: string; env?: string; initPrompts?: string[] },
+  patch: { name?: string; cwd?: string; flags?: string; env?: string; initPrompts?: string[]; resumeFrom?: string | null },
 ): { ok: true; session: SessionView } | { ok: false; error: string } {
   const session = state.get(oldName);
   if (!session) return { ok: false, error: `no tracked session "${oldName}"` };
@@ -3556,13 +3645,25 @@ export function editSession(
     ? (patch.initPrompts.length > 0 ? patch.initPrompts : undefined)
     : session.initPrompts;
 
+  // resumeFrom semantics on patch:
+  //   undefined → no change (preserve existing)
+  //   ''  or null → explicit clear (no conversation bound, fresh start on respawn)
+  //   '<id>' → set to that conversation id; takes effect on next respawn
+  // We auto kill+respawn below if this changes on a running session, the
+  // same way cwd changes auto-respawn — otherwise the edit would be
+  // invisible until the operator manually restarts.
+  const wantsResumeChange = patch.resumeFrom !== undefined;
+  const nextResumeFrom: string | undefined = wantsResumeChange
+    ? (typeof patch.resumeFrom === 'string' && patch.resumeFrom.length > 0 ? patch.resumeFrom : undefined)
+    : session.resumeFrom;
+
   const updated: state.SessionState = {
     name: renaming ? newName! : oldName,
     agent: session.agent,
     cwd: newCwd !== undefined && newCwd.length > 0 ? expandTilde(newCwd) : session.cwd,
     ...(nextFlags !== undefined ? { flags: nextFlags } : {}),
     ...(nextEnv !== undefined ? { env: nextEnv } : {}),
-    ...(session.resumeFrom !== undefined ? { resumeFrom: session.resumeFrom } : {}),
+    ...(nextResumeFrom !== undefined ? { resumeFrom: nextResumeFrom } : {}),
     ...(nextInitPrompts !== undefined ? { initPrompts: nextInitPrompts } : {}),
     ...(session.turnqMarker !== undefined ? { turnqMarker: session.turnqMarker } : {}),
     createdAt: session.createdAt,
@@ -3573,12 +3674,14 @@ export function editSession(
   if (renaming) state.forget(oldName);
   state.record(updated);
 
-  // cwd is set at tmux fork time and can't be changed on a live session — the
-  // operator's edit would otherwise be invisible until they manually respawn.
-  // Auto kill+respawn when cwd actually changed and the session is running.
+  // cwd + resumeFrom are baked into the launch command at tmux fork time
+  // — neither can be changed on a live session. Auto kill+respawn when
+  // either actually changed and the session is running, so the operator's
+  // edit isn't invisible until manual restart.
   const cwdChanged =
     newCwd !== undefined && newCwd.length > 0 && updated.cwd !== session.cwd;
-  if (cwdChanged && tmux.hasSession(updated.name)) {
+  const resumeChanged = wantsResumeChange && updated.resumeFrom !== session.resumeFrom;
+  if ((cwdChanged || resumeChanged) && tmux.hasSession(updated.name)) {
     const agent = DEFAULT_AGENTS[updated.agent];
     if (agent && isAgentInstalled(agent)) {
       try {
@@ -3595,7 +3698,8 @@ export function editSession(
         state.record(refreshed);
         return { ok: true, session: viewOf(refreshed, true) };
       } catch (err) {
-        return { ok: false, error: `cwd updated but restart failed: ${err instanceof Error ? err.message : String(err)}` };
+        const what = cwdChanged && resumeChanged ? 'cwd + resumeFrom' : (cwdChanged ? 'cwd' : 'resumeFrom');
+        return { ok: false, error: `${what} updated but restart failed: ${err instanceof Error ? err.message : String(err)}` };
       }
     }
   }
@@ -3854,6 +3958,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
           cmd: def.cmd,
           flags: def.flags ?? '',
           envDefaults: def.envDefaults ?? {},
+          hasHistory: Boolean(def.history),
         }));
       return sendJson(res, installed);
     }
@@ -4096,13 +4201,33 @@ export function startServer(opts: ServeOptions): ServerHandle {
           return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'history read failed' }, 500);
         }
       }
+      // GET /api/conversations?agent=<key>&cwd=<path> — list conversations
+      // for an arbitrary agent + cwd combo (no session record required).
+      // The +new and edit forms call this to populate the "resume from"
+      // dropdown as the operator chooses an agent / cwd, before the
+      // session exists. Falls back to '~' shorthand expansion same as
+      // the spawn path.
+      if (url.pathname === '/api/conversations') {
+        const agentKey = url.searchParams.get('agent') ?? '';
+        const rawCwd = url.searchParams.get('cwd') ?? '';
+        if (!agentKey || !rawCwd) return sendJson(res, []);
+        const agent = DEFAULT_AGENTS[agentKey];
+        if (!agent?.history) return sendJson(res, []);
+        const cwd = expandTilde(rawCwd);
+        try {
+          const convs: Conversation[] = agent.history.listConversations(cwd);
+          return sendJson(res, convs);
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'history read failed' }, 500);
+        }
+      }
     }
     if (method === 'PATCH') {
       const mEdit = url.pathname.match(EDIT_RE);
       if (mEdit) {
         const name = decodeURIComponent(mEdit[1]!);
         try {
-          const body = (await readJsonBody(req)) as { name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown; initPrompts?: unknown };
+          const body = (await readJsonBody(req)) as { name?: unknown; cwd?: unknown; flags?: unknown; env?: unknown; initPrompts?: unknown; resumeFrom?: unknown };
           const result = editSession(name, {
             ...(typeof body.name === 'string' ? { name: body.name } : {}),
             ...(typeof body.cwd === 'string' ? { cwd: body.cwd } : {}),
@@ -4111,6 +4236,11 @@ export function startServer(opts: ServeOptions): ServerHandle {
             ...(Array.isArray(body.initPrompts)
               ? { initPrompts: body.initPrompts.filter((p): p is string => typeof p === 'string') }
               : {}),
+            // resumeFrom: string sets the binding, '' or null clears it,
+            // undefined preserves the existing binding. Same semantics as
+            // editSession's patch type.
+            ...(typeof body.resumeFrom === 'string' ? { resumeFrom: body.resumeFrom } : {}),
+            ...(body.resumeFrom === null ? { resumeFrom: null } : {}),
           });
           return sendJson(res, result, result.ok ? 200 : 400);
         } catch (err) {
