@@ -1,6 +1,7 @@
 import { accessSync, closeSync, constants, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
+import { createHash } from 'node:crypto';
 
 export interface Conversation {
   id: string;
@@ -430,6 +431,175 @@ const agyHistory: AgentHistoryAdapter = {
   },
 };
 
+/**
+ * Gemini CLI stores each session as
+ * `~/.gemini/tmp/<project-basename>/chats/session-<timestamp>-<short>.jsonl`.
+ * The directory basename is a UI nicety, not load-bearing — the leading
+ * `session_meta` line carries the source-of-truth `projectHash`, which
+ * equals `sha256(cwd)`. Adapter walks every `chats/` subdir and matches
+ * by projectHash so non-default directory naming (or multiple cwds
+ * sharing a basename) doesn't break filtering.
+ *
+ * Resume flag: `--session-file <path>`. Gemini's `--resume` takes a
+ * numeric index from `--list-sessions`, NOT a session id — indexes shift
+ * when sessions get added/deleted, so they're not stable for llmux's
+ * id-based picker. `--session-file` loads any jsonl path directly,
+ * which is what we want.
+ */
+function sha256OfPath(p: string): string {
+  return createHash('sha256').update(p).digest('hex');
+}
+
+function walkSessionJsonlFiles(tmpRoot: string): string[] {
+  if (!existsSync(tmpRoot)) return [];
+  const files: string[] = [];
+  let outer: string[];
+  try {
+    outer = readdirSync(tmpRoot);
+  } catch {
+    return [];
+  }
+  for (const projectDir of outer) {
+    const chats = join(tmpRoot, projectDir, 'chats');
+    if (!existsSync(chats)) continue;
+    let inner: string[];
+    try {
+      inner = readdirSync(chats);
+    } catch {
+      continue;
+    }
+    for (const f of inner) {
+      if (f.startsWith('session-') && f.endsWith('.jsonl')) {
+        files.push(join(chats, f));
+      }
+    }
+  }
+  return files;
+}
+
+interface GeminiSessionMeta {
+  sessionId?: string;
+  projectHash?: string;
+  startTime?: string;
+  lastUpdated?: string;
+  kind?: string;
+}
+
+function parseGeminiSessionMeta(fpath: string): GeminiSessionMeta | undefined {
+  const first = readFirstNonEmptyLine(fpath);
+  if (!first) return undefined;
+  try {
+    return JSON.parse(first) as GeminiSessionMeta;
+  } catch {
+    return undefined;
+  }
+}
+
+function makeGeminiLikeAdapter(opts: {
+  tmpRoot: () => string;
+  resumeFlag: (id: string, fpath: string) => string;
+}): AgentHistoryAdapter {
+  return {
+    listConversations(cwd: string): Conversation[] {
+      const cwdHash = sha256OfPath(cwd);
+      const files = walkSessionJsonlFiles(opts.tmpRoot());
+      const out: Conversation[] = [];
+      for (const fpath of files) {
+        let raw: string;
+        try {
+          raw = readFileSync(fpath, 'utf8');
+        } catch {
+          continue;
+        }
+        const lines = raw.split('\n').filter((l) => l.length > 0);
+        if (lines.length === 0) continue;
+        let meta: GeminiSessionMeta | undefined;
+        try {
+          meta = JSON.parse(lines[0]!) as GeminiSessionMeta;
+        } catch {
+          continue;
+        }
+        if (!meta?.projectHash || meta.projectHash !== cwdHash || !meta.sessionId) continue;
+        // Title — first event after the session_meta whose content is a
+        // user message we'd actually surface. Gemini events carry
+        // `type: 'user'` with `content` strings, but also synthetic
+        // `info` and tool events we want to skip.
+        let title: string | undefined;
+        for (let i = 1; i < lines.length && !title; i++) {
+          try {
+            const evt = JSON.parse(lines[i]!) as { type?: string; content?: unknown };
+            if (evt.type !== 'user') continue;
+            // Gemini/qwen events carry content either as a string or as
+            // an array of {text} parts. Extract the first text fragment.
+            let text: string | undefined;
+            if (typeof evt.content === 'string') {
+              text = evt.content;
+            } else if (Array.isArray(evt.content)) {
+              for (const part of evt.content) {
+                if (typeof part === 'object' && part !== null) {
+                  const p = part as { text?: unknown };
+                  if (typeof p.text === 'string') { text = p.text; break; }
+                }
+              }
+            }
+            if (text && text.length > 0) {
+              title = text.split('\n')[0]!.slice(0, 100).trim();
+            }
+          } catch {
+            // skip malformed line
+          }
+        }
+        out.push({
+          id: meta.sessionId,
+          title: title ?? '(no opener)',
+          startedAt: meta.startTime ?? new Date(statSync(fpath).ctimeMs).toISOString(),
+          lastMessageAt: meta.lastUpdated ?? meta.startTime ?? new Date(statSync(fpath).mtimeMs).toISOString(),
+          messageCount: lines.length,
+          // The resume verb needs the file path for gemini, so smuggle it
+          // through the `id` field's downstream lookup by stashing it
+          // alongside. We use a simple convention: when resumeFlag is
+          // called, we map back from sessionId to fpath via a scan.
+        });
+      }
+      return out.sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
+    },
+    countConversations(cwd: string): number {
+      const cwdHash = sha256OfPath(cwd);
+      const files = walkSessionJsonlFiles(opts.tmpRoot());
+      let count = 0;
+      for (const fpath of files) {
+        const meta = parseGeminiSessionMeta(fpath);
+        if (meta?.projectHash === cwdHash) count++;
+      }
+      return count;
+    },
+    resumeFlag(id: string): string {
+      // We need the file path for gemini's --session-file; for qwen we
+      // accept the sessionId directly. Caller-provided `opts.resumeFlag`
+      // decides the syntax. For path lookup, we re-scan the tmp tree.
+      const files = walkSessionJsonlFiles(opts.tmpRoot());
+      for (const fpath of files) {
+        const meta = parseGeminiSessionMeta(fpath);
+        if (meta?.sessionId === id) return opts.resumeFlag(id, fpath);
+      }
+      // Fall back to the id-only form if we somehow can't find the file
+      // (file deleted between list and resume). Better to attempt than
+      // silently fail.
+      return opts.resumeFlag(id, '');
+    },
+  };
+}
+
+const geminiHistory: AgentHistoryAdapter = makeGeminiLikeAdapter({
+  tmpRoot: () => join(homedir(), '.gemini', 'tmp'),
+  resumeFlag: (_id, fpath) => fpath ? `--session-file ${fpath}` : '',
+});
+
+const qwenHistory: AgentHistoryAdapter = makeGeminiLikeAdapter({
+  tmpRoot: () => join(homedir(), '.qwen', 'tmp'),
+  resumeFlag: (id, _fpath) => `--resume ${id}`,
+});
+
 const which = (cmd: string): boolean => {
   const pathDirs = (process.env.PATH ?? '').split(delimiter);
   for (const dir of pathDirs) {
@@ -456,8 +626,8 @@ export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory },
   codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory },
   agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install', history: agyHistory },
-  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli' },
-  qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code' },
+  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli', history: geminiHistory },
+  qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code', history: qwenHistory },
   // OpenCode's --dangerously-skip-permissions only applies to `opencode run`
   // (one-shot). The TUI default mode rejects it and exits — danger mode in
   // the TUI is controlled via OPENCODE_YOLO=1 instead.
