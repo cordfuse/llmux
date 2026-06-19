@@ -843,10 +843,31 @@ const opencodeHistory: AgentHistoryAdapter = {
   },
 };
 
+/**
+ * WSL2 mounts the Windows filesystem under /mnt (C: → /mnt/c, …) and marks
+ * every file there world-executable. A bare PATH scan therefore "finds"
+ * Windows binaries (e.g. an npm-global `codex` shim under
+ * /mnt/c/Users/.../.npm-global) that CANNOT run as a Linux interactive agent
+ * in a tmux pane. Reporting one is a false positive: the picker offers the
+ * agent, then the spawn produces a broken pane. Detect WSL once and ignore
+ * PATH entries under the Windows mount root so detection stays honest — no
+ * config needed from the operator. No-op off WSL.
+ */
+const IS_WSL = (() => {
+  try {
+    return /microsoft|wsl/i.test(readFileSync('/proc/version', 'utf8'));
+  } catch {
+    return false;
+  }
+})();
+
+const isWindowsMount = (dir: string): boolean => dir === '/mnt' || dir.startsWith('/mnt/');
+
 const which = (cmd: string): boolean => {
   const pathDirs = (process.env.PATH ?? '').split(delimiter);
   for (const dir of pathDirs) {
     if (!dir) continue;
+    if (IS_WSL && isWindowsMount(dir)) continue; // Windows binaries can't drive a Linux pty
     try {
       accessSync(join(dir, cmd), constants.X_OK);
       return true;
@@ -865,8 +886,22 @@ const copilotInstalled = (): boolean => {
   return existsSync(join(homedir(), '.local/share/gh/copilot'));
 };
 
+const claudeInstalled = (): boolean => {
+  // Claude Code ships two ways and we must detect either. which() is WSL-aware,
+  // so a Windows-only claude under /mnt is correctly ignored (not a false hit).
+  //   1) Node / npm-global  — `npm install -g @anthropic-ai/claude-code` drops a
+  //                           `claude` executable on PATH (npm/nvm bin dir).
+  //   2) Native installer   — `curl … claude.ai/install.sh | bash` symlinks
+  //                           ~/.local/bin/claude → ~/.local/share/claude/versions/<v>.
+  // The native-dir check is a fallback for when ~/.local/bin isn't on PATH
+  // (login vs non-login shell), so a freshly-native-installed claude is still
+  // found without the operator fixing their PATH first.
+  if (which('claude')) return true;                                              // node global, or native symlink on PATH
+  return existsSync(join(homedir(), '.local', 'share', 'claude', 'versions'));   // native install, even if off PATH
+};
+
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
-  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory },
+  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', detectInstalled: claudeInstalled, installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory },
   codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory },
   agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install', history: agyHistory },
   gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli', history: geminiHistory },
