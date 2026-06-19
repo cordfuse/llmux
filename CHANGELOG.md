@@ -5,6 +5,25 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.33.5] — 2026-06-19
+
+### Docs — Tailscale-on-WSL2 is the recommended path for phone access
+
+Documents what bit during WSL2 dogfooding: a daemon in WSL2 is behind a NAT'd
+virtual network, so its `localhost` / LAN URLs are **not reachable from a
+phone** — `localhost` only forwards from the Windows host, and the WSL `172.x`
+address is internal. The LAN workaround (elevated `netsh interface portproxy`
++ firewall rule) is fragile because WSL's internal IP changes on every
+`wsl --shutdown` / reboot.
+
+New `### On WSL2` subsection under **Tailscale serve fronting** plus a pointer
+from **Mobile, by design**: install Tailscale **inside the WSL distro** (the
+Windows-host node doesn't expose WSL's ports) so the WSL instance joins the
+tailnet as its own node with a stable IP + MagicDNS name — no admin, no
+`netsh`, survives reboots, works over LTE. Notes `/dev/net/tun` (normal mode,
+no userspace-networking), `systemd=true` in `/etc/wsl.conf`, and
+`--hostname=<host>-wsl` to avoid colliding with the Windows host's node.
+
 ## [0.33.4] — 2026-06-19
 
 ### Fixed — WSL2 no longer false-detects Windows-only agents on `/mnt`
