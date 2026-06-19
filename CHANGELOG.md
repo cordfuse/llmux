@@ -5,6 +5,32 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.31.4] — 2026-06-18
+
+### Changed — Mobile column-drop choice swapped: STATE hides instead of AGENT
+
+v0.31.3 hid the AGENT column on mobile to free room for the per-row
+Kill icon. Steve pushed back — AGENT is the column he wants visible
+on the phone. v0.31.4 reverts that and instead hides the STATE
+column, surfacing status as a small colored dot (`●`) prefixed onto
+the session name inside the name-block:
+
+- `●` green with a soft glow — `running`
+- `○` hollow gray — `exited`
+
+The dot is `aria-label` + `title` annotated so screen readers and
+hover/long-press still surface the textual status. On desktop the
+dot is `display:none` and the STATE column shows the textual status
+as before.
+
+### Why this works geometrically
+
+The state text ("running" / "exited") consumes ~55-70px of column
+width with padding. A 14px-wide colored dot inline with the name
+consumes effectively zero column width. The AGENT column reclaims
+that space; per-row Kill stays inside the viewport at 360-412px
+widths.
+
 ## [0.31.3] — 2026-06-18
 
 ### Fixed — Per-row Kill icon clipped off the right edge on sub-390px viewports

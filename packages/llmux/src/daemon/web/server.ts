@@ -464,18 +464,22 @@ function pickerPage(): string {
   #convs-modal .actions{display:flex;justify-content:flex-end}
   #convs-modal button.close-btn{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
   #convs-modal button.close-btn:hover{background:#252b34}
-  /* On desktop the inline agent line inside name-block is redundant with
-     the dedicated AGENT column, so suppress it. */
-  .name-block .agent-inline{display:none}
+  /* The state-dot prefix is mobile-only; suppress on desktop where the
+     dedicated STATE column shows the textual status. */
+  .name-block .state-dot{display:none}
   /* Mobile: hide cwd column, show under name */
   @media (max-width: 600px){
     body{padding:14px 8px 72px}
     th.cwd-col,td.cwd-col{display:none}
-    /* Hide the dedicated AGENT column — it's redundant when the session name
-       defaults to the agent key; rowHtml() emits an "agent-inline" line in
-       name-block when name and agent differ, which only renders on mobile. */
-    th.agent-col,td.agent-col{display:none}
-    .name-block .agent-inline{display:block;color:#7a7f87;font-size:11px;margin-top:2px}
+    /* Hide the dedicated STATE column on mobile — state is binary (running
+       vs exited), so a colored dot prefixed onto the session name carries
+       the same information in a fraction of the column width. The AGENT
+       column stays visible per operator request — it's the more
+       informationally-dense column when names diverge from agent keys. */
+    th.state-col,td.state-col{display:none}
+    .name-block .state-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;line-height:1}
+    .name-block .state-dot.running{background:#7ee787;box-shadow:0 0 6px rgba(126,231,135,.4)}
+    .name-block .state-dot.exited{background:#3a4047;border:1px solid #5a6068}
     .name-block .cwd{display:block;margin-top:3px;max-width:100%}
     th,td{padding:8px 4px;font-size:13px}
     .name-block{max-width:42vw}
@@ -873,19 +877,16 @@ function pickerPage(): string {
       : '';
     const when = relativeTime(s.createdAt);
     const cwdShort = s.cwdDisplay || s.cwd;
-    // On mobile the AGENT column is hidden via CSS (it's redundant when the
-    // session name defaults to the agent key); we surface a small inline
-    // "agent: X" line inside the name-block so the agent is still visible
-    // when the name differs from the agent. The name-block agent line is
-    // hidden on desktop where the dedicated AGENT column is visible.
-    const agentInNameBlock = s.agent !== s.name
-      ? '<span class="agent-inline">' + escapeHtml(s.agent) + '</span>'
-      : '';
+    // On mobile the STATE column is hidden via CSS — we prefix a colored
+    // dot before the session name in name-block so running/exited is
+    // visible at a glance. The dot itself is display:none on desktop,
+    // where the dedicated STATE column shows the textual status.
+    const stateDot = '<span class="state-dot ' + s.status + '" aria-label="' + s.status + '" title="' + s.status + '"></span>';
     return '<tr data-name="' + escapeHtml(s.name) + '" data-agent="' + escapeHtml(s.agent) + '">' +
       '<td class="select-col"><input type="checkbox" class="row-select" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" aria-label="select ' + escapeHtml(s.name) + '"></td>' +
-      '<td class="name-block"><span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + agentInNameBlock + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></span></td>' +
+      '<td class="name-block">' + stateDot + '<span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></span></td>' +
       '<td class="agent-col">' + escapeHtml(s.agent) + '</td>' +
-      '<td class="' + cls + '">' + s.status + '</td>' +
+      '<td class="state-col ' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
       '<td class="actions">' + resumeBtn + sendBtn + editBtn + killBtn + '</td>' +
       '</tr>';
@@ -897,7 +898,7 @@ function pickerPage(): string {
       return;
     }
     const rows = sessions.map(rowHtml).join('');
-    container.innerHTML = '<table><thead><tr><th class="select-col"><input type="checkbox" id="select-all" aria-label="select all"></th><th>name</th><th class="agent-col">agent</th><th>state</th><th class="cwd-col">cwd</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    container.innerHTML = '<table><thead><tr><th class="select-col"><input type="checkbox" id="select-all" aria-label="select all"></th><th>name</th><th class="agent-col">agent</th><th class="state-col">state</th><th class="cwd-col">cwd</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
   }
 
   // ---- Bulk selection state ----
@@ -2276,7 +2277,7 @@ function renderSessionTable(_sessions: SessionView[]): string {
   // keeps the page layout stable while the real rows load in.
   return `<table><thead><tr>
     <th class="select-col"><input type="checkbox" id="select-all" aria-label="select all" disabled></th>
-    <th>name</th><th class="agent-col">agent</th><th>state</th><th class="cwd-col">cwd</th><th></th>
+    <th>name</th><th class="agent-col">agent</th><th class="state-col">state</th><th class="cwd-col">cwd</th><th></th>
   </tr></thead><tbody><tr><td colspan="6" style="padding:14px;color:#7a7f87;text-align:center">loading sessions…</td></tr></tbody></table>`;
 }
 
