@@ -72,6 +72,13 @@ interface SessionView {
   defaultEnv: Record<string, string>;
   /** Conversation id this session is currently resumed from (if any). */
   resumeFrom?: string;
+  /**
+   * Title of the conversation pointed to by `resumeFrom`, resolved by the
+   * adapter's optional lookupTitle() at view-of time. Undefined when the
+   * conversation can't be found (deleted, archived, never existed) — the
+   * UI falls back to a truncated id.
+   */
+  resumeFromTitle?: string;
   /** Per-session init prompts (combined with daemon.initPrompts at next respawn). */
   initPrompts?: string[];
   /** Whether the agent has a history adapter — UI shows the conversations icon. */
@@ -311,6 +318,7 @@ function pickerPage(): string {
   a.session-link:hover{text-decoration:underline}
   .name{font-weight:600}
   .started{color:#7a7f87;font-size:11px;margin-top:2px;display:block}
+  .resumed-from{color:#a371f7;font-size:11px;margin-top:2px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   .state-running{color:#7ee787}
   .state-exited{color:#7a7f87}
   .cwd{color:#c9d1d9;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
@@ -461,6 +469,7 @@ function pickerPage(): string {
   #convs-list .conv-meta .when{color:#9aa0a6}
   #convs-list .conv-meta .count{color:#7a7f87}
   #convs-list .conv-current{color:#a371f7;font-weight:600}
+  #convs-list .conv.has-current{background:rgba(163,113,247,.06);border-left:3px solid #a371f7;padding-left:8px;margin-left:-8px}
   #convs-modal .actions{display:flex;justify-content:flex-end}
   #convs-modal button.close-btn{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
   #convs-modal button.close-btn:hover{background:#252b34}
@@ -882,9 +891,18 @@ function pickerPage(): string {
     // visible at a glance. The dot itself is display:none on desktop,
     // where the dedicated STATE column shows the textual status.
     const stateDot = '<span class="state-dot ' + s.status + '" aria-label="' + s.status + '" title="' + s.status + '"></span>';
+    // "↻ resumed: <title>" badge — visible only when the session is
+    // currently bound to a conversation id (s.resumeFrom is set).
+    // Title comes from the adapter's lookupTitle(); fallback to the
+    // truncated id when lookup returns undefined.
+    let resumedFromHtml = '';
+    if (s.resumeFrom) {
+      const label = s.resumeFromTitle || (s.resumeFrom.length > 14 ? s.resumeFrom.slice(0, 14) + '…' : s.resumeFrom);
+      resumedFromHtml = '<span class="resumed-from" title="resumed from conversation ' + escapeHtml(s.resumeFrom) + '">↻ ' + escapeHtml(label) + '</span>';
+    }
     return '<tr data-name="' + escapeHtml(s.name) + '" data-agent="' + escapeHtml(s.agent) + '">' +
       '<td class="select-col"><input type="checkbox" class="row-select" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" aria-label="select ' + escapeHtml(s.name) + '"></td>' +
-      '<td class="name-block">' + stateDot + '<span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></span></td>' +
+      '<td class="name-block">' + stateDot + '<span class="name">' + linkOpen + escapeHtml(s.name) + '</a></span>' + resumedFromHtml + (when ? '<span class="started">started ' + when + '</span>' : '') + '<span class="cwd" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></span></td>' +
       '<td class="agent-col">' + escapeHtml(s.agent) + '</td>' +
       '<td class="state-col ' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
@@ -1088,8 +1106,9 @@ function pickerPage(): string {
       }
       convsList.innerHTML = list.map(function(c){
         const isCurrent = c.id === convsCurrentResumeFrom;
+        const convCls = isCurrent ? 'conv has-current' : 'conv';
         const titleCls = isCurrent ? 'conv-title conv-current' : 'conv-title';
-        return '<button class="conv" data-conv-id="' + escapeHtml(c.id) + '" data-conv-title="' + escapeHtml(c.title) + '">' +
+        return '<button class="' + convCls + '" data-conv-id="' + escapeHtml(c.id) + '" data-conv-title="' + escapeHtml(c.title) + '">' +
           '<span class="' + titleCls + '">' + (isCurrent ? '↻ ' : '') + escapeHtml(c.title) + '</span>' +
           '<span class="conv-meta"><span class="when">' + escapeHtml(relTime(c.lastMessageAt)) + '</span><span class="count">' + c.messageCount + ' msgs</span></span>' +
           '</button>';
@@ -3286,6 +3305,17 @@ function viewOf(s: state.SessionState, live: boolean): SessionView {
       conversationCount = 0;
     }
   }
+  // Resolve the bound-conversation title for the per-row "↻ resumed: X"
+  // badge. Adapters that implement lookupTitle do a single targeted read
+  // (one file open / one SQL row) rather than walking the full set.
+  let resumeFromTitle: string | undefined;
+  if (s.resumeFrom && agentDef?.history?.lookupTitle) {
+    try {
+      resumeFromTitle = agentDef.history.lookupTitle(s.cwd, s.resumeFrom);
+    } catch {
+      resumeFromTitle = undefined;
+    }
+  }
   return {
     name: s.name,
     agent: s.agent,
@@ -3296,6 +3326,7 @@ function viewOf(s: state.SessionState, live: boolean): SessionView {
     ...(s.env !== undefined ? { env: s.env } : {}),
     defaultEnv: agentDef?.envDefaults ?? {},
     ...(s.resumeFrom !== undefined ? { resumeFrom: s.resumeFrom } : {}),
+    ...(resumeFromTitle !== undefined ? { resumeFromTitle } : {}),
     ...(s.initPrompts !== undefined ? { initPrompts: s.initPrompts } : {}),
     hasHistory: Boolean(agentDef?.history),
     conversationCount,

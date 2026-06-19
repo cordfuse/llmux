@@ -24,6 +24,15 @@ export interface AgentHistoryAdapter {
    * overrides this with a directory-only count.
    */
   countConversations?(cwd: string): number;
+  /**
+   * Fast single-conversation title lookup for the "↻ resumed: X" badge
+   * the session-list view renders under a bound session's name. Should
+   * NOT walk the whole conversation set — each adapter implements the
+   * most direct lookup it can (open the one file by id, SQL by id, etc.).
+   * Returns undefined when the conversation was deleted / archived /
+   * never existed; the UI falls back to a truncated id.
+   */
+  lookupTitle?(cwd: string, conversationId: string): string | undefined;
   /** Build the launch flag fragment to resume a specific conversation. */
   resumeFlag(conversationId: string): string;
 }
@@ -156,6 +165,32 @@ const claudeHistory: AgentHistoryAdapter = {
     } catch {
       return 0;
     }
+  },
+  lookupTitle(cwd: string, id: string): string | undefined {
+    // Direct file open by id — claude's encoded-cwd dir + `<id>.jsonl`.
+    const fpath = join(homedir(), '.claude', 'projects', encodeClaudeCwd(cwd), `${id}.jsonl`);
+    if (!existsSync(fpath)) return undefined;
+    try {
+      const raw = readFileSync(fpath, 'utf8');
+      for (const line of raw.split('\n')) {
+        if (!line) continue;
+        let evt: { type?: string; message?: unknown };
+        try {
+          evt = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (evt.type === 'user') {
+          const text = extractClaudeUserText(evt.message);
+          if (text && looksLikeRealUserMessage(text)) {
+            return text.split('\n')[0]!.slice(0, 100).trim();
+          }
+        }
+      }
+    } catch {
+      // unreadable
+    }
+    return undefined;
   },
   resumeFlag(id: string): string {
     return `--resume ${id}`;
@@ -343,6 +378,40 @@ const codexHistory: AgentHistoryAdapter = {
     }
     return count;
   },
+  lookupTitle(_cwd: string, id: string): string | undefined {
+    // Codex session filenames carry the uuid as suffix
+    // (rollout-<ts>-<uuid>.jsonl), so we can find the file by walking
+    // and matching the basename without needing the cwd filter — id
+    // alone is unique.
+    const files = walkCodexSessionFiles();
+    const target = files.find((f) => f.endsWith(`-${id}.jsonl`));
+    if (!target) return undefined;
+    try {
+      const raw = readFileSync(target, 'utf8');
+      for (const line of raw.split('\n')) {
+        if (!line) continue;
+        let evt: { type?: string; payload?: { role?: string; content?: unknown } };
+        try {
+          evt = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (evt.type === 'response_item' && evt.payload?.role === 'user' && Array.isArray(evt.payload.content)) {
+          for (const block of evt.payload.content) {
+            if (typeof block === 'object' && block !== null) {
+              const b = block as { type?: string; text?: string };
+              if (typeof b.text === 'string' && !isCodexSyntheticUserText(b.text)) {
+                return b.text.split('\n')[0]!.slice(0, 100).trim();
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // unreadable
+    }
+    return undefined;
+  },
   resumeFlag(id: string): string {
     return `resume ${id}`;
   },
@@ -426,6 +495,17 @@ const agyHistory: AgentHistoryAdapter = {
       if (line.workspace === cwd && line.conversationId) ids.add(line.conversationId);
     }
     return ids.size;
+  },
+  lookupTitle(_cwd: string, id: string): string | undefined {
+    // Single-file scan for the first display with the matching id.
+    const lines = readAgyHistory();
+    let earliest: AgyHistoryLine | undefined;
+    for (const line of lines) {
+      if (line.conversationId !== id) continue;
+      if (!earliest || (line.timestamp ?? 0) < (earliest.timestamp ?? 0)) earliest = line;
+    }
+    if (!earliest?.display) return undefined;
+    return earliest.display.split('\n')[0]!.slice(0, 100).trim();
   },
   resumeFlag(id: string): string {
     return `--conversation ${id}`;
@@ -574,6 +654,44 @@ function makeGeminiLikeAdapter(opts: {
       }
       return count;
     },
+    lookupTitle(_cwd: string, id: string): string | undefined {
+      // Find the one session matching sessionId, then walk its lines for
+      // the first real user message. Same title extractor as
+      // listConversations, just scoped to a single file.
+      const files = walkSessionJsonlFiles(opts.tmpRoot());
+      for (const fpath of files) {
+        const meta = parseGeminiSessionMeta(fpath);
+        if (meta?.sessionId !== id) continue;
+        let raw: string;
+        try {
+          raw = readFileSync(fpath, 'utf8');
+        } catch {
+          return undefined;
+        }
+        const lines = raw.split('\n').filter((l) => l.length > 0);
+        for (let i = 1; i < lines.length; i++) {
+          try {
+            const evt = JSON.parse(lines[i]!) as { type?: string; content?: unknown };
+            if (evt.type !== 'user') continue;
+            let text: string | undefined;
+            if (typeof evt.content === 'string') text = evt.content;
+            else if (Array.isArray(evt.content)) {
+              for (const part of evt.content) {
+                if (typeof part === 'object' && part !== null) {
+                  const p = part as { text?: unknown };
+                  if (typeof p.text === 'string') { text = p.text; break; }
+                }
+              }
+            }
+            if (text && text.length > 0) return text.split('\n')[0]!.slice(0, 100).trim();
+          } catch {
+            // skip
+          }
+        }
+        return undefined;
+      }
+      return undefined;
+    },
     resumeFlag(id: string): string {
       // We need the file path for gemini's --session-file; for qwen we
       // accept the sessionId directly. Caller-provided `opts.resumeFlag`
@@ -709,6 +827,26 @@ const opencodeHistory: AgentHistoryAdapter = {
       return row ? Number(row.n) : 0;
     } catch {
       return 0;
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  },
+  lookupTitle(_cwd: string, id: string): string | undefined {
+    const sqlite = loadNodeSqlite();
+    if (!sqlite) return undefined;
+    const path = opencodeDbPath();
+    if (!existsSync(path)) return undefined;
+    let db: import('node:sqlite').DatabaseSync;
+    try {
+      db = new sqlite.DatabaseSync(path, { readOnly: true });
+    } catch {
+      return undefined;
+    }
+    try {
+      const row = db.prepare(`SELECT title FROM session WHERE id = ? LIMIT 1`).get(id) as { title?: string } | undefined;
+      return row?.title ?? undefined;
+    } catch {
+      return undefined;
     } finally {
       try { db.close(); } catch { /* ignore */ }
     }
