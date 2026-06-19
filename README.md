@@ -82,6 +82,10 @@ an agent on a browserless server, attach from your phone, click through
 the browser OAuth flow there, detach. The session stays authed for
 re-attaches forever.
 
+> Running the daemon in **WSL2**? Install Tailscale *inside* WSL — see
+> [On WSL2](#on-wsl2--install-tailscale-inside-wsl-not-just-on-windows).
+> NAT means the `localhost` / LAN URLs won't reach your phone on their own.
+
 ### One addressable surface, many use cases
 
 Because each session is reachable by name from any client, llmux is the
@@ -426,6 +430,36 @@ multiple tools can share one tailnet host):
 | vyzr  | `4080` | `4443` |
 
 (Pick non-overlapping ports for any additional Cordfuse app you front.)
+
+### On WSL2 — install Tailscale *inside* WSL, not just on Windows
+
+If the daemon runs in **WSL2**, Tailscale is the cleanest — and recommended —
+way to reach the web picker from your phone. WSL2 sits behind a NAT'd virtual
+network, so the daemon's `localhost` / `LAN` URLs are **not reachable from
+other devices**: `localhost` only forwards from the Windows host itself, and
+the WSL `172.x` address is internal. Reaching it over the LAN otherwise means
+an elevated `netsh interface portproxy` + firewall rule on Windows that breaks
+every time WSL's internal IP changes (each `wsl --shutdown` / reboot).
+
+Tailscale sidesteps all of that. Install it **inside the WSL distro** (the
+Windows-host Tailscale node does *not* expose WSL's ports) so the WSL instance
+joins your tailnet as its own node with a **stable** IP + MagicDNS name:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --hostname=<host>-wsl   # distinct from the Windows host's node
+```
+
+Then front the daemon with `tailscale serve` exactly as above and open the
+HTTPS URL from any tailnet device. Stable across reboots, no admin/`netsh`/
+firewall changes, and it works over LTE — not just your local WiFi.
+
+- Modern WSL2 kernels ship `/dev/net/tun`, so Tailscale runs in normal mode
+  (no `--tun=userspace-networking` needed). Verify with `ls /dev/net/tun`.
+- Enable systemd in `/etc/wsl.conf` (`[boot]\nsystemd=true`) so `tailscaled`
+  runs as a service and survives WSL restarts.
+- `--hostname=<host>-wsl` avoids a name collision with the Windows host, which
+  reports the same machine name to the tailnet.
 
 ## Config (`.llmux.yaml`)
 
