@@ -52,7 +52,7 @@ llmux just adds the unified surface on top.)
 <p align="center"><em>CLI tour against a live daemon — version, agent catalog, session list, JSON surface, then a real tmux attach into a running Codex session and a clean detach.</em></p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/mobile.gif" width="30%" alt="Mobile PWA picker, attach into an opencode session, soft-keyboard toolbar visible">
+  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/mobile.gif" width="30%" alt="Mobile picker, attach into an opencode session, soft-keyboard toolbar visible">
 </p>
 
 <p align="center"><em>Phone — picker → tap session → attached xterm with soft-keyboard toolbar (Esc / Tab / Ctrl / arrows / shell chars). Blue rings mark each tap. Pixel 7 emulation.</em></p>
@@ -72,8 +72,8 @@ The web picker is reachable over Tailscale HTTPS from any browser.
 Open it from your phone — including over LTE — and you get the same
 xterm.js terminal a desktop browser shows, with a soft-keyboard toolbar
 that surfaces the chars gboard hides (Esc / Tab / Ctrl / arrows /
-shell chars). Chrome's "Add to Home Screen" creates a quick-launch
-shortcut for it.
+shell chars). Bookmark it (or pin the tab) for a one-tap return —
+there's no installable home-screen icon, just a regular web page.
 
 A consequence: **first-run OAuth on a headless box just works.** Spawn
 an agent on a browserless server, attach from your phone, click through
@@ -228,7 +228,7 @@ llmux session attach main
 #    Pick a session, get a full-screen xterm.js terminal wired over WebSocket.
 ```
 
-On mobile the picker is a real PWA-style surface — spawn / restart / kill /
+On mobile the picker is a phone-tailored web UI — spawn / restart / kill /
 edit / resume past conversations, with a confirmation modal on destructive
 actions. The chat page is a phone-friendly xterm with a custom soft-keyboard
 toolbar that surfaces Esc / Tab / Ctrl / Alt / arrows / shell chars that
@@ -357,10 +357,10 @@ over HTTPS, front the daemon with `tailscale serve`. Tailscale terminates
 TLS at the tailnet edge; llmux stays plain HTTP behind it.
 
 **Why a custom port, not 443?** Tailscale serve allows exactly one mapping
-per `host:port`. If you run more than one Cordfuse PWA on the same machine
+per `host:port`. If you run more than one Cordfuse app on the same machine
 (llmux + vyzr + …), they can't all claim port 443 — adding a second app on
 443 silently kicks the first one off. The Cordfuse convention is to give
-each PWA its own custom HTTP/HTTPS port pair so they coexist without
+each app its own custom HTTP/HTTPS port pair so they coexist without
 collision. **llmux's convention is `3080` (HTTP) / `3443` (HTTPS).**
 
 ```bash
@@ -392,7 +392,7 @@ multiple tools can share one tailnet host):
 | llmux | `3080` | `3443` |
 | vyzr  | `4080` | `4443` |
 
-(Pick non-overlapping ports for any additional Cordfuse PWA you front.)
+(Pick non-overlapping ports for any additional Cordfuse app you front.)
 
 ## Config (`.llmux.yaml`)
 
