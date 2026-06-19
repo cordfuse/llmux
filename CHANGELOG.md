@@ -5,6 +5,36 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.33.4] — 2026-06-19
+
+### Fixed — WSL2 no longer false-detects Windows-only agents on `/mnt`
+
+Under WSL2 the Windows filesystem is mounted at `/mnt` (`C:` → `/mnt/c`, …)
+and every file there is marked world-executable. The agent-detection PATH
+scan (`which`) therefore reported Windows-only installs — e.g. an npm-global
+`codex` / `opencode` shim under `/mnt/c/Users/.../.npm-global` — as installed
+Linux agents. That is a false positive: a Windows binary cannot drive a Linux
+pty, so the picker offered the agent and the spawn produced a broken tmux
+pane, with no signal to a first-time operator as to why.
+
+`which` now detects WSL once (via `/proc/version`) and skips PATH entries
+under the Windows mount root. Detection stays honest with **zero config** — a
+beginner just installs the Linux build of the agent and it works; Windows
+leftovers are silently ignored. Completely no-op off WSL (native Linux, macOS,
+CachyOS unaffected — no per-distro behavior).
+
+### Fixed — Claude Code detected from both install shapes (node + native)
+
+Claude Code ships two ways and detection now covers both explicitly:
+
+1. **Node / npm-global** — `npm install -g @anthropic-ai/claude-code` puts a
+   `claude` on PATH (found via the WSL-aware `which`).
+2. **Native installer** — `claude.ai/install.sh` symlinks
+   `~/.local/bin/claude` → `~/.local/share/claude/versions/<v>`; a direct
+   check of the native versions dir is used as a fallback so a native install
+   is found even when `~/.local/bin` isn't on the daemon's PATH (login vs
+   non-login shell).
+
 ## [0.33.3] — 2026-06-19
 
 ### Changed — OpenCode adapter swapped from `node:sqlite` to `better-sqlite3`
