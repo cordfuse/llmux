@@ -2,7 +2,7 @@ import { accessSync, closeSync, constants, existsSync, openSync, readdirSync, re
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
+import Database from 'better-sqlite3';
 
 export interface Conversation {
   id: string;
@@ -726,13 +726,27 @@ const qwenHistory: AgentHistoryAdapter = makeGeminiLikeAdapter({
  * `directory` column (raw string match — no path encoding); the
  * `message` table holds per-message rows.
  *
- * Adapter uses node's built-in `node:sqlite` (stable from node 22.5).
- * The dependency is loaded via createRequire() inside a try/catch so
- * operators on node <22.5 fall through to "no adapter" — opencode
- * sessions still run, the Conversations modal just stays hidden.
- * The DB is opened read-only on every call (DB-level WAL handles
- * concurrent reads with opencode's writer); ms-scale and safer than
- * caching a connection across daemon lifetime.
+ * Uses `better-sqlite3` — synchronous (fits the adapter interface),
+ * battle-tested, ships prebuilt binaries for the common targets via
+ * prebuild-install. We swapped from `node:sqlite` in v0.33.3 because:
+ *
+ *   - `node:sqlite` is stable from node 22.5 only. On node 20.x and
+ *     22.0-22.4 the prior try/catch fallback left a silent feature gap
+ *     (opencode would just have no resume picker with no signal).
+ *   - `node:sqlite` emits an `ExperimentalWarning: SQLite is an
+ *     experimental feature and might change at any time` on every
+ *     module load, which leaked into the operator's CLI output on
+ *     `session resume`.
+ *   - better-sqlite3 has no F6-class risk — no separately-exec'd
+ *     helper binary like node-pty's `spawn-helper`; just a single
+ *     `dlopen`'d `.node` addon.
+ *
+ * `engines.node` stays `>=20`.
+ *
+ * The DB is opened read-only with `fileMustExist: true` on every call.
+ * DB-level WAL handles concurrent reads with opencode's writer cleanly;
+ * open + close per call is ms-scale and safer than caching a
+ * connection across daemon lifetime.
  *
  * Filtering rationale (per mac's verified spec):
  *   - `s.directory = ?` matches llmux's session cwd exactly
@@ -743,19 +757,6 @@ const qwenHistory: AgentHistoryAdapter = makeGeminiLikeAdapter({
  * unknown session id with "Session not found: <id>" (i.e. it parses
  * the flag and tries to load by id), so the syntax is correct.
  */
-const nodeRequire = createRequire(import.meta.url);
-
-let _opencodeSqliteCache: typeof import('node:sqlite') | null | undefined;
-function loadNodeSqlite(): typeof import('node:sqlite') | undefined {
-  if (_opencodeSqliteCache !== undefined) return _opencodeSqliteCache ?? undefined;
-  try {
-    _opencodeSqliteCache = nodeRequire('node:sqlite') as typeof import('node:sqlite');
-  } catch {
-    _opencodeSqliteCache = null;
-  }
-  return _opencodeSqliteCache ?? undefined;
-}
-
 function opencodeDbPath(): string {
   const xdg = process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share');
   return join(xdg, 'opencode', 'opencode.db');
@@ -773,18 +774,20 @@ function epochMsToIso(v: number | bigint): string {
   return new Date(Number(v)).toISOString();
 }
 
+function openOpencodeDb(): InstanceType<typeof Database> | undefined {
+  const path = opencodeDbPath();
+  if (!existsSync(path)) return undefined;
+  try {
+    return new Database(path, { readonly: true, fileMustExist: true });
+  } catch {
+    return undefined;
+  }
+}
+
 const opencodeHistory: AgentHistoryAdapter = {
   listConversations(cwd: string): Conversation[] {
-    const sqlite = loadNodeSqlite();
-    if (!sqlite) return [];
-    const path = opencodeDbPath();
-    if (!existsSync(path)) return [];
-    let db: import('node:sqlite').DatabaseSync;
-    try {
-      db = new sqlite.DatabaseSync(path, { readOnly: true });
-    } catch {
-      return [];
-    }
+    const db = openOpencodeDb();
+    if (!db) return [];
     try {
       const rows = db.prepare(
         `SELECT s.id AS id, s.title AS title, s.time_created AS time_created,
@@ -809,16 +812,8 @@ const opencodeHistory: AgentHistoryAdapter = {
     }
   },
   countConversations(cwd: string): number {
-    const sqlite = loadNodeSqlite();
-    if (!sqlite) return 0;
-    const path = opencodeDbPath();
-    if (!existsSync(path)) return 0;
-    let db: import('node:sqlite').DatabaseSync;
-    try {
-      db = new sqlite.DatabaseSync(path, { readOnly: true });
-    } catch {
-      return 0;
-    }
+    const db = openOpencodeDb();
+    if (!db) return 0;
     try {
       const row = db.prepare(
         `SELECT COUNT(*) AS n FROM session
@@ -832,16 +827,8 @@ const opencodeHistory: AgentHistoryAdapter = {
     }
   },
   lookupTitle(_cwd: string, id: string): string | undefined {
-    const sqlite = loadNodeSqlite();
-    if (!sqlite) return undefined;
-    const path = opencodeDbPath();
-    if (!existsSync(path)) return undefined;
-    let db: import('node:sqlite').DatabaseSync;
-    try {
-      db = new sqlite.DatabaseSync(path, { readOnly: true });
-    } catch {
-      return undefined;
-    }
+    const db = openOpencodeDb();
+    if (!db) return undefined;
     try {
       const row = db.prepare(`SELECT title FROM session WHERE id = ? LIMIT 1`).get(id) as { title?: string } | undefined;
       return row?.title ?? undefined;
