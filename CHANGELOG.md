@@ -5,6 +5,59 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.32.1] — 2026-06-19
+
+### Added — Conversation history adapters for `gemini` and `qwen`
+
+v0.32.0 wired codex + agy but deferred gemini ("inconsistent project
+key mapping") and qwen ("no filesystem-visible log"). Both were
+wrong-by-haste.
+
+Re-investigation found that:
+
+- Gemini's `~/.gemini/tmp/<dir>/chats/session-*.jsonl` directory name
+  is a UI nicety only — the source-of-truth project identifier is
+  the `projectHash` field inside each session's first event
+  (`session_meta`), which equals `sha256(cwd)`. Verified:
+  `sha256("/home/.../Repos/steve-krisjanovs/cortex")` ==
+  `68f4fe7b6db05aae2925fd2c2a8f7ddfb83d7886b76776de0ef5e23641075613`,
+  which is the `projectHash` in that cwd's session files.
+- Qwen Code is a Gemini CLI fork (Alibaba). It uses the same
+  `<root>/tmp/<dir>/chats/session-*.jsonl` storage layout but at
+  `~/.qwen/` instead of `~/.gemini/`. `chats/` subdirs are created
+  on first chat — operators who haven't chatted yet have only the
+  bare project marker dirs.
+
+A shared `makeGeminiLikeAdapter` factory builds both adapters from
+the same walker, parser, and title-extractor. They diverge only on
+the tmp root path and the resume flag form.
+
+**Resume flag divergence**:
+
+- Gemini's `--resume <n>` takes a numeric index from
+  `--list-sessions`, NOT a session id — indexes shift when sessions
+  are added/deleted, so they're not stable for llmux's id-based
+  picker. The adapter uses `--session-file <fpath>` (Gemini accepts
+  any jsonl path), which composes as
+  `gemini --yolo --session-file ~/.gemini/tmp/<dir>/chats/session-*.jsonl`.
+- Qwen's fork extended `--resume` to also accept a session id
+  directly, so the qwen adapter uses the clean `--resume <id>` form.
+
+Title extraction handles both string and array-of-`{text}` content
+shapes, since Gemini events carry the latter (`[{"text": "hello"}]`)
+while some events use the former.
+
+### State of the official 6 after v0.32.1
+
+| Agent | History adapter | Notes |
+| --- | --- | --- |
+| `claude` | yes | v0.20.x — original |
+| `codex` | yes | v0.32.0 |
+| `gemini` | yes | v0.32.1 — this release |
+| `agy` | yes | v0.32.0 |
+| `opencode` | no | sessions in SQLite (`opencode.db`); sqlite3 dep declined |
+| `qwen` | yes | v0.32.1 — this release; zero conversations until operator chats |
+
 ## [0.32.0] — 2026-06-19
 
 ### Added — Conversation history adapters for `codex` and `agy`
