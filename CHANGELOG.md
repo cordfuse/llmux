@@ -5,6 +5,22 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.33.6] — 2026-06-19
+
+### Docs — Install prerequisites (tmux + C toolchain), the common WSL2/Linux first-run snag
+
+The Install section jumped straight to `npm install -g @cordfuse/llmux` with no
+prerequisites. On a fresh Ubuntu / WSL2 — a very common daemon host — that fails:
+`node-pty` is a native module with no matching prebuild there, so the global
+install compiles from source and errors out without `build-essential`; and
+`tmux` (which every agent session needs) was never called out as a dependency.
+
+New **Prerequisites (daemon host)** block under Install: Node ≥ 20 (not Bun),
+`tmux`, and a C toolchain on Linux/WSL2, with the one-liner
+`sudo apt install -y tmux build-essential` up front. Complements the existing
+"On WSL2" Tailscale section — that covered remote access; this covers getting
+the daemon to install at all.
+
 ## [0.33.5] — 2026-06-19
 
 ### Docs — Tailscale-on-WSL2 is the recommended path for phone access

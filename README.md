@@ -206,6 +206,19 @@ cross-process / cross-host coordination.
 
 ## Install
 
+### Prerequisites (daemon host)
+
+- **Node.js ≥ 20** — not Bun (`node-pty` attaches to tmux through Node's native prebuilds; Bun caused immediate SIGHUP).
+- **tmux** — every agent runs inside a real tmux session, so the daemon host needs `tmux`. Client-only machines don't.
+- **A C toolchain on Linux / WSL2** — `node-pty` is a native module. On a fresh Ubuntu / WSL2 (or other minimal Linux) the global install **compiles it from source and fails without build tools** — the most common first-run snag. Install both up front:
+
+```bash
+sudo apt install -y tmux build-essential   # Debian / Ubuntu / WSL2
+# macOS: `brew install tmux` + Xcode Command Line Tools (xcode-select --install)
+```
+
+Then:
+
 ```bash
 # One package, one binary — installs on the daemon host AND any client machine
 npm install -g @cordfuse/llmux
