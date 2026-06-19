@@ -5,6 +5,30 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.31.6] — 2026-06-19
+
+### Docs — README PWA wording removed
+
+llmux's PWA install support was dropped back in v0.17.4 — Chrome bundles
+each installed PWA into a WebAPK whose package name is derived from the
+hostname only (port ignored), so two Cordfuse PWAs on the same tailnet
+host collide on install. Despite the removal, four PWA mentions
+lingered in the README (alt text, "PWA-style surface" wording, and the
+"Cordfuse PWA" port-conventions section). Replaced:
+
+- `alt="Mobile PWA picker, …"` → `alt="Mobile picker, …"`
+- "Chrome's 'Add to Home Screen' creates a quick-launch shortcut for
+  it" → bookmark / pin-the-tab framing (no installable home-screen icon)
+- "On mobile the picker is a real PWA-style surface" → "phone-tailored
+  web UI"
+- "Cordfuse PWA" → "Cordfuse app" in three port-convention sentences
+
+CHANGELOG entries that mention PWA stay as historical record (the
+v0.17.4 removal entry, the v0.18.x brand-alignment entries) — those
+describe what was true at the time.
+
+No code changes.
+
 ## [0.31.5] — 2026-06-18
 
 ### Docs — README sync to current surface
