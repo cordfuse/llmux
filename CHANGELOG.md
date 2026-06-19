@@ -5,6 +5,69 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.32.2] — 2026-06-19
+
+### Added — OpenCode history adapter (sqlite-backed, completes the official 6)
+
+Wires the last of the Cordfuse official 6. Mac validated the schema
+against a real populated `opencode.db` and sent a CR with the verified
+spec (`<NAS>/multiagent-chat/2026-06-19T1314-mac-to-cachy-opencode-
+history-adapter-CR-sqlite-full-spec.md`); this release implements it.
+
+**Storage:** `~/.local/share/opencode/opencode.db` (XDG-data-home
+respecting; same path on macOS + Linux). Sqlite, WAL mode. Two tables:
+
+- `session(id, project_id, parent_id, slug, directory, title,
+  time_created, time_updated, time_archived, agent, model, …)`
+- `message(id, session_id, time_created, time_updated, data)`
+
+The `directory` column matches llmux's session cwd as an exact string
+(no path encoding, unlike claude's adapter which encodes cwd into a
+dir name). Timestamps are epoch-milliseconds.
+
+**Filter (from mac's CR):**
+- `s.directory = ?` — cwd match
+- `s.time_archived IS NULL` — skip archived
+- `s.parent_id IS NULL` — keep only top-level (skip forks)
+
+**Resume flag:** `--session <id>`. Verified opencode accepts an unknown
+id with `Error: Session not found: <id>` — i.e. the flag parses and
+loads by id, the syntax is correct.
+
+### sqlite dependency — `node:sqlite` built-in, graceful degradation
+
+Used node's built-in `node:sqlite` rather than `better-sqlite3` to
+avoid another native build + prebuilds class (we just shipped the
+node-pty postinstall chmod fix for the same class of issue).
+`node:sqlite` is stable from node 22.5 — but llmux's `engines.node`
+stays at `>=20` for backward compatibility. The adapter loads the
+module via `createRequire(...)('node:sqlite')` inside a try/catch:
+
+- node 22.5+: works as expected, opencode shows the Resume picker
+- node 20.x or 22.0-22.4: try/catch returns undefined, adapter
+  silently no-ops, the opencode row simply has no `☰ N` icon
+
+OpenCode itself runs fine on older node; only the conversation
+picker is feature-gated on the runtime sqlite availability.
+
+Open + close per call (DB-level WAL handles concurrent reads with
+opencode's writer). Read-only mode (`{ readOnly: true }`) so we
+never touch opencode's transactions.
+
+### State of the official 6 after v0.32.2
+
+| Agent | History adapter | Notes |
+| --- | --- | --- |
+| `claude` | yes | v0.20.x |
+| `codex` | yes | v0.32.0 |
+| `gemini` | yes | v0.32.1 |
+| `agy` | yes | v0.32.0 |
+| `opencode` | yes | this release |
+| `qwen` | yes | v0.32.1 |
+
+6/6. All Cordfuse official 6 agents now have conversation history
+adapters wired.
+
 ## [0.32.1] — 2026-06-19
 
 ### Added — Conversation history adapters for `gemini` and `qwen`

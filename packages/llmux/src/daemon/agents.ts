@@ -2,6 +2,7 @@ import { accessSync, closeSync, constants, existsSync, openSync, readdirSync, re
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 
 export interface Conversation {
   id: string;
@@ -600,6 +601,123 @@ const qwenHistory: AgentHistoryAdapter = makeGeminiLikeAdapter({
   resumeFlag: (id, _fpath) => `--resume ${id}`,
 });
 
+/**
+ * OpenCode stores sessions in a sqlite DB at
+ * `~/.local/share/opencode/opencode.db` (XDG_DATA_HOME-respecting, same
+ * path on macOS + Linux). The `session` table joins to cwd via the
+ * `directory` column (raw string match — no path encoding); the
+ * `message` table holds per-message rows.
+ *
+ * Adapter uses node's built-in `node:sqlite` (stable from node 22.5).
+ * The dependency is loaded via createRequire() inside a try/catch so
+ * operators on node <22.5 fall through to "no adapter" — opencode
+ * sessions still run, the Conversations modal just stays hidden.
+ * The DB is opened read-only on every call (DB-level WAL handles
+ * concurrent reads with opencode's writer); ms-scale and safer than
+ * caching a connection across daemon lifetime.
+ *
+ * Filtering rationale (per mac's verified spec):
+ *   - `s.directory = ?` matches llmux's session cwd exactly
+ *   - `s.time_archived IS NULL` skips archived sessions
+ *   - `s.parent_id IS NULL` keeps only top-level sessions (skips forks)
+ *
+ * Resume flag: `--session <id>`. Verified that opencode accepts an
+ * unknown session id with "Session not found: <id>" (i.e. it parses
+ * the flag and tries to load by id), so the syntax is correct.
+ */
+const nodeRequire = createRequire(import.meta.url);
+
+let _opencodeSqliteCache: typeof import('node:sqlite') | null | undefined;
+function loadNodeSqlite(): typeof import('node:sqlite') | undefined {
+  if (_opencodeSqliteCache !== undefined) return _opencodeSqliteCache ?? undefined;
+  try {
+    _opencodeSqliteCache = nodeRequire('node:sqlite') as typeof import('node:sqlite');
+  } catch {
+    _opencodeSqliteCache = null;
+  }
+  return _opencodeSqliteCache ?? undefined;
+}
+
+function opencodeDbPath(): string {
+  const xdg = process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share');
+  return join(xdg, 'opencode', 'opencode.db');
+}
+
+interface OpencodeRow {
+  id: string;
+  title: string;
+  time_created: number | bigint;
+  time_updated: number | bigint;
+  message_count: number | bigint;
+}
+
+function epochMsToIso(v: number | bigint): string {
+  return new Date(Number(v)).toISOString();
+}
+
+const opencodeHistory: AgentHistoryAdapter = {
+  listConversations(cwd: string): Conversation[] {
+    const sqlite = loadNodeSqlite();
+    if (!sqlite) return [];
+    const path = opencodeDbPath();
+    if (!existsSync(path)) return [];
+    let db: import('node:sqlite').DatabaseSync;
+    try {
+      db = new sqlite.DatabaseSync(path, { readOnly: true });
+    } catch {
+      return [];
+    }
+    try {
+      const rows = db.prepare(
+        `SELECT s.id AS id, s.title AS title, s.time_created AS time_created,
+                s.time_updated AS time_updated, COUNT(m.id) AS message_count
+         FROM session s
+         LEFT JOIN message m ON m.session_id = s.id
+         WHERE s.directory = ? AND s.time_archived IS NULL AND s.parent_id IS NULL
+         GROUP BY s.id
+         ORDER BY s.time_updated DESC`
+      ).all(cwd) as unknown as OpencodeRow[];
+      return rows.map((r) => ({
+        id: r.id,
+        title: r.title || '(no title)',
+        startedAt: epochMsToIso(r.time_created),
+        lastMessageAt: epochMsToIso(r.time_updated),
+        messageCount: Number(r.message_count),
+      }));
+    } catch {
+      return [];
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  },
+  countConversations(cwd: string): number {
+    const sqlite = loadNodeSqlite();
+    if (!sqlite) return 0;
+    const path = opencodeDbPath();
+    if (!existsSync(path)) return 0;
+    let db: import('node:sqlite').DatabaseSync;
+    try {
+      db = new sqlite.DatabaseSync(path, { readOnly: true });
+    } catch {
+      return 0;
+    }
+    try {
+      const row = db.prepare(
+        `SELECT COUNT(*) AS n FROM session
+         WHERE directory = ? AND time_archived IS NULL AND parent_id IS NULL`
+      ).get(cwd) as { n: number | bigint } | undefined;
+      return row ? Number(row.n) : 0;
+    } catch {
+      return 0;
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  },
+  resumeFlag(id: string): string {
+    return `--session ${id}`;
+  },
+};
+
 const which = (cmd: string): boolean => {
   const pathDirs = (process.env.PATH ?? '').split(delimiter);
   for (const dir of pathDirs) {
@@ -636,7 +754,7 @@ export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   // overrides per-spawn via the flags field if they want a specific model
   // (e.g. `-m openrouter/anthropic/claude-sonnet-4.6` or
   // `-m ollama/qwen2.5-coder:14b`).
-  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     readyPrompt: '^>', installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai',          envDefaults: { OPENCODE_YOLO: '1' } },
+  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     readyPrompt: '^>', installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai',          envDefaults: { OPENCODE_YOLO: '1' }, history: opencodeHistory },
   amp:      { key: 'amp',      displayName: 'Sourcegraph Amp',     cmd: 'amp',          flags: '--dangerously-allow-all',     readyPrompt: '^>', installHint: 'npm install -g @sourcegraph/amp',                 docsUrl: 'https://ampcode.com/manual' },
   grok:     { key: 'grok',     displayName: 'Grok Build CLI',      cmd: 'grok',         flags: '--always-approve', readyPrompt: '^grok>', installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',   docsUrl: 'https://x.ai/cli' },
   aider:    { key: 'aider',    displayName: 'Aider',               cmd: 'aider',        flags: '--yes-always --model claude-opus-4-6',   readyPrompt: '^> $', installHint: 'python -m pip install aider-chat',                docsUrl: 'https://aider.chat' },
