@@ -524,6 +524,7 @@ function pickerPage(): string {
   </div>
   <nav>
     <a data-page="sessions" class="active"><span class="nav-icon">▦</span>Sessions</a>
+    <a href="/orch"><span class="nav-icon">⇄</span>Orchestration</a>
     <a data-page="tokens"><span class="nav-icon">⚿</span>Tokens</a>
     <a data-page="agents"><span class="nav-icon">⌬</span>Agents</a>
     <a data-page="logs"><span class="nav-icon">▤</span>Logs</a>
@@ -3443,80 +3444,140 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Pr
 }
 
 function orchPage(): string {
-  // Single-page operator console for the orch bus. Polls /api/orch/inbox
-  // for a chosen alias, lists messages, lets the operator send / ack /
-  // release. No build step — vanilla HTML + JS like the rest of the
-  // llmux web. Style matches pickerPage().
-  return `<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>llmux orch</title>
+  // Operator console for the orch bus. Visually consistent with pickerPage:
+  // same dark monospace palette, same hamburger nav drawer (with the same
+  // items so navigation cross-page feels uniform). Polls /api/orch/inbox
+  // for a chosen alias, lets the operator send / claim / reply / ack /
+  // release. Drawer items for non-orch sections set localStorage.llmux.page
+  // and navigate to /, so the picker opens to the right section.
+  const host = hostname();
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>llmux on ${escapeHtml(host)} · Orchestration</title>
+<link rel="icon" href="${FAVICON_DATA_URL}">
+<link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
+<meta name="theme-color" content="#0b0c10">
 <style>
-  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:0;background:#1c1f23;color:#e3e6ea}
-  header{padding:16px 20px;border-bottom:1px solid #2a2f35;display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
-  header h1{font-size:18px;margin:0;font-weight:600;color:#fff}
-  header nav a{color:#9da4ad;text-decoration:none;font-size:14px;margin-right:14px}
-  header nav a:hover{color:#fff}
-  main{padding:20px;max-width:1200px;margin:0 auto}
-  .controls{display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
-  .controls label{font-size:13px;color:#9da4ad}
-  .controls input,.controls select,.controls button{background:#2a2f35;color:#e3e6ea;border:1px solid #3a4047;border-radius:5px;padding:7px 10px;font-size:13px;font-family:inherit}
-  .controls input:focus,.controls select:focus{outline:1px solid #5b8def}
-  .controls button{cursor:pointer;background:#3a4047}
-  .controls button:hover{background:#4a5057}
-  .controls button.primary{background:#5b8def;border-color:#5b8def;color:#fff}
-  .controls button.primary:hover{background:#4a7adf}
-  .stats{margin-bottom:14px;color:#9da4ad;font-size:13px}
-  .empty{padding:30px;text-align:center;color:#5a6068;font-size:14px}
-  .msg{background:#23272d;border:1px solid #2a2f35;border-radius:6px;padding:12px 14px;margin-bottom:8px}
-  .msg-head{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:#9da4ad;margin-bottom:8px}
-  .msg-from{color:#a4c2ff;font-weight:600}
-  .msg-to{color:#a4ffa4}
-  .msg-id{font-family:'SF Mono',Menlo,monospace;font-size:11px;color:#5a6068}
-  .msg-re{color:#ffc864;font-size:11px}
-  .msg-body{white-space:pre-wrap;font-family:'SF Mono',Menlo,monospace;font-size:12px;background:#1c1f23;padding:10px;border-radius:4px;color:#e3e6ea;max-height:400px;overflow:auto}
-  .msg-actions{margin-top:8px;display:flex;gap:6px}
-  .msg-actions button{background:#3a4047;color:#e3e6ea;border:1px solid #4a5057;border-radius:4px;padding:4px 9px;font-size:11px;cursor:pointer}
-  .msg-actions button:hover{background:#4a5057}
-  .claim-badge{background:#ffc864;color:#1c1f23;border-radius:3px;padding:1px 6px;font-size:11px;font-weight:600}
-  details{background:#23272d;border:1px solid #2a2f35;border-radius:6px;padding:12px 14px;margin-bottom:18px}
-  details summary{cursor:pointer;font-weight:600;color:#fff;font-size:14px}
-  details textarea{width:100%;min-height:80px;background:#1c1f23;color:#e3e6ea;border:1px solid #3a4047;border-radius:4px;padding:8px;font-family:'SF Mono',Menlo,monospace;font-size:12px;margin-top:10px;box-sizing:border-box}
-  details .send-row{display:flex;gap:8px;margin-top:8px}
-  details .send-row input{flex:1}
-  .toast{position:fixed;bottom:20px;right:20px;background:#5b8def;color:#fff;padding:10px 14px;border-radius:5px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);opacity:0;transition:opacity .3s}
-  .toast.show{opacity:1}
-  .toast.err{background:#df5050}
+  :root{color-scheme:dark}
+  html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px;overflow-x:hidden}
+  body{padding:18px 16px 80px;max-width:980px;margin:0 auto;box-sizing:border-box}
+  header{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-bottom:14px}
+  header .header-controls{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  h1{font-size:18px;margin:0}
+  h1 .brand{color:#7cc4ff;letter-spacing:.08em;font-weight:600}
+  h1 .host{color:#a371f7;font-weight:500}
+  #nav-toggle{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;font-size:18px;line-height:1;margin-right:10px;flex:0 0 auto;transition:background 150ms ease,border-color 150ms ease}
+  #nav-toggle:hover{background:#252b34;border-color:#3a414b}
+  #nav-toggle:active{transform:scale(.94)}
+  #nav-drawer{position:fixed;top:0;left:-300px;width:280px;height:100dvh;background:#0e1116;border-right:1px solid #1f2329;transition:left 220ms ease;z-index:55;padding:18px 0;box-sizing:border-box;display:flex;flex-direction:column}
+  #nav-drawer.open{left:0}
+  #nav-backdrop{position:fixed;inset:0;background:rgba(11,12,16,.55);z-index:54;opacity:0;visibility:hidden;transition:opacity 180ms ease,visibility 0s 180ms}
+  #nav-backdrop.show{opacity:1;visibility:visible;transition:opacity 180ms ease}
+  #nav-drawer .nav-header{padding:0 20px 16px;border-bottom:1px solid #1f2329;display:flex;flex-direction:column;gap:4px}
+  #nav-drawer .nav-brand{color:#7cc4ff;font-weight:600;letter-spacing:.08em;font-size:15px}
+  #nav-drawer .nav-host{color:#a371f7;font-size:12px}
+  #nav-drawer nav{flex:1;display:flex;flex-direction:column;padding:8px 0;overflow-y:auto}
+  #nav-drawer a{display:flex;align-items:center;gap:10px;padding:12px 20px;color:#c9d1d9;text-decoration:none;font-size:14px;border-left:3px solid transparent;cursor:pointer}
+  #nav-drawer a:hover{background:#11141a}
+  #nav-drawer a.active{border-left-color:#7cc4ff;color:#7cc4ff;background:#11141a}
+  #nav-drawer a .nav-icon{font-size:16px;width:20px;text-align:center;color:inherit}
+  #nav-drawer .nav-footer{padding:10px 20px 0;border-top:1px solid #1f2329;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;align-items:center}
+  #meta{color:#7a7f87;font-size:11px}
+  .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+  .toolbar label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em;display:flex;flex-direction:column;gap:3px}
+  .toolbar input{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none}
+  .toolbar input:focus{border-color:#2d4a66}
+  .toolbar button{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  .toolbar button.muted{color:#e6e8eb;border-color:#262c34}
+  .toolbar button:hover{background:#252b34}
+  .toolbar button.on{background:#11281b;color:#7ee787;border-color:#1f4528}
+  .stats{margin-bottom:14px;color:#7a7f87;font-size:11px;font-family:ui-monospace,monospace}
+  .empty{padding:30px;text-align:center;color:#7a7f87;font-size:13px;background:#11141a;border:1px solid #1f2329;border-radius:8px}
+  details{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:14px;margin-bottom:14px}
+  details summary{cursor:pointer;color:#7cc4ff;font-size:13px;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+  details .send-row{display:flex;gap:8px;margin-top:10px}
+  details .send-row input{flex:1;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none}
+  details .send-row input:focus{border-color:#2d4a66}
+  details textarea{width:100%;min-height:90px;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:10px;font:13px ui-monospace,monospace;margin-top:8px;box-sizing:border-box;outline:none;resize:vertical}
+  details textarea:focus{border-color:#2d4a66}
+  details .send-actions{display:flex;justify-content:flex-end;margin-top:10px}
+  details .send-actions button{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  details .send-actions button:hover{background:#252b34}
+  .msg{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:12px 14px;margin-bottom:10px}
+  .msg-head{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:#9aa0a6;margin-bottom:8px;align-items:baseline;flex-wrap:wrap}
+  .msg-route{display:inline-flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+  .msg-from{color:#7cc4ff;font-weight:600}
+  .msg-arrow{color:#7a7f87}
+  .msg-to{color:#7ee787}
+  .msg-re{color:#f0883e;font-size:11px;margin-left:6px}
+  .msg-id{font-family:ui-monospace,monospace;font-size:11px;color:#7a7f87}
+  .msg-body{white-space:pre-wrap;font:12px ui-monospace,monospace;background:#0b0c10;padding:10px 12px;border-radius:6px;color:#e6e8eb;max-height:400px;overflow:auto;border:1px solid #1f2329}
+  .msg-actions{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  .msg-actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 10px;font:11px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease}
+  .msg-actions button:hover{background:#252b34;border-color:#3a414b}
+  .msg-actions button.primary{color:#7cc4ff;border-color:#2d4a66}
+  .msg-actions button.primary:hover{background:#11192b}
+  .claim-badge{background:#11281b;color:#7ee787;border:1px solid #1f4528;border-radius:3px;padding:1px 7px;font-size:11px;font-weight:600;margin-left:6px}
+  .toast{position:fixed;bottom:20px;right:20px;background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;padding:10px 14px;border-radius:6px;font:12px ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:opacity 180ms ease,transform 180ms ease;pointer-events:none;z-index:70}
+  .toast.show{opacity:1;transform:translateY(0)}
+  .toast.err{color:#f85149;border-color:#4a2329;background:#1f1416}
 </style>
 </head><body>
-<header>
-  <h1>llmux orch</h1>
-  <nav><a href="/">sessions</a><a href="/orch">orchestration</a></nav>
-  <span id="status" style="margin-left:auto;color:#9da4ad;font-size:12px"></span>
-</header>
-<main>
-  <div class="controls">
-    <label>alias <input id="alias" placeholder="my-alias" /></label>
-    <label>channel <input id="channel" value="main" style="width:80px" /></label>
-    <button id="refresh">refresh</button>
-    <button id="auto" class="primary">auto-poll: on</button>
+<div id="nav-backdrop" aria-hidden="true"></div>
+<aside id="nav-drawer" aria-hidden="true">
+  <div class="nav-header">
+    <span class="nav-brand">LLMUX</span>
+    <span class="nav-host">${escapeHtml(host)}</span>
   </div>
-  <div class="stats" id="stats"></div>
-
-  <details>
-    <summary>+ send a message (as <span id="from-label">alias</span>)</summary>
-    <div class="send-row">
-      <input id="send-to" placeholder="to: <recipient-alias> or all" />
-      <input id="send-re" placeholder="re: <parent-msg-id> (optional, for a reply)" />
+  <nav>
+    <a data-target="sessions"><span class="nav-icon">▦</span>Sessions</a>
+    <a class="active"><span class="nav-icon">⇄</span>Orchestration</a>
+    <a data-target="tokens"><span class="nav-icon">⚿</span>Tokens</a>
+    <a data-target="agents"><span class="nav-icon">⌬</span>Agents</a>
+    <a data-target="logs"><span class="nav-icon">▤</span>Logs</a>
+    <a data-target="settings"><span class="nav-icon">⚙</span>Settings</a>
+    <a data-target="about"><span class="nav-icon">ⓘ</span>About</a>
+  </nav>
+  <div class="nav-footer">
+    <span>v${escapeHtml(DAEMON_VERSION)}</span>
+  </div>
+</aside>
+<header>
+  <div class="header-controls">
+    <button id="nav-toggle" type="button" aria-label="open navigation" title="open navigation">☰</button>
+    <div id="meta">
+      <span id="auto-state">live · 5s</span>
+      <span> · </span>
+      <span>v${escapeHtml(DAEMON_VERSION)}</span>
     </div>
-    <textarea id="send-body" placeholder="message body..."></textarea>
-    <div class="send-row" style="justify-content:flex-end">
-      <button id="send-btn" class="primary">send</button>
-    </div>
-  </details>
+  </div>
+  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · Orchestration</h1>
+</header>
 
-  <div id="messages"></div>
-</main>
+<div class="toolbar">
+  <label>alias<input id="alias" placeholder="my-alias" /></label>
+  <label>channel<input id="channel" value="main" style="width:120px" /></label>
+  <div style="align-self:flex-end;display:flex;gap:8px">
+    <button id="refresh" class="muted" type="button">refresh</button>
+    <button id="auto" class="on" type="button">auto-poll: on</button>
+  </div>
+</div>
+<div class="stats" id="stats">—</div>
+
+<details>
+  <summary>＋ send a message (as <span id="from-label">alias</span>)</summary>
+  <div class="send-row">
+    <input id="send-to" placeholder="to: alias OR all (broadcast)" />
+    <input id="send-re" placeholder="re: parent-msg-id (optional)" />
+  </div>
+  <textarea id="send-body" placeholder="message body…"></textarea>
+  <div class="send-actions"><button id="send-btn" type="button">send</button></div>
+</details>
+
+<div id="messages"></div>
+
 <div id="toast" class="toast"></div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 let autoPoll = true;
@@ -3527,28 +3588,27 @@ function setChannel(v){ localStorage.setItem('orchChannel', v); $('channel').val
 function getAlias(){ return $('alias').value.trim(); }
 function getChannel(){ return $('channel').value.trim() || 'main'; }
 
-function toast(msg, isErr=false){
+function toast(msg, isErr){
   const t = $('toast');
   t.textContent = msg;
   t.className = 'toast show' + (isErr ? ' err' : '');
-  setTimeout(()=>{ t.className = 'toast'; }, 2500);
+  setTimeout(function(){ t.className = 'toast'; }, 2500);
 }
 
 async function apiGet(path){
-  const r = await fetch(path);
+  const r = await fetch(path, { cache:'no-store' });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
 async function apiPost(path, body){
-  const r = await fetch(path, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
+  const r = await fetch(path, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
 
 function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, c=> ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  return String(s).replace(/[&<>"']/g, function(c){ return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]; });
 }
-
 function fmtTo(to){ return Array.isArray(to) ? to.join(',') : to; }
 function fmtRe(re){ if (!re) return ''; return Array.isArray(re) ? re.join(',') : re; }
 
@@ -3560,26 +3620,26 @@ async function refresh(){
       apiGet('/api/orch/status'),
       apiGet('/api/orch/inbox?alias=' + encodeURIComponent(alias) + '&channel=' + encodeURIComponent(getChannel())),
     ]);
-    $('stats').textContent = 'transport: ' + status.transportRoot + '   ·   channels: ' + status.channels.join(',') + '   ·   live claims: ' + status.liveClaims;
+    $('stats').textContent = 'transport ' + status.transportRoot + '   ·   channels [' + status.channels.join(',') + ']   ·   live claims ' + status.liveClaims;
     if (!messages.length){
-      $('messages').innerHTML = '<div class="empty">inbox empty for ' + escapeHtml(alias) + ' (channel=' + escapeHtml(getChannel()) + ')</div>';
+      $('messages').innerHTML = '<div class="empty">inbox empty for <strong>' + escapeHtml(alias) + '</strong> in channel <strong>' + escapeHtml(getChannel()) + '</strong></div>';
       return;
     }
-    $('messages').innerHTML = messages.map(m => {
-      const claim = m.claimed ? '<span class="claim-badge">claimed by ' + escapeHtml(m.claimed.alias) + '</span>' : '';
+    $('messages').innerHTML = messages.map(function(m){
+      const claim = m.claimed ? '<span class="claim-badge">claimed: ' + escapeHtml(m.claimed.alias) + '</span>' : '';
       const re = m.re ? '<span class="msg-re">re: ' + escapeHtml(fmtRe(m.re)) + '</span>' : '';
       return [
         '<div class="msg">',
         '  <div class="msg-head">',
-        '    <span><span class="msg-from">', escapeHtml(m.from), '</span> → <span class="msg-to">', escapeHtml(fmtTo(m.to)), '</span> ', re, ' ', claim, '</span>',
+        '    <span class="msg-route"><span class="msg-from">', escapeHtml(m.from), '</span><span class="msg-arrow">→</span><span class="msg-to">', escapeHtml(fmtTo(m.to)), '</span>', re, claim, '</span>',
         '    <span class="msg-id">', escapeHtml(m.id), '</span>',
         '  </div>',
         '  <div class="msg-body">', escapeHtml(m.body), '</div>',
         '  <div class="msg-actions">',
-        '    <button onclick="claim(\\''+ m.id +'\\')">claim</button>',
-        '    <button onclick="reply(\\''+ m.id +'\\')">reply</button>',
-        '    <button onclick="ack(\\''+ m.id +'\\')">ack</button>',
-        '    <button onclick="release(\\''+ m.id +'\\')">release</button>',
+        '    <button class="primary" onclick="doReply(\\''+ m.id +'\\')">reply</button>',
+        '    <button onclick="doClaim(\\''+ m.id +'\\')">claim next</button>',
+        '    <button onclick="doAck(\\''+ m.id +'\\')">ack</button>',
+        '    <button onclick="doRelease(\\''+ m.id +'\\')">release</button>',
         '  </div>',
         '</div>',
       ].join('');
@@ -3589,45 +3649,42 @@ async function refresh(){
   }
 }
 
-async function claim(id){
+async function doClaim(_id){
   const alias = getAlias();
   if (!alias) return toast('set alias first', true);
-  try { await apiPost('/api/orch/next', { alias, channel: getChannel() }); toast('claimed'); refresh(); }
+  try { await apiPost('/api/orch/next', { alias: alias, channel: getChannel() }); toast('claimed next'); refresh(); }
   catch (err){ toast('claim failed: ' + err.message, true); }
 }
-
-async function reply(id){
+async function doReply(id){
   const alias = getAlias();
   if (!alias) return toast('set alias first', true);
   const body = prompt('Reply body:');
   if (!body) return;
-  try { await apiPost('/api/orch/reply', { msgId: id, alias, body, channel: getChannel() }); toast('replied'); refresh(); }
+  try { await apiPost('/api/orch/reply', { msgId: id, alias: alias, body: body, channel: getChannel() }); toast('replied'); refresh(); }
   catch (err){ toast('reply failed: ' + err.message, true); }
 }
-
-async function ack(id){
+async function doAck(id){
   const alias = getAlias();
   if (!alias) return toast('set alias first', true);
-  try { await apiPost('/api/orch/ack', { msgId: id, alias }); toast('acked'); refresh(); }
+  try { await apiPost('/api/orch/ack', { msgId: id, alias: alias }); toast('acked'); refresh(); }
   catch (err){ toast('ack failed: ' + err.message, true); }
 }
-
-async function release(id){
+async function doRelease(id){
   const alias = getAlias();
   if (!alias) return toast('set alias first', true);
-  try { await apiPost('/api/orch/release', { msgId: id, alias }); toast('released'); refresh(); }
+  try { await apiPost('/api/orch/release', { msgId: id, alias: alias }); toast('released'); refresh(); }
   catch (err){ toast('release failed: ' + err.message, true); }
 }
 
-$('send-btn').addEventListener('click', async () => {
+$('send-btn').addEventListener('click', async function(){
   const alias = getAlias();
-  if (!alias) return toast('set alias first (it becomes your from)', true);
+  if (!alias) return toast('set alias first (becomes the from field)', true);
   const to = $('send-to').value.trim();
   const body = $('send-body').value.trim();
   const re = $('send-re').value.trim();
   if (!to || !body) return toast('to + body required', true);
   try {
-    const payload = { from: alias, to, body, channel: getChannel() };
+    const payload = { from: alias, to: to, body: body, channel: getChannel() };
     if (re) payload.re = re;
     await apiPost('/api/orch/send', payload);
     $('send-body').value = '';
@@ -3638,14 +3695,32 @@ $('send-btn').addEventListener('click', async () => {
   } catch (err){ toast('send failed: ' + err.message, true); }
 });
 
-$('alias').addEventListener('change', () => { setAlias($('alias').value); refresh(); });
-$('channel').addEventListener('change', () => { setChannel($('channel').value); refresh(); });
+$('alias').addEventListener('change', function(){ setAlias($('alias').value); refresh(); });
+$('channel').addEventListener('change', function(){ setChannel($('channel').value); refresh(); });
 $('refresh').addEventListener('click', refresh);
 
-$('auto').addEventListener('click', () => {
+$('auto').addEventListener('click', function(){
   autoPoll = !autoPoll;
   $('auto').textContent = 'auto-poll: ' + (autoPoll ? 'on' : 'off');
+  $('auto').className = autoPoll ? 'on' : 'muted';
+  $('auto-state').textContent = autoPoll ? 'live · 5s' : 'manual';
   if (autoPoll){ pollTimer = setInterval(refresh, 5000); } else { clearInterval(pollTimer); pollTimer = null; }
+});
+
+// nav drawer — open/close + cross-page navigation
+const navToggle = $('nav-toggle');
+const navDrawer = $('nav-drawer');
+const navBackdrop = $('nav-backdrop');
+function openDrawer(){ navDrawer.classList.add('open'); navBackdrop.classList.add('show'); }
+function closeDrawer(){ navDrawer.classList.remove('open'); navBackdrop.classList.remove('show'); }
+navToggle.addEventListener('click', openDrawer);
+navBackdrop.addEventListener('click', closeDrawer);
+navDrawer.querySelectorAll('a[data-target]').forEach(function(a){
+  a.addEventListener('click', function(e){
+    e.preventDefault();
+    try { localStorage.setItem('llmux.page', a.dataset.target); } catch(_){}
+    location.href = '/';
+  });
 });
 
 // boot
