@@ -1,11 +1,11 @@
 #!/bin/bash
 # Full CLI test matrix for @cordfuse/llmux v0.12.3
-# Run against the daemon already up at localhost:3030 (v0.12.0).
+# Run against the daemon already up at localhost:3001 (v0.12.0).
 
 set +e
 REPO="$( cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd )"
 LLMUX="node $REPO/packages/llmux/dist/index.js"
-SERVER="http://localhost:3030"
+SERVER="http://localhost:3001"
 TESTSESS="cli-test-$$"
 
 PASS=0
@@ -137,7 +137,7 @@ warn "session resume (write)" "skipped — would relaunch claude with --resume; 
 
 # ---------- 6. SESSION REMOTE (--server) ----------
 section "session — remote mode via --server"
-# Daemon at localhost:3030 has auth required + 1 active token.
+# Daemon at localhost:3001 has auth required + 1 active token.
 # From localhost, auth is bypassed → no token needed.
 run "session list --server (localhost auth bypass)" 0 "" $LLMUX session list --server "$SERVER"
 run "session list --server --json" 0 "" $LLMUX session list --server "$SERVER" --json
