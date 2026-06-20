@@ -110,10 +110,93 @@ This means the remote uses standard SSH/HTTPS git auth (whatever the operator's 
 - Filenames: `data/channels/<channel>/YYYY/MM/DD/HHMMSSmmmZ-{8hex}.md` (crosstalk's filename scheme verbatim — chronological, collision-free, sortable)
 - Frontmatter: `from`, `to`, `re`, `at`, optional kind/payload fields
 
+## Actors live in the transport
+
+The transport repo carries **actor definitions** as well as messages. Same design ethos as crosstalk's `data/models.yaml` (v7) / `local/actors/*.md` (v6): the transport is the source of truth for who's playing on the bus, with all the cumulative/audit/DR-restore benefits that flow from being in git.
+
+Steve's framing: **actor = skills + personality**. The personality lives in the actor markdown body; skills are referenced via an `includes:` list (resolved against local files in v1.0, against [skills.sh](https://skills.sh) in v1.1+).
+
+### Storage
+
+```
+$XDG_CONFIG_HOME/llmux/orchestration/
+  data/
+    actors/
+      bot-a.md
+      bot-b.md
+      reviewer.md
+    channels/
+      main/YYYY/MM/DD/HHMMSSmmmZ-{8hex}.md
+    cursors/
+      bot-a
+      bot-b
+```
+
+One markdown file per actor in `data/actors/<alias>.md`. Filename = alias.
+
+### Actor file shape
+
+```markdown
+---
+alias: bot-a
+name: Bot A
+description: Code reviewer specialised in TypeScript and bun
+includes:
+  - ./skills/local/typescript-review.md     # local file in transport
+  # - skills.sh/typescript-review            # v1.1+ — resolved against skills.sh
+---
+
+# Persona
+
+You are a thoughtful, terse code reviewer. You focus on clarity,
+correctness, and minimal abstraction. You favour KISS over clever.
+You respond with structured feedback — strengths, concerns, suggestions —
+and stop when there's nothing further to add.
+
+# Skills (auto-included from the includes: list above)
+```
+
+Frontmatter fields:
+- `alias` — must match the filename stem (sanity check on load)
+- `name`, `description` — skills.sh-compatible frontmatter (matches the format imprint + imprint-chefremy + toneai-nux-imprint shipped on 2026-06-20)
+- `includes` — list of skill refs. v1.0 supports `./relative/path.md` (resolved inside the transport). v1.1+ adds `skills.sh/<slug>` (resolved against the canonical registry).
+
+### How instance config references actors
+
+The llmux instance config gets a single new field — a pointer, not a definition:
+
+```ts
+interface InstanceConfig {
+  // ...existing fields (agent, cwd, model, etc.)...
+  orch_alias?: string;   // points at data/actors/<orch_alias>.md in the transport
+}
+```
+
+### How llmuxd composes the effective system prompt
+
+At session start, if `orch_alias` is set:
+
+1. Read `data/actors/<orch_alias>.md` from the transport
+2. Resolve the `includes:` list (concat local files; v1.1+ also resolves skills.sh refs)
+3. Compose the effective system prompt =
+   ```
+   {actor body}
+   {included skills, concatenated}
+   {orch participation stanza}        ← see "Participation" below
+   ```
+4. Hand to the tmux session
+
+### Edge cases
+
+- **`orch_alias` set but no actor file** → log a warn, fall back to the instance's inline `system_prompt` (or none if not set)
+- **Actor file edited mid-session** → not re-read; only at session start (KISS; matches crosstalk's behaviour)
+- **Two instances with the same `orch_alias`** → intentional, this is the concurrent-watcher pattern (multiple workers exercising the claim race)
+- **`includes:` ref unresolvable** → log a warn per ref, skip it, continue with whatever resolved
+
 ## Participation: how an llmux instance becomes orchestratable
 
-1. **Instance config gets `orch_alias?: string`**. If set, the instance is addressable on the bus.
-2. **System-prompt stanza** auto-injected for instances with an alias:
+1. **Instance config gets `orch_alias?: string`**. If set, the instance is addressable on the bus and llmuxd reads the matching actor file from the transport.
+2. **System-prompt stanza** auto-appended (after the actor body + skills) for instances with an alias:
    ```
    You are participant `<alias>` in the llmux orchestration bus.
    Inbox poll:  llmux orch inbox --alias <alias>
@@ -133,10 +216,12 @@ First-boot cursor seeds to HEAD. Pre-boot messages to a never-booted alias are n
 |---|---|---|
 | 1 | `f...` (this commit) | this design doc + branch rename |
 | 2 | next | cherry-pick + simplify the 8-9 modules into `packages/llmux/src/orch/`; local-git transport only (no remote yet); typecheck passes |
-| 3 | next | optional async backup-push + `llmux orch init --remote` flag |
-| 4 | next | `llmux orch <verb>` CLI surface + instance-prompt stanza wiring |
-| 5 | next | smoke test (two simulated sessions + broadcast claim-race + reply round-trip) |
-| 6 | release | bump to v1.0.0, PR, merge, tag, publish |
+| 3 | next | actor loader + `includes:` resolver (local files only); `llmux orch init` lays down `data/actors/` skeleton |
+| 4 | next | optional async backup-push + `llmux orch init --remote` flag |
+| 5 | next | `llmux orch <verb>` CLI surface + instance-prompt stanza wiring + `orch_alias` instance-config field |
+| 6 | next | smoke test (two simulated sessions + broadcast claim-race + reply round-trip + actor-loaded prompt assembly) |
+| 7 | release | bump to v1.0.0, PR, merge, tag, publish |
+| v1.1 | follow-up | `skills.sh/<slug>` resolver inside the `includes:` list |
 
 ## Crosstalk stays put
 
