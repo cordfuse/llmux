@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// Bootstrap must come FIRST — it loads ~/.config/llmux/.env into
+// process.env before any other module imports its handlers/config.
+import './bootstrap.ts';
+
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
