@@ -3521,6 +3521,9 @@ function orchPage(): string {
   .toast{position:fixed;bottom:20px;right:20px;background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;padding:10px 14px;border-radius:6px;font:12px ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:opacity 180ms ease,transform 180ms ease;pointer-events:none;z-index:70}
   .toast.show{opacity:1;transform:translateY(0)}
   .toast.err{color:#f85149;border-color:#4a2329;background:#1f1416}
+  .alias-chip{background:#1c2128;color:#c9d1d9;border:1px solid #262c34;border-radius:14px;padding:5px 12px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease,color 150ms ease}
+  .alias-chip:hover{background:#252b34;border-color:#3a414b}
+  .alias-chip.active{background:#11192b;color:#7cc4ff;border-color:#2d4a66}
 </style>
 </head><body>
 <div id="nav-backdrop" aria-hidden="true"></div>
@@ -3556,8 +3559,7 @@ function orchPage(): string {
 
 <div class="toolbar">
   <label>acting as
-    <input id="alias" list="alias-options" placeholder="pick a known actor or type your own (e.g. operator)" />
-    <datalist id="alias-options"></datalist>
+    <input id="alias" placeholder="pick a chip below or type a name" />
   </label>
   <label>channel<input id="channel" value="main" style="width:120px" /></label>
   <div style="align-self:flex-end;display:flex;gap:8px">
@@ -3565,9 +3567,10 @@ function orchPage(): string {
     <button id="auto" class="on" type="button">auto-poll · 5s</button>
   </div>
 </div>
-<p style="margin:0 0 10px;font-size:11px;color:#7a7f87;line-height:1.5">
-  Your <strong>acting as</strong> is just an alias on the bus — pick a known participant (worker/coordinator) to act on its behalf, or type your own name (<code>operator</code>, <code>steve</code>, etc.) to send as a human. No actor file needed for ad-hoc names.
+<p style="margin:0 0 8px;font-size:11px;color:#7a7f87;line-height:1.5">
+  Pick a known participant below (bots from the transport) or type your own name (<code>operator</code>, <code>steve</code>) to act as a human — no actor file needed for ad-hoc names.
 </p>
+<div id="alias-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px"></div>
 <div class="stats" id="stats" style="display:none"></div>
 
 <details>
@@ -3722,16 +3725,32 @@ $('auto').addEventListener('click', function(){
   if (autoPoll){ pollTimer = setInterval(refresh, 5000); } else { clearInterval(pollTimer); pollTimer = null; }
 });
 
-// Populate the alias datalist with known actors from the transport. Operators
-// can also type a free-text alias (e.g. 'operator', 'steve') for ad-hoc roles
-// that don't have an actor file.
+// Render known actors as clickable chips under the input. Operators can
+// also type a free-text alias for ad-hoc roles. Chips are more discoverable
+// than a <datalist> dropdown (especially on mobile, where datalist UX
+// varies wildly between browsers).
 async function refreshActorOptions(){
+  const chipsDiv = $('alias-chips');
   try {
     const actors = await apiGet('/api/orch/actors');
-    const dl = $('alias-options');
-    dl.innerHTML = (actors || []).map(function(a){ return '<option value="' + escapeHtml(a) + '"></option>'; }).join('');
-  } catch(_){
-    // Quiet — datalist just stays empty; the free-text path still works.
+    if (!actors || !actors.length){
+      chipsDiv.innerHTML = '<span style="font-size:11px;color:#7a7f87;font-style:italic">no actors in transport yet — type a name above to start</span>';
+      return;
+    }
+    const current = getAlias();
+    chipsDiv.innerHTML = actors.map(function(a){
+      const active = (a === current) ? ' active' : '';
+      return '<button type="button" class="alias-chip' + active + '" data-alias="' + escapeHtml(a) + '">' + escapeHtml(a) + '</button>';
+    }).join('');
+    chipsDiv.querySelectorAll('.alias-chip').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        setAlias(btn.dataset.alias);
+        refreshActorOptions();   // re-render to update active state
+        refresh();
+      });
+    });
+  } catch(err){
+    chipsDiv.innerHTML = '<span style="font-size:11px;color:#f85149">failed to load actors: ' + escapeHtml(err.message) + '</span>';
   }
 }
 
@@ -3762,7 +3781,13 @@ pollTimer = setInterval(refresh, 5000);
 }
 
 function sendHtml(res: ServerResponse, body: string, status = 200): void {
-  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
+  res.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8',
+    // Force browsers to re-check on every load. The HTML embeds page-bound
+    // JS that ships in each commit; without this header the operator can
+    // be silently stuck on a stale build until they hard-refresh.
+    'cache-control': 'no-cache, no-store, must-revalidate',
+  });
   res.end(body);
 }
 
