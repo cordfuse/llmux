@@ -168,6 +168,7 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
   const resumeFrom = args.flags['resume-from'] as string | undefined;
   const cliInitPrompts = Array.isArray(args.flags.init) ? (args.flags.init as string[]) : undefined;
   const skipInit = Boolean(args.flags['skip-init']);
+  const orchAlias = args.flags['orch-alias'] as string | undefined;
 
   const agents = expandAgentList(spec);
 
@@ -209,11 +210,13 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
     const composedInitPrompts = marker
       ? [...(operatorPrompts ?? []), turnqIntegration.buildMarkerPrompt(marker)]
       : operatorPrompts;
+    const llmuxEnv: Record<string, string> = { LLMUX_SESSION: sessionName, LLMUX_AGENT: agent.key };
+    if (orchAlias) llmuxEnv['LLMUX_ORCH_ALIAS'] = orchAlias;
     tmux.newSession({
       name: sessionName,
       command: buildAgentCommand(agent, flagsOverride, effectiveResume),
       cwd,
-      env: mergeSpawnEnv(agent, envOverride, { LLMUX_SESSION: sessionName, LLMUX_AGENT: agent.key }),
+      env: mergeSpawnEnv(agent, envOverride, llmuxEnv),
     });
     state.record({
       name: sessionName,
@@ -224,6 +227,7 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
       ...(effectiveResume !== undefined ? { resumeFrom: effectiveResume } : {}),
       ...(composedInitPrompts !== undefined && composedInitPrompts.length > 0 ? { initPrompts: composedInitPrompts } : {}),
       ...(marker !== undefined ? { turnqMarker: marker } : {}),
+      ...(orchAlias !== undefined ? { orchAlias } : {}),
       createdAt: new Date().toISOString(),
       parent,
       restart: 'on-failure',

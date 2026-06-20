@@ -3459,7 +3459,7 @@ export function mergeSpawnEnv(agent: AgentDefinition, sessionEnv: Record<string,
 
 const SESSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string; env?: string; resumeFrom?: string; initPrompts?: string[] }):
+function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string; env?: string; resumeFrom?: string; initPrompts?: string[]; orchAlias?: string }):
   | { ok: true; session: SessionView }
   | { ok: false; error: string } {
   if (!input.agent) return { ok: false, error: 'agent is required' };
@@ -3493,12 +3493,14 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
   // history adapter; otherwise we silently drop it (don't fail).
   const resumeFrom = input.resumeFrom && agentDef.history ? input.resumeFrom : undefined;
 
+  const llmuxEnv: Record<string, string> = { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key };
+  if (input.orchAlias) llmuxEnv['LLMUX_ORCH_ALIAS'] = input.orchAlias;
   try {
     tmux.newSession({
       name,
       command: buildAgentCommand(agentDef, flagsOverride, resumeFrom),
       cwd,
-      env: mergeSpawnEnv(agentDef, envOverride, { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key }),
+      env: mergeSpawnEnv(agentDef, envOverride, llmuxEnv),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -3512,6 +3514,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
     ...(envOverride !== undefined ? { env: envOverride } : {}),
     ...(resumeFrom !== undefined ? { resumeFrom } : {}),
     ...(input.initPrompts && input.initPrompts.length > 0 ? { initPrompts: input.initPrompts } : {}),
+    ...(input.orchAlias ? { orchAlias: input.orchAlias } : {}),
     createdAt: new Date().toISOString(),
     parent: null,
     restart: 'on-failure',
@@ -3541,7 +3544,11 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
       name: session.name,
       command: buildAgentCommand(agent, session.flags, session.resumeFrom),
       cwd: session.cwd,
-      env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent }),
+      env: mergeSpawnEnv(agent, session.env, {
+        LLMUX_SESSION: session.name,
+        LLMUX_AGENT: session.agent,
+        ...(session.orchAlias ? { LLMUX_ORCH_ALIAS: session.orchAlias } : {}),
+      }),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -3578,7 +3585,11 @@ function resumeConversation(
       name: session.name,
       command: buildAgentCommand(agent, session.flags, conversationId),
       cwd: session.cwd,
-      env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent }),
+      env: mergeSpawnEnv(agent, session.env, {
+        LLMUX_SESSION: session.name,
+        LLMUX_AGENT: session.agent,
+        ...(session.orchAlias ? { LLMUX_ORCH_ALIAS: session.orchAlias } : {}),
+      }),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -3690,7 +3701,11 @@ export function editSession(
           name: updated.name,
           command: buildAgentCommand(agent, updated.flags, updated.resumeFrom),
           cwd: updated.cwd,
-          env: mergeSpawnEnv(agent, updated.env, { LLMUX_SESSION: updated.name, LLMUX_AGENT: updated.agent }),
+          env: mergeSpawnEnv(agent, updated.env, {
+            LLMUX_SESSION: updated.name,
+            LLMUX_AGENT: updated.agent,
+            ...(updated.orchAlias ? { LLMUX_ORCH_ALIAS: updated.orchAlias } : {}),
+          }),
         });
         // Refresh createdAt so the picker's "started Xm ago" reflects the
         // actual moment the agent process began running with the new cwd.

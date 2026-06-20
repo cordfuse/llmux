@@ -296,6 +296,7 @@ function sessionLocalFlags() {
     apply: { kind: 'boolean' as const, description: 'with `edit`: respawn the session after patching' },
     init: { kind: 'string-array' as const, description: 'init prompt to fire on spawn (repeatable; composes with daemon.initPrompts)' },
     'skip-init': { kind: 'boolean' as const, description: 'skip firing init prompts on this spawn' },
+    'orch-alias': { kind: 'string' as const, description: 'register this session as an llmux orch bus participant under this alias (sets $LLMUX_ORCH_ALIAS in the agent env)' },
     json: { kind: 'boolean' as const, description: 'emit JSON' },
   };
 }
