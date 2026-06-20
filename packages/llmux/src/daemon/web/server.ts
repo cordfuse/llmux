@@ -3555,17 +3555,23 @@ function orchPage(): string {
 </header>
 
 <div class="toolbar">
-  <label>alias<input id="alias" placeholder="my-alias" /></label>
+  <label>acting as
+    <input id="alias" list="alias-options" placeholder="pick a known actor or type your own (e.g. operator)" />
+    <datalist id="alias-options"></datalist>
+  </label>
   <label>channel<input id="channel" value="main" style="width:120px" /></label>
   <div style="align-self:flex-end;display:flex;gap:8px">
-    <button id="refresh" class="muted" type="button">refresh</button>
-    <button id="auto" class="on" type="button">auto-poll: on</button>
+    <button id="refresh" class="muted" type="button" style="display:none">refresh</button>
+    <button id="auto" class="on" type="button">auto-poll · 5s</button>
   </div>
 </div>
-<div class="stats" id="stats">—</div>
+<p style="margin:0 0 10px;font-size:11px;color:#7a7f87;line-height:1.5">
+  Your <strong>acting as</strong> is just an alias on the bus — pick a known participant (worker/coordinator) to act on its behalf, or type your own name (<code>operator</code>, <code>steve</code>, etc.) to send as a human. No actor file needed for ad-hoc names.
+</p>
+<div class="stats" id="stats" style="display:none"></div>
 
 <details>
-  <summary>＋ send a message (as <span id="from-label">alias</span>)</summary>
+  <summary>＋ send a message (as <span id="from-label">— pick an alias first —</span>)</summary>
   <div class="send-row">
     <input id="send-to" placeholder="to: alias OR all (broadcast)" />
     <input id="send-re" placeholder="re: parent-msg-id (optional)" />
@@ -3583,7 +3589,7 @@ const $ = (id) => document.getElementById(id);
 let autoPoll = true;
 let pollTimer = null;
 
-function setAlias(v){ localStorage.setItem('orchAlias', v); $('alias').value = v; $('from-label').textContent = v || 'alias'; }
+function setAlias(v){ localStorage.setItem('orchAlias', v); $('alias').value = v; $('from-label').textContent = v || '— pick an alias first —'; }
 function setChannel(v){ localStorage.setItem('orchChannel', v); $('channel').value = v; }
 function getAlias(){ return $('alias').value.trim(); }
 function getChannel(){ return $('channel').value.trim() || 'main'; }
@@ -3614,13 +3620,19 @@ function fmtRe(re){ if (!re) return ''; return Array.isArray(re) ? re.join(',') 
 
 async function refresh(){
   const alias = getAlias();
-  if (!alias){ $('messages').innerHTML = '<div class="empty">enter an alias above to view its inbox</div>'; return; }
+  // Always refresh status so the bus stats render even before an alias is picked.
   try {
-    const [status, messages] = await Promise.all([
-      apiGet('/api/orch/status'),
-      apiGet('/api/orch/inbox?alias=' + encodeURIComponent(alias) + '&channel=' + encodeURIComponent(getChannel())),
-    ]);
+    const status = await apiGet('/api/orch/status');
     $('stats').textContent = 'transport ' + status.transportRoot + '   ·   channels [' + status.channels.join(',') + ']   ·   live claims ' + status.liveClaims;
+    $('stats').style.display = '';
+  } catch(_){}
+
+  if (!alias){
+    $('messages').innerHTML = '<div class="empty">pick an alias above to view its inbox</div>';
+    return;
+  }
+  try {
+    const messages = await apiGet('/api/orch/inbox?alias=' + encodeURIComponent(alias) + '&channel=' + encodeURIComponent(getChannel()));
     if (!messages.length){
       $('messages').innerHTML = '<div class="empty">inbox empty for <strong>' + escapeHtml(alias) + '</strong> in channel <strong>' + escapeHtml(getChannel()) + '</strong></div>';
       return;
@@ -3701,11 +3713,27 @@ $('refresh').addEventListener('click', refresh);
 
 $('auto').addEventListener('click', function(){
   autoPoll = !autoPoll;
-  $('auto').textContent = 'auto-poll: ' + (autoPoll ? 'on' : 'off');
+  $('auto').textContent = autoPoll ? 'auto-poll · 5s' : 'auto-poll · off';
   $('auto').className = autoPoll ? 'on' : 'muted';
   $('auto-state').textContent = autoPoll ? 'live · 5s' : 'manual';
+  // Show the manual refresh button only when auto-poll is off — keeps the
+  // toolbar clean during normal use.
+  $('refresh').style.display = autoPoll ? 'none' : '';
   if (autoPoll){ pollTimer = setInterval(refresh, 5000); } else { clearInterval(pollTimer); pollTimer = null; }
 });
+
+// Populate the alias datalist with known actors from the transport. Operators
+// can also type a free-text alias (e.g. 'operator', 'steve') for ad-hoc roles
+// that don't have an actor file.
+async function refreshActorOptions(){
+  try {
+    const actors = await apiGet('/api/orch/actors');
+    const dl = $('alias-options');
+    dl.innerHTML = (actors || []).map(function(a){ return '<option value="' + escapeHtml(a) + '"></option>'; }).join('');
+  } catch(_){
+    // Quiet — datalist just stays empty; the free-text path still works.
+  }
+}
 
 // nav drawer — open/close + cross-page navigation
 const navToggle = $('nav-toggle');
@@ -3726,6 +3754,7 @@ navDrawer.querySelectorAll('a[data-target]').forEach(function(a){
 // boot
 setAlias(localStorage.getItem('orchAlias') || '');
 setChannel(localStorage.getItem('orchChannel') || 'main');
+refreshActorOptions();
 refresh();
 pollTimer = setInterval(refresh, 5000);
 </script>
