@@ -1,0 +1,55 @@
+# Monte Carlo π estimation — fleet config.
+#
+# Spawn with:    llmux orch fleet start --file examples/monte-carlo/fleet.yaml
+# Tear down:     llmux orch fleet stop  --file examples/monte-carlo/fleet.yaml
+#
+# Each session entry:
+#   name        — tmux session name
+#   agent       — llmux agent CLI (claude / gemini / agy / opencode / codex)
+#   orch_alias  — sets $LLMUX_ORCH_ALIAS in the spawn env so `llmux orch …`
+#                  calls from the agent's bash tool default to the right identity
+#   bootstrap   — optional; one-shot prompt fired into the session after spawn
+#
+# The coordinator's bootstrap kicks off the whole orchestration. The
+# workers' bootstraps are identical — they're generic poll-claim-reply
+# loops that follow whatever recipe arrives in the task body. The recipe
+# itself lives in the coordinator's skill (data/actors/skills/
+# montecarlo-coordinate.md, installed into the transport from
+# examples/monte-carlo/skills/).
+
+sessions:
+  - name: claude-coord
+    agent: claude
+    orch_alias: claude-coord
+    bootstrap: |
+      Start a Monte Carlo π estimation run NOW. You are claude-coord. Read your skill: `cat ~/.local/share/llmux/orchestration/data/actors/skills/montecarlo-coordinate.md`. Follow it to completion. Use N=10000 darts per worker. The 5 workers are: claude-worker, gemini, agy, opencode, codex. Begin.
+
+  - name: claude-worker
+    agent: claude
+    orch_alias: claude-worker
+    bootstrap: |
+      You are an llmux orch worker. Poll your inbox via `llmux orch next --alias claude-worker --json`. The task body contains a recipe — follow it exactly. Reply via `llmux orch reply <msg-id> --alias claude-worker <body>`. Then stop.
+
+  - name: gemini
+    agent: gemini
+    orch_alias: gemini
+    bootstrap: |
+      You are an llmux orch worker. Poll your inbox via `llmux orch next --alias gemini --json`. The task body contains a recipe — follow it exactly. Reply via `llmux orch reply <msg-id> --alias gemini <body>`. Then stop.
+
+  - name: agy
+    agent: agy
+    orch_alias: agy
+    bootstrap: |
+      You are an llmux orch worker. Poll your inbox via `llmux orch next --alias agy --json`. The task body contains a recipe — follow it exactly. Reply via `llmux orch reply <msg-id> --alias agy <body>`. Then stop.
+
+  - name: opencode
+    agent: opencode
+    orch_alias: opencode
+    bootstrap: |
+      You are an llmux orch worker. Poll your inbox via `llmux orch next --alias opencode --json`. The task body contains a recipe — follow it exactly. Reply via `llmux orch reply <msg-id> --alias opencode <body>`. Then stop.
+
+  - name: codex
+    agent: codex
+    orch_alias: codex
+    bootstrap: |
+      You are an llmux orch worker. Poll your inbox via `llmux orch next --alias codex --json`. The task body contains a recipe — follow it exactly. Reply via `llmux orch reply <msg-id> --alias codex <body>`. Then stop.

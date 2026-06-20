@@ -17,6 +17,7 @@ import { clientCommands } from './client/client.ts';
 import { init as orchInit, defaultTransportRoot } from './orch/init.ts';
 import { syncBackupPush } from './orch/transport.ts';
 import * as orch from './orch/orch.ts';
+import { loadFleet, startFleet, stopFleet } from './orch/fleet.ts';
 
 // ----------------- version helper -----------------
 
@@ -453,6 +454,7 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
     re: { kind: 'string', description: 'Parent msg-id for replies — send only' },
     limit: { kind: 'string', description: 'Max messages to return — inbox only (default: 50)' },
     'include-claimed': { kind: 'boolean', description: 'Include messages claimed by other aliases — inbox only' },
+    file: { kind: 'string', description: 'Fleet YAML config path — fleet start/stop only' },
     json: { kind: 'boolean', description: 'emit JSON' },
   });
   const root = typeof parsed.flags['transport-root'] === 'string'
@@ -577,6 +579,38 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
       else console.log(`acked ${msgId} for ${me} (filtered from inbox; not re-deliverable)`);
       return;
     }
+    case 'fleet': {
+      const sub = parsed.positional[0];
+      const file = typeof parsed.flags['file'] === 'string' ? parsed.flags['file'] as string : parsed.positional[1];
+      if (!file) throw new Error('`llmux orch fleet <start|stop>` needs --file <path> (or positional)');
+      const fleet = loadFleet(file);
+      if (sub === 'start') {
+        const r = startFleet(fleet);
+        if (json) { console.log(JSON.stringify(r)); return; }
+        if (r.spawned.length) console.log(`spawned: ${r.spawned.join(', ')}`);
+        if (r.skipped.length) console.log(`skipped (already running): ${r.skipped.join(', ')}`);
+        if (r.bootstrapped.length) console.log(`bootstrapped: ${r.bootstrapped.join(', ')}`);
+        if (r.errors.length) {
+          console.error(`errors:`);
+          for (const e of r.errors) console.error(`  • ${e.name} (${e.phase}): ${e.error}`);
+          process.exit(1);
+        }
+        return;
+      }
+      if (sub === 'stop') {
+        const r = stopFleet(fleet);
+        if (json) { console.log(JSON.stringify(r)); return; }
+        if (r.stopped.length) console.log(`stopped: ${r.stopped.join(', ')}`);
+        if (r.notFound.length) console.log(`not running: ${r.notFound.join(', ')}`);
+        if (r.errors.length) {
+          console.error(`errors:`);
+          for (const e of r.errors) console.error(`  • ${e.name}: ${e.error}`);
+          process.exit(1);
+        }
+        return;
+      }
+      throw new Error(`unknown fleet sub-verb "${sub}". Use: start | stop`);
+    }
     case 'status': {
       const result = orch.status(root);
       if (json) console.log(JSON.stringify(result));
@@ -590,7 +624,7 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
     }
     default:
       throw new Error(
-        `unknown orch verb "${verb}". Try one of: init | backup | send | inbox | next | reply | release | ack | status`,
+        `unknown orch verb "${verb}". Try one of: init | backup | send | inbox | next | reply | release | ack | status | fleet`,
       );
   }
 }
