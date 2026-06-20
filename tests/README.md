@@ -8,11 +8,11 @@ dependencies — bash and python.
 - **`cli-read.sh`** — read-only CLI surface (~46 checks): global flags, agent
   list, token CRUD, server start --help, session list, env-var fallbacks,
   backward-compat shims, edge cases. Requires a running daemon at
-  `http://localhost:3030` for the `--server` block; rest is hermetic.
+  `http://localhost:3001` for the `--server` block; rest is hermetic.
 
 - **`cli-write.sh`** — write-op CLI surface (~28 checks): spawn / stop /
   restart / prompt / broadcast / resume in both local mode and remote
-  (`--server`) mode. Spins up an **isolated daemon on port 13030** with its
+  (`--server`) mode. Spins up an **isolated daemon on port 13001** with its
   own `XDG_STATE_HOME` so the operator's real daemon is untouched. Cleans up
   test tmux sessions on exit. Costs $0 — uses `claude` with `--cwd /tmp`
   (idle prompt) and `--no-enter` so nothing reaches the LLM.
@@ -28,14 +28,14 @@ From the repo root:
 ```bash
 cd packages/llmux && npm run build && cd -
 
-# Read tests need a daemon at :3030 for the --server block
+# Read tests need a daemon at :3001 for the --server block
 tests/cli-read.sh
 
-# Write tests are self-contained (spawn their own daemon on :13030)
+# Write tests are self-contained (spawn their own daemon on :13001)
 tests/cli-write.sh
 
-# Attach smoke — needs a live session named 'codex' on a daemon at :3030
-tests/attach-smoke.py codex http://localhost:3030
+# Attach smoke — needs a live session named 'codex' on a daemon at :3001
+tests/attach-smoke.py codex http://localhost:3001
 ```
 
 All three exit 0 on a fully-passing run; non-zero on the first failure

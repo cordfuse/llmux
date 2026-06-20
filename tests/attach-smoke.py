@@ -28,7 +28,7 @@ import pathlib
 REPO = pathlib.Path(__file__).resolve().parent.parent
 LLMUX = ["node", str(REPO / "packages" / "llmux" / "dist" / "index.js")]
 SESSION = sys.argv[1] if len(sys.argv) > 1 else "codex"
-SERVER = sys.argv[2] if len(sys.argv) > 2 else "http://localhost:3030"
+SERVER = sys.argv[2] if len(sys.argv) > 2 else "http://localhost:3001"
 
 print(f"[test] attaching to '{SESSION}' via WS at {SERVER}")
 print(f"[test] will stream for 3s, then send Ctrl+] (0x1d), expect clean exit")

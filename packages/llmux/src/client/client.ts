@@ -18,7 +18,7 @@ function help(name: string, summary: string, usage: string): () => string {
       `  ${usage}`,
       '',
       'Environment:',
-      '  LLMUX_SERVER  base URL of the llmux daemon (e.g. http://localhost:3030)',
+      '  LLMUX_SERVER  base URL of the llmux daemon (e.g. http://localhost:3001)',
       '  LLMUX_TOKEN   auth token (sas_…); not required for localhost',
       '',
     ].join('\n');
@@ -32,7 +32,7 @@ interface ClientContext {
 export function resolveContext(): ClientContext {
   const baseUrl = process.env.LLMUX_SERVER;
   if (!baseUrl) {
-    throw new Error('LLMUX_SERVER is not set. Point it at your llmux daemon (e.g. http://localhost:3030).');
+    throw new Error('LLMUX_SERVER is not set. Point it at your llmux daemon (e.g. http://localhost:3001).');
   }
   return { baseUrl: baseUrl.replace(/\/$/, ''), token: process.env.LLMUX_TOKEN };
 }
