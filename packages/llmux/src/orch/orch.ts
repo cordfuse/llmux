@@ -229,6 +229,19 @@ export function ack(transportRoot: string, msgId: string, alias: string): void {
 }
 
 /**
+ * Global bus view — every message in a channel, no addressing/activation/
+ * claim filter. Newest first. Distinct from `inbox()` which is per-alias
+ * and filtered. Use for operator situational-awareness views.
+ */
+export function allMessages(transportRoot: string, channel = 'main', limit = 100): OrchMessage[] {
+  const messages = listChannelMessages(transportRoot, channel);
+  // listChannelMessages returns oldest first (sorted by relPath). Reverse
+  // for newest first + take the limit.
+  const newestFirst = messages.slice().reverse().slice(0, limit);
+  return newestFirst.map((m) => toOrchMessage(channel, m, transportRoot));
+}
+
+/**
  * Atomically claim the oldest unclaimed inbox message for `alias`.
  * Returns the message (with claim metadata) or null if the inbox is
  * empty or every message is held by a live claim from another alias.

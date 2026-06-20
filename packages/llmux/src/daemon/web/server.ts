@@ -3381,6 +3381,16 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Pr
       const messages = orch.inbox(root, alias, { channel, limit, includeClaimedByOthers: includeClaimed });
       return { body: messages, status: 200 };
     }
+    // Global bus view — every message in the channel regardless of addressing
+    // / activation / claim. Newest first. The /orch page uses this for its
+    // default 'situational awareness' view; per-alias inbox stays available
+    // for the alias-specific perspective.
+    if (path === '/api/orch/messages' && method === 'GET') {
+      const channel = qs.get('channel') ?? 'main';
+      const limit = qs.get('limit') ? parseInt(qs.get('limit')!, 10) : 100;
+      const messages = orch.allMessages(root, channel, limit);
+      return { body: messages, status: 200 };
+    }
     if (path === '/api/orch/actors' && method === 'GET') {
       return { body: listActors(root), status: 200 };
     }
@@ -3524,6 +3534,13 @@ function orchPage(): string {
   .alias-chip{background:#1c2128;color:#c9d1d9;border:1px solid #262c34;border-radius:14px;padding:5px 12px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease,color 150ms ease}
   .alias-chip:hover{background:#252b34;border-color:#3a414b}
   .alias-chip.active{background:#11192b;color:#7cc4ff;border-color:#2d4a66}
+  .identity-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#11141a;border:1px solid #1f2329;border-radius:8px;margin-bottom:8px;flex-wrap:wrap}
+  .identity-label{color:#9aa0a6;font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .identity-row input{flex:1 1 200px;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none;min-width:160px}
+  .identity-row input:focus{border-color:#2d4a66}
+  .identity-hint{flex:0 1 100%;font-size:11px;color:#7a7f87;font-style:italic;margin-top:2px}
+  @media (min-width:601px){ .identity-hint{flex:0 1 auto;margin-top:0} }
+  .alias-chips-row{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
 </style>
 </head><body>
 <div id="nav-backdrop" aria-hidden="true"></div>
@@ -3558,19 +3575,20 @@ function orchPage(): string {
 </header>
 
 <div class="toolbar">
-  <label>acting as
-    <input id="alias" placeholder="pick a chip below or type a name" />
-  </label>
   <label>channel<input id="channel" value="main" style="width:120px" /></label>
-  <div style="align-self:flex-end;display:flex;gap:8px">
-    <button id="refresh" class="muted" type="button" style="display:none">refresh</button>
+  <div style="align-self:flex-end;display:flex;gap:8px;margin-left:auto">
+    <button id="refresh" class="muted" type="button">refresh</button>
     <button id="auto" class="on" type="button">auto-poll · 5s</button>
   </div>
 </div>
-<p style="margin:0 0 8px;font-size:11px;color:#7a7f87;line-height:1.5">
-  Pick a known participant below (bots from the transport) or type your own name (<code>operator</code>, <code>steve</code>) to act as a human — no actor file needed for ad-hoc names.
-</p>
-<div id="alias-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px"></div>
+<div class="stats" id="stats" style="display:none"></div>
+
+<div class="identity-row">
+  <span class="identity-label">you:</span>
+  <input id="alias" placeholder="pick a chip or type a name (operator, steve)" />
+  <span class="identity-hint">used to send messages and act on (claim/reply/ack/release)</span>
+</div>
+<div id="alias-chips" class="alias-chips-row"></div>
 <div class="stats" id="stats" style="display:none"></div>
 
 <details>
@@ -3622,22 +3640,19 @@ function fmtTo(to){ return Array.isArray(to) ? to.join(',') : to; }
 function fmtRe(re){ if (!re) return ''; return Array.isArray(re) ? re.join(',') : re; }
 
 async function refresh(){
-  const alias = getAlias();
-  // Always refresh status so the bus stats render even before an alias is picked.
+  // Always refresh status so the bus stats render even when nothing else is set.
   try {
     const status = await apiGet('/api/orch/status');
     $('stats').textContent = 'transport ' + status.transportRoot + '   ·   channels [' + status.channels.join(',') + ']   ·   live claims ' + status.liveClaims;
     $('stats').style.display = '';
   } catch(_){}
 
-  if (!alias){
-    $('messages').innerHTML = '<div class="empty">pick an alias above to view its inbox</div>';
-    return;
-  }
+  // Global bus view by default — every message in the channel, newest first.
+  // This is the operator situational-awareness view (vs the per-alias inbox).
   try {
-    const messages = await apiGet('/api/orch/inbox?alias=' + encodeURIComponent(alias) + '&channel=' + encodeURIComponent(getChannel()));
+    const messages = await apiGet('/api/orch/messages?channel=' + encodeURIComponent(getChannel()));
     if (!messages.length){
-      $('messages').innerHTML = '<div class="empty">inbox empty for <strong>' + escapeHtml(alias) + '</strong> in channel <strong>' + escapeHtml(getChannel()) + '</strong></div>';
+      $('messages').innerHTML = '<div class="empty">no messages on the bus in channel <strong>' + escapeHtml(getChannel()) + '</strong> yet</div>';
       return;
     }
     $('messages').innerHTML = messages.map(function(m){
@@ -3664,36 +3679,36 @@ async function refresh(){
   }
 }
 
-async function doClaim(_id){
+function requireYou(){
   const alias = getAlias();
-  if (!alias) return toast('set alias first', true);
+  if (!alias){ toast('pick "you:" first — that identifies who acts', true); return null; }
+  return alias;
+}
+async function doClaim(_id){
+  const alias = requireYou(); if (!alias) return;
   try { await apiPost('/api/orch/next', { alias: alias, channel: getChannel() }); toast('claimed next'); refresh(); }
   catch (err){ toast('claim failed: ' + err.message, true); }
 }
 async function doReply(id){
-  const alias = getAlias();
-  if (!alias) return toast('set alias first', true);
+  const alias = requireYou(); if (!alias) return;
   const body = prompt('Reply body:');
   if (!body) return;
   try { await apiPost('/api/orch/reply', { msgId: id, alias: alias, body: body, channel: getChannel() }); toast('replied'); refresh(); }
   catch (err){ toast('reply failed: ' + err.message, true); }
 }
 async function doAck(id){
-  const alias = getAlias();
-  if (!alias) return toast('set alias first', true);
+  const alias = requireYou(); if (!alias) return;
   try { await apiPost('/api/orch/ack', { msgId: id, alias: alias }); toast('acked'); refresh(); }
   catch (err){ toast('ack failed: ' + err.message, true); }
 }
 async function doRelease(id){
-  const alias = getAlias();
-  if (!alias) return toast('set alias first', true);
+  const alias = requireYou(); if (!alias) return;
   try { await apiPost('/api/orch/release', { msgId: id, alias: alias }); toast('released'); refresh(); }
   catch (err){ toast('release failed: ' + err.message, true); }
 }
 
 $('send-btn').addEventListener('click', async function(){
-  const alias = getAlias();
-  if (!alias) return toast('set alias first (becomes the from field)', true);
+  const alias = requireYou(); if (!alias) return;
   const to = $('send-to').value.trim();
   const body = $('send-body').value.trim();
   const re = $('send-re').value.trim();
@@ -3719,9 +3734,6 @@ $('auto').addEventListener('click', function(){
   $('auto').textContent = autoPoll ? 'auto-poll · 5s' : 'auto-poll · off';
   $('auto').className = autoPoll ? 'on' : 'muted';
   $('auto-state').textContent = autoPoll ? 'live · 5s' : 'manual';
-  // Show the manual refresh button only when auto-poll is off — keeps the
-  // toolbar clean during normal use.
-  $('refresh').style.display = autoPoll ? 'none' : '';
   if (autoPoll){ pollTimer = setInterval(refresh, 5000); } else { clearInterval(pollTimer); pollTimer = null; }
 });
 
