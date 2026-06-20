@@ -602,8 +602,25 @@ local-only by design).
 | `LLMUXD_PORT`  | Daemon listen port (consulted by `server start` + QR builders) |
 | `LLMUXD_HOST`  | Daemon bind host (defaults to `0.0.0.0`) |
 | `LLMUX_PORT`   | Legacy port hint for QR builders; prefer `LLMUXD_PORT` |
+| `XDG_CONFIG_HOME` | Override for the config directory parent (used by the dotenv loader) |
 | `XDG_STATE_HOME` | Override for the state directory parent |
 | `OPENCODE_YOLO`, `GOOSE_MODE`, … | Forwarded by `envDefaults` per-agent |
+
+### Auto-loaded `.env`
+
+On every invocation, `llmux` reads `$XDG_CONFIG_HOME/llmux/.env` (falling back to
+`~/.config/llmux/.env`). Any variable from the table above can live there:
+
+```
+LLMUX_SERVER=https://llmux.example.com
+LLMUX_TOKEN=sas_…
+LLMUXD_PORT=3001
+```
+
+- **Process env wins.** A shell `export LLMUX_TOKEN=…` always overrides the file.
+- **Missing file is silent** — no warning, no error.
+- The file is read **before** flag parsing, so any code that consults `process.env.LLMUX_*`
+  sees the merged result. Applies to both client and daemon commands.
 
 ## License
 
