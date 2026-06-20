@@ -15,6 +15,7 @@ import { DEFAULT_AGENTS, isAgentInstalled } from './daemon/agents.ts';
 import { buildAgentCommand, mergeSpawnEnv } from './daemon/web/server.ts';
 import { clientCommands } from './client/client.ts';
 import { init as orchInit, defaultTransportRoot } from './orch/init.ts';
+import { syncBackupPush } from './orch/transport.ts';
 
 // ----------------- version helper -----------------
 
@@ -462,8 +463,23 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
       }
       return;
     }
+    case 'backup': {
+      const transportRoot = typeof parsed.flags['transport-root'] === 'string'
+        ? parsed.flags['transport-root'] as string
+        : defaultTransportRoot();
+      const result = syncBackupPush(transportRoot);
+      if (parsed.flags['json']) {
+        console.log(JSON.stringify({ transportRoot, ...result }));
+      } else if (result.ok) {
+        console.log(`llmux orch: backup pushed to origin/main (${transportRoot})`);
+      } else {
+        console.error(`llmux orch: backup failed — ${result.error ?? 'unknown'}`);
+        process.exit(1);
+      }
+      return;
+    }
     default:
-      throw new Error(`unknown orch verb "${verb}". Try \`llmux orch init [--remote <url>]\``);
+      throw new Error(`unknown orch verb "${verb}". Try \`llmux orch init [--remote <url>]\` or \`llmux orch backup\``);
   }
 }
 

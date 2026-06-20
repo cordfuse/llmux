@@ -152,6 +152,21 @@ export function asyncBackupPush(transportRoot: string): void {
   child.unref();
 }
 
+// Synchronous push — waits and returns the result. Used by the explicit
+// `llmux orch backup` verb when an operator wants confirmation that the
+// push landed (e.g., flush before shutdown, after manual actor edits).
+// Returns ok:false if no remote is configured; caller can decide whether
+// that's an error to surface.
+export function syncBackupPush(transportRoot: string): GitResult {
+  const hasRemote = captureGit(transportRoot, ['remote']).stdout.trim().includes('origin');
+  if (!hasRemote) return { ok: false, error: 'no remote configured' };
+  const r = captureGit(transportRoot, ['push', '--quiet', 'origin', 'HEAD:main']);
+  if (r.status !== 0) {
+    return { ok: false, error: (r.stderr || r.stdout).trim().slice(0, 500) };
+  }
+  return { ok: true };
+}
+
 // Initialize a fresh transport repo at `path`. Creates the directory, runs
 // `git init`, lays down the minimal data/ skeleton, and commits a single
 // initialization commit. Throws if the path is non-empty.
