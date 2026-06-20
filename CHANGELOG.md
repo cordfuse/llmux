@@ -5,6 +5,18 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.33.7] — 2026-06-20
+
+### Fixed — default listen port now actually resolves to 3001
+
+The sequential-port reorg (0.33.6, #60) moved the `?? 3001` fallbacks in
+`handlers.ts` but left `DEFAULT_CONFIG.server.port = 3000` in `config.ts`.
+`loadConfig()` always populates `cfg.server.port` from that default, so the
+fallback was dead code and a bare `llmux server start` still bound **3000**,
+not 3001. Set the default to `3001` so the precedence chain
+(`--port` > `LLMUXD_PORT` > `LLMUX_PORT` > `config.server.port` > `3001`)
+lands on 3001 as intended. Verified on WSL2: bare start now binds `:3001`.
+
 ## [0.33.6] — 2026-06-19
 
 ### Docs — Install prerequisites (tmux + C toolchain), the common WSL2/Linux first-run snag

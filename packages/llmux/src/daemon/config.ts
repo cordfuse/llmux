@@ -65,7 +65,7 @@ export interface LlmuxConfig {
 }
 
 export const DEFAULT_CONFIG: LlmuxConfig = {
-  server: { port: 3000, noQr: false },
+  server: { port: 3001, noQr: false },
   agents: {},
   sessions: [],
 };
