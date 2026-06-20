@@ -16,6 +16,7 @@ import { buildAgentCommand, mergeSpawnEnv } from './daemon/web/server.ts';
 import { clientCommands } from './client/client.ts';
 import { init as orchInit, defaultTransportRoot } from './orch/init.ts';
 import { syncBackupPush } from './orch/transport.ts';
+import * as orch from './orch/orch.ts';
 
 // ----------------- version helper -----------------
 
@@ -442,17 +443,39 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
     return;
   }
   const parsed = parseArgs(args, {
-    remote: { kind: 'string', description: 'Optional DR-only git remote (e.g. git@github.com-personal:you/llmux-transport.git)' },
+    remote: { kind: 'string', description: 'Optional DR-only git remote (init only)' },
     'transport-root': { kind: 'string', description: `Override the transport path (default: ${defaultTransportRoot()})` },
+    alias: { kind: 'string', description: 'Participant alias (defaults to $LLMUX_ORCH_ALIAS)' },
+    to: { kind: 'string', description: 'Recipient alias (or `all` for broadcast) — send only' },
+    from: { kind: 'string', description: 'Sender alias override — send only (defaults to --alias or $LLMUX_ORCH_ALIAS)' },
+    channel: { kind: 'string', description: 'Channel name (default: main)' },
+    re: { kind: 'string', description: 'Parent msg-id for replies — send only' },
+    limit: { kind: 'string', description: 'Max messages to return — inbox only (default: 50)' },
+    'include-claimed': { kind: 'boolean', description: 'Include messages claimed by other aliases — inbox only' },
     json: { kind: 'boolean', description: 'emit JSON' },
   });
+  const root = typeof parsed.flags['transport-root'] === 'string'
+    ? parsed.flags['transport-root'] as string
+    : defaultTransportRoot();
+  const aliasFlag = typeof parsed.flags['alias'] === 'string' ? parsed.flags['alias'] as string : undefined;
+  const aliasFromEnv = process.env['LLMUX_ORCH_ALIAS'];
+  const alias = aliasFlag ?? aliasFromEnv;
+  const channel = typeof parsed.flags['channel'] === 'string' ? parsed.flags['channel'] as string : 'main';
+  const json = !!parsed.flags['json'];
+
+  function requireAlias(verbName: string): string {
+    if (!alias) {
+      throw new Error(`\`llmux orch ${verbName}\` needs --alias <name> (or set $LLMUX_ORCH_ALIAS in the session env)`);
+    }
+    return alias;
+  }
   switch (verb) {
     case 'init': {
       const opts: { transportRoot?: string; remote?: string } = {};
       if (typeof parsed.flags['transport-root'] === 'string') opts.transportRoot = parsed.flags['transport-root'];
       if (typeof parsed.flags['remote'] === 'string') opts.remote = parsed.flags['remote'];
       const result = orchInit(opts);
-      if (parsed.flags['json']) {
+      if (json) {
         console.log(JSON.stringify(result));
       } else {
         const remoteLine = result.remote ? `  remote: ${result.remote}\n` : '';
@@ -464,23 +487,106 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
       return;
     }
     case 'backup': {
-      const transportRoot = typeof parsed.flags['transport-root'] === 'string'
-        ? parsed.flags['transport-root'] as string
-        : defaultTransportRoot();
-      const result = syncBackupPush(transportRoot);
-      if (parsed.flags['json']) {
-        console.log(JSON.stringify({ transportRoot, ...result }));
+      const result = syncBackupPush(root);
+      if (json) {
+        console.log(JSON.stringify({ transportRoot: root, ...result }));
       } else if (result.ok) {
-        console.log(`llmux orch: backup pushed to origin/main (${transportRoot})`);
+        console.log(`llmux orch: backup pushed to origin/main (${root})`);
       } else {
         console.error(`llmux orch: backup failed — ${result.error ?? 'unknown'}`);
         process.exit(1);
       }
       return;
     }
+    case 'send': {
+      const me = requireAlias('send');
+      const to = typeof parsed.flags['to'] === 'string' ? parsed.flags['to'] as string : undefined;
+      if (!to) throw new Error('`llmux orch send` needs --to <alias|all>');
+      const body = parsed.positional.join(' ').trim();
+      if (!body) throw new Error('`llmux orch send` needs a message body as positional arg');
+      const from = typeof parsed.flags['from'] === 'string' ? parsed.flags['from'] as string : me;
+      const input: orch.SendInput = { from, to, body, channel };
+      if (typeof parsed.flags['re'] === 'string') input.re = parsed.flags['re'] as string;
+      const result = orch.send(root, input);
+      if (json) console.log(JSON.stringify(result));
+      else console.log(`sent: ${result.id} (${from} → ${to}, channel=${channel})`);
+      return;
+    }
+    case 'inbox': {
+      const me = requireAlias('inbox');
+      const limit = typeof parsed.flags['limit'] === 'string' ? parseInt(parsed.flags['limit'] as string, 10) : 50;
+      const messages = orch.inbox(root, me, {
+        channel,
+        limit: Number.isFinite(limit) ? limit : 50,
+        includeClaimedByOthers: !!parsed.flags['include-claimed'],
+      });
+      if (json) {
+        console.log(JSON.stringify(messages));
+      } else if (messages.length === 0) {
+        console.log(`inbox empty for ${me} (channel=${channel})`);
+      } else {
+        for (const m of messages) {
+          const claimMark = m.claimed ? `[claimed by ${m.claimed.alias}]` : '';
+          console.log(`${m.id}  from=${m.from}  to=${formatTo(m.to)}  ${claimMark}`);
+        }
+      }
+      return;
+    }
+    case 'next': {
+      const me = requireAlias('next');
+      const m = orch.claimNext(root, me, { channel });
+      if (json) console.log(JSON.stringify(m));
+      else if (!m) console.log(`no work for ${me} (channel=${channel})`);
+      else {
+        console.log(`claimed ${m.id}`);
+        console.log(`from: ${m.from}`);
+        console.log(`to: ${formatTo(m.to)}`);
+        if (m.re) console.log(`re: ${Array.isArray(m.re) ? m.re.join(',') : m.re}`);
+        console.log('');
+        console.log(m.body);
+      }
+      return;
+    }
+    case 'reply': {
+      const me = requireAlias('reply');
+      const msgId = parsed.positional[0];
+      if (!msgId) throw new Error('`llmux orch reply` needs <msg-id> as the first positional arg');
+      const body = parsed.positional.slice(1).join(' ').trim();
+      if (!body) throw new Error('`llmux orch reply` needs a body as a positional arg after <msg-id>');
+      const result = orch.reply(root, msgId, me, body, channel);
+      if (json) console.log(JSON.stringify(result));
+      else console.log(`replied: ${result.id} (re: ${msgId})`);
+      return;
+    }
+    case 'release': {
+      const me = requireAlias('release');
+      const msgId = parsed.positional[0];
+      if (!msgId) throw new Error('`llmux orch release` needs <msg-id> as the first positional arg');
+      orch.release(root, msgId, me);
+      if (json) console.log(JSON.stringify({ ok: true, released: msgId }));
+      else console.log(`released ${msgId} (was held by ${me})`);
+      return;
+    }
+    case 'status': {
+      const result = orch.status(root);
+      if (json) console.log(JSON.stringify(result));
+      else {
+        console.log(`llmux orch status`);
+        console.log(`  path:   ${result.transportRoot}`);
+        console.log(`  channels: ${result.channels.join(', ') || '<none>'}`);
+        console.log(`  live claims: ${result.liveClaims}`);
+      }
+      return;
+    }
     default:
-      throw new Error(`unknown orch verb "${verb}". Try \`llmux orch init [--remote <url>]\` or \`llmux orch backup\``);
+      throw new Error(
+        `unknown orch verb "${verb}". Try one of: init | backup | send | inbox | next | reply | release | status`,
+      );
   }
+}
+
+function formatTo(to: string | string[]): string {
+  return Array.isArray(to) ? to.join(',') : to;
 }
 
 // ----------------- main -----------------
