@@ -14,6 +14,7 @@ import * as tmux from './daemon/tmux.ts';
 import { DEFAULT_AGENTS, isAgentInstalled } from './daemon/agents.ts';
 import { buildAgentCommand, mergeSpawnEnv } from './daemon/web/server.ts';
 import { clientCommands } from './client/client.ts';
+import { init as orchInit, defaultTransportRoot } from './orch/init.ts';
 
 // ----------------- version helper -----------------
 
@@ -434,6 +435,38 @@ async function dispatchSettings(verb: string | undefined, args: string[]): Promi
   }
 }
 
+async function dispatchOrch(verb: string | undefined, args: string[]): Promise<void> {
+  if (!verb) {
+    printVerbHelp('orch', verb);
+    return;
+  }
+  const parsed = parseArgs(args, {
+    remote: { kind: 'string', description: 'Optional DR-only git remote (e.g. git@github.com-personal:you/llmux-transport.git)' },
+    'transport-root': { kind: 'string', description: `Override the transport path (default: ${defaultTransportRoot()})` },
+    json: { kind: 'boolean', description: 'emit JSON' },
+  });
+  switch (verb) {
+    case 'init': {
+      const opts: { transportRoot?: string; remote?: string } = {};
+      if (typeof parsed.flags['transport-root'] === 'string') opts.transportRoot = parsed.flags['transport-root'];
+      if (typeof parsed.flags['remote'] === 'string') opts.remote = parsed.flags['remote'];
+      const result = orchInit(opts);
+      if (parsed.flags['json']) {
+        console.log(JSON.stringify(result));
+      } else {
+        const remoteLine = result.remote ? `  remote: ${result.remote}\n` : '';
+        const modeLine = result.mode === 'clone'
+          ? 'cloned existing transport from remote (DR-restore path)'
+          : 'initialised fresh transport';
+        console.log(`llmux orch: ${modeLine}\n  path:   ${result.transportRoot}\n${remoteLine}`);
+      }
+      return;
+    }
+    default:
+      throw new Error(`unknown orch verb "${verb}". Try \`llmux orch init [--remote <url>]\``);
+  }
+}
+
 // ----------------- main -----------------
 
 async function main(): Promise<void> {
@@ -471,6 +504,9 @@ async function main(): Promise<void> {
         return;
       case 'settings':
         await dispatchSettings(verb, remainder);
+        return;
+      case 'orch':
+        await dispatchOrch(verb, remainder);
         return;
       // Backward-compat shorthand — some shells will already have `llmuxd serve`
       // wired up. These verbs sit at noun-position so all of rest.slice(1) is
