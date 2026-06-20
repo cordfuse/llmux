@@ -232,7 +232,7 @@ binary covers both daemon and client roles.
 
 ```bash
 # 1. Start the daemon (binds REST + WebSocket + browser picker)
-llmux server start --port 3030
+llmux server start --port 3001
 
 # 2. Spawn an agent into a named tmux session
 llmux session start claude --name main --cwd ~/projects/myapp
@@ -259,7 +259,7 @@ The same binary is the client. Set `--server` (or `LLMUX_SERVER` env) on any
 session/agent verb and it routes over HTTP instead of operating locally:
 
 ```bash
-export LLMUX_SERVER=http://192.0.2.10:3030  # or https://<host>.tailnet.ts.net
+export LLMUX_SERVER=http://192.0.2.10:3001  # or https://<host>.tailnet.ts.net
 export LLMUX_TOKEN=sas_…                    # mint with `llmux token create`
 
 llmux session list
@@ -414,8 +414,8 @@ each app its own custom HTTP/HTTPS port pair so they coexist without
 collision. **llmux's convention is `3080` (HTTP) / `3443` (HTTPS).**
 
 ```bash
-tailscale serve --bg --https=3443 http://localhost:3030
-tailscale serve --bg --http=3080  http://localhost:3030
+tailscale serve --bg --https=3443 http://localhost:3001
+tailscale serve --bg --http=3080  http://localhost:3001
 ```
 
 The server-start banner picks up the mapping automatically (any port, not
@@ -426,8 +426,8 @@ llmux v0.33.1
 
   ▸ Tailscale HTTPS  https://<host>.tailnet.ts.net:3443
   ▸ Tailscale HTTP   http://<host>.tailnet.ts.net:3080
-  ▸ Local            http://localhost:3030
-  ▸ LAN              http://192.168.x.x:3030
+  ▸ Local            http://localhost:3001
+  ▸ LAN              http://192.168.x.x:3001
 ```
 
 The browser picker is a clean TLS surface — open it in Chrome / Safari
@@ -493,7 +493,7 @@ the daemon's default port without baking a flag into every shell alias.
 # Server defaults — used when `llmux server start` runs with no overriding
 # flag / env. Precedence: --port flag > LLMUXD_PORT env > server.port here.
 server:
-  port: 3030          # daemon listen port (default 3000 when key omitted)
+  port: 3001          # daemon listen port (default 3001 when key omitted)
 
 # Per-agent overrides. Key matches the agent's `key` in the catalog
 # (claude, codex, agy, gemini, qwen, opencode, amp, grok, aider, continue,
@@ -535,7 +535,7 @@ server:
 ```
 
 A bare `llmux server start` from any cwd containing this file binds to
-`:8080`. `--port 3030` still wins per-invocation.
+`:8080`. `--port 3001` still wins per-invocation.
 
 ### What this YAML does NOT do today
 
