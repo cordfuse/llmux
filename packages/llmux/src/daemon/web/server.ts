@@ -15,6 +15,9 @@ import * as tmux from '../tmux.ts';
 import * as authStore from '../auth-store.ts';
 import { getAddresses } from '../net.ts';
 import { loadConfig, loadOverride, overridePath, saveOverride, type LlmuxConfig, type TurnqConfig } from '../config.ts';
+import * as orch from '../../orch/orch.ts';
+import { defaultTransportRoot } from '../../orch/init.ts';
+import { loadActor, listActors } from '../../orch/actors.ts';
 
 function readDaemonVersion(): string {
   // Resolve package.json relative to this source file so the version stays
@@ -3350,6 +3353,310 @@ async function readJsonBody(req: IncomingMessage, limit = 64 * 1024): Promise<un
 
 // ---------- helpers ----------
 
+// ── Orchestration API + page ─────────────────────────────────────────
+//
+// Read endpoints: GET, query-string params.
+// Write endpoints: POST, JSON body.
+// All operate against the default orch transport path (no per-request
+// override yet — orchestrations are 1-per-host in v1.0).
+
+interface OrchResponse { body: unknown; status: number }
+
+async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Promise<OrchResponse | null> {
+  const root = defaultTransportRoot();
+  const path = url.pathname;
+  const qs = url.searchParams;
+
+  try {
+    if (path === '/api/orch/status' && method === 'GET') {
+      return { body: orch.status(root), status: 200 };
+    }
+    if (path === '/api/orch/inbox' && method === 'GET') {
+      const alias = qs.get('alias');
+      if (!alias) return { body: { ok: false, error: '`alias` query param required' }, status: 400 };
+      const channel = qs.get('channel') ?? 'main';
+      const limit = qs.get('limit') ? parseInt(qs.get('limit')!, 10) : 50;
+      const includeClaimed = qs.get('include_claimed') === 'true';
+      const messages = orch.inbox(root, alias, { channel, limit, includeClaimedByOthers: includeClaimed });
+      return { body: messages, status: 200 };
+    }
+    if (path === '/api/orch/actors' && method === 'GET') {
+      return { body: listActors(root), status: 200 };
+    }
+    if (path.startsWith('/api/orch/actor/') && method === 'GET') {
+      const alias = decodeURIComponent(path.slice('/api/orch/actor/'.length));
+      try {
+        const actor = loadActor(root, alias);
+        return { body: actor, status: 200 };
+      } catch (err) {
+        return { body: { ok: false, error: err instanceof Error ? err.message : 'load failed' }, status: 404 };
+      }
+    }
+    if (path === '/api/orch/send' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const from = String(body['from'] ?? '');
+      const to = body['to'];
+      const text = String(body['body'] ?? '');
+      if (!from || !to || !text) return { body: { ok: false, error: 'from, to, body required' }, status: 400 };
+      const input: orch.SendInput = { from, to: to as string | string[], body: text };
+      if (typeof body['channel'] === 'string') input.channel = body['channel'] as string;
+      if (body['re'] !== undefined) input.re = body['re'] as string | string[];
+      return { body: orch.send(root, input), status: 200 };
+    }
+    if (path === '/api/orch/next' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const alias = String(body['alias'] ?? '');
+      if (!alias) return { body: { ok: false, error: 'alias required' }, status: 400 };
+      const channel = typeof body['channel'] === 'string' ? body['channel'] as string : 'main';
+      const m = orch.claimNext(root, alias, { channel });
+      return { body: m ?? null, status: 200 };
+    }
+    if (path === '/api/orch/reply' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const msgId = String(body['msgId'] ?? '');
+      const alias = String(body['alias'] ?? '');
+      const text = String(body['body'] ?? '');
+      if (!msgId || !alias || !text) return { body: { ok: false, error: 'msgId, alias, body required' }, status: 400 };
+      const channel = typeof body['channel'] === 'string' ? body['channel'] as string : 'main';
+      return { body: orch.reply(root, msgId, alias, text, channel), status: 200 };
+    }
+    if (path === '/api/orch/release' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const msgId = String(body['msgId'] ?? '');
+      const alias = String(body['alias'] ?? '');
+      if (!msgId || !alias) return { body: { ok: false, error: 'msgId, alias required' }, status: 400 };
+      orch.release(root, msgId, alias);
+      return { body: { ok: true }, status: 200 };
+    }
+    if (path === '/api/orch/ack' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const msgId = String(body['msgId'] ?? '');
+      const alias = String(body['alias'] ?? '');
+      if (!msgId || !alias) return { body: { ok: false, error: 'msgId, alias required' }, status: 400 };
+      orch.ack(root, msgId, alias);
+      return { body: { ok: true }, status: 200 };
+    }
+    return null; // fall through to 404
+  } catch (err) {
+    return { body: { ok: false, error: err instanceof Error ? err.message : 'server error' }, status: 500 };
+  }
+}
+
+function orchPage(): string {
+  // Single-page operator console for the orch bus. Polls /api/orch/inbox
+  // for a chosen alias, lists messages, lets the operator send / ack /
+  // release. No build step — vanilla HTML + JS like the rest of the
+  // llmux web. Style matches pickerPage().
+  return `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>llmux orch</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin:0;padding:0;background:#1c1f23;color:#e3e6ea}
+  header{padding:16px 20px;border-bottom:1px solid #2a2f35;display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+  header h1{font-size:18px;margin:0;font-weight:600;color:#fff}
+  header nav a{color:#9da4ad;text-decoration:none;font-size:14px;margin-right:14px}
+  header nav a:hover{color:#fff}
+  main{padding:20px;max-width:1200px;margin:0 auto}
+  .controls{display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+  .controls label{font-size:13px;color:#9da4ad}
+  .controls input,.controls select,.controls button{background:#2a2f35;color:#e3e6ea;border:1px solid #3a4047;border-radius:5px;padding:7px 10px;font-size:13px;font-family:inherit}
+  .controls input:focus,.controls select:focus{outline:1px solid #5b8def}
+  .controls button{cursor:pointer;background:#3a4047}
+  .controls button:hover{background:#4a5057}
+  .controls button.primary{background:#5b8def;border-color:#5b8def;color:#fff}
+  .controls button.primary:hover{background:#4a7adf}
+  .stats{margin-bottom:14px;color:#9da4ad;font-size:13px}
+  .empty{padding:30px;text-align:center;color:#5a6068;font-size:14px}
+  .msg{background:#23272d;border:1px solid #2a2f35;border-radius:6px;padding:12px 14px;margin-bottom:8px}
+  .msg-head{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:#9da4ad;margin-bottom:8px}
+  .msg-from{color:#a4c2ff;font-weight:600}
+  .msg-to{color:#a4ffa4}
+  .msg-id{font-family:'SF Mono',Menlo,monospace;font-size:11px;color:#5a6068}
+  .msg-re{color:#ffc864;font-size:11px}
+  .msg-body{white-space:pre-wrap;font-family:'SF Mono',Menlo,monospace;font-size:12px;background:#1c1f23;padding:10px;border-radius:4px;color:#e3e6ea;max-height:400px;overflow:auto}
+  .msg-actions{margin-top:8px;display:flex;gap:6px}
+  .msg-actions button{background:#3a4047;color:#e3e6ea;border:1px solid #4a5057;border-radius:4px;padding:4px 9px;font-size:11px;cursor:pointer}
+  .msg-actions button:hover{background:#4a5057}
+  .claim-badge{background:#ffc864;color:#1c1f23;border-radius:3px;padding:1px 6px;font-size:11px;font-weight:600}
+  details{background:#23272d;border:1px solid #2a2f35;border-radius:6px;padding:12px 14px;margin-bottom:18px}
+  details summary{cursor:pointer;font-weight:600;color:#fff;font-size:14px}
+  details textarea{width:100%;min-height:80px;background:#1c1f23;color:#e3e6ea;border:1px solid #3a4047;border-radius:4px;padding:8px;font-family:'SF Mono',Menlo,monospace;font-size:12px;margin-top:10px;box-sizing:border-box}
+  details .send-row{display:flex;gap:8px;margin-top:8px}
+  details .send-row input{flex:1}
+  .toast{position:fixed;bottom:20px;right:20px;background:#5b8def;color:#fff;padding:10px 14px;border-radius:5px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);opacity:0;transition:opacity .3s}
+  .toast.show{opacity:1}
+  .toast.err{background:#df5050}
+</style>
+</head><body>
+<header>
+  <h1>llmux orch</h1>
+  <nav><a href="/">sessions</a><a href="/orch">orchestration</a></nav>
+  <span id="status" style="margin-left:auto;color:#9da4ad;font-size:12px"></span>
+</header>
+<main>
+  <div class="controls">
+    <label>alias <input id="alias" placeholder="my-alias" /></label>
+    <label>channel <input id="channel" value="main" style="width:80px" /></label>
+    <button id="refresh">refresh</button>
+    <button id="auto" class="primary">auto-poll: on</button>
+  </div>
+  <div class="stats" id="stats"></div>
+
+  <details>
+    <summary>+ send a message (as <span id="from-label">alias</span>)</summary>
+    <div class="send-row">
+      <input id="send-to" placeholder="to: <recipient-alias> or all" />
+      <input id="send-re" placeholder="re: <parent-msg-id> (optional, for a reply)" />
+    </div>
+    <textarea id="send-body" placeholder="message body..."></textarea>
+    <div class="send-row" style="justify-content:flex-end">
+      <button id="send-btn" class="primary">send</button>
+    </div>
+  </details>
+
+  <div id="messages"></div>
+</main>
+<div id="toast" class="toast"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+let autoPoll = true;
+let pollTimer = null;
+
+function setAlias(v){ localStorage.setItem('orchAlias', v); $('alias').value = v; $('from-label').textContent = v || 'alias'; }
+function setChannel(v){ localStorage.setItem('orchChannel', v); $('channel').value = v; }
+function getAlias(){ return $('alias').value.trim(); }
+function getChannel(){ return $('channel').value.trim() || 'main'; }
+
+function toast(msg, isErr=false){
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isErr ? ' err' : '');
+  setTimeout(()=>{ t.className = 'toast'; }, 2500);
+}
+
+async function apiGet(path){
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function apiPost(path, body){
+  const r = await fetch(path, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c=> ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+function fmtTo(to){ return Array.isArray(to) ? to.join(',') : to; }
+function fmtRe(re){ if (!re) return ''; return Array.isArray(re) ? re.join(',') : re; }
+
+async function refresh(){
+  const alias = getAlias();
+  if (!alias){ $('messages').innerHTML = '<div class="empty">enter an alias above to view its inbox</div>'; return; }
+  try {
+    const [status, messages] = await Promise.all([
+      apiGet('/api/orch/status'),
+      apiGet('/api/orch/inbox?alias=' + encodeURIComponent(alias) + '&channel=' + encodeURIComponent(getChannel())),
+    ]);
+    $('stats').textContent = 'transport: ' + status.transportRoot + '   ·   channels: ' + status.channels.join(',') + '   ·   live claims: ' + status.liveClaims;
+    if (!messages.length){
+      $('messages').innerHTML = '<div class="empty">inbox empty for ' + escapeHtml(alias) + ' (channel=' + escapeHtml(getChannel()) + ')</div>';
+      return;
+    }
+    $('messages').innerHTML = messages.map(m => {
+      const claim = m.claimed ? '<span class="claim-badge">claimed by ' + escapeHtml(m.claimed.alias) + '</span>' : '';
+      const re = m.re ? '<span class="msg-re">re: ' + escapeHtml(fmtRe(m.re)) + '</span>' : '';
+      return [
+        '<div class="msg">',
+        '  <div class="msg-head">',
+        '    <span><span class="msg-from">', escapeHtml(m.from), '</span> → <span class="msg-to">', escapeHtml(fmtTo(m.to)), '</span> ', re, ' ', claim, '</span>',
+        '    <span class="msg-id">', escapeHtml(m.id), '</span>',
+        '  </div>',
+        '  <div class="msg-body">', escapeHtml(m.body), '</div>',
+        '  <div class="msg-actions">',
+        '    <button onclick="claim(\\''+ m.id +'\\')">claim</button>',
+        '    <button onclick="reply(\\''+ m.id +'\\')">reply</button>',
+        '    <button onclick="ack(\\''+ m.id +'\\')">ack</button>',
+        '    <button onclick="release(\\''+ m.id +'\\')">release</button>',
+        '  </div>',
+        '</div>',
+      ].join('');
+    }).join('');
+  } catch (err){
+    toast('refresh failed: ' + err.message, true);
+  }
+}
+
+async function claim(id){
+  const alias = getAlias();
+  if (!alias) return toast('set alias first', true);
+  try { await apiPost('/api/orch/next', { alias, channel: getChannel() }); toast('claimed'); refresh(); }
+  catch (err){ toast('claim failed: ' + err.message, true); }
+}
+
+async function reply(id){
+  const alias = getAlias();
+  if (!alias) return toast('set alias first', true);
+  const body = prompt('Reply body:');
+  if (!body) return;
+  try { await apiPost('/api/orch/reply', { msgId: id, alias, body, channel: getChannel() }); toast('replied'); refresh(); }
+  catch (err){ toast('reply failed: ' + err.message, true); }
+}
+
+async function ack(id){
+  const alias = getAlias();
+  if (!alias) return toast('set alias first', true);
+  try { await apiPost('/api/orch/ack', { msgId: id, alias }); toast('acked'); refresh(); }
+  catch (err){ toast('ack failed: ' + err.message, true); }
+}
+
+async function release(id){
+  const alias = getAlias();
+  if (!alias) return toast('set alias first', true);
+  try { await apiPost('/api/orch/release', { msgId: id, alias }); toast('released'); refresh(); }
+  catch (err){ toast('release failed: ' + err.message, true); }
+}
+
+$('send-btn').addEventListener('click', async () => {
+  const alias = getAlias();
+  if (!alias) return toast('set alias first (it becomes your from)', true);
+  const to = $('send-to').value.trim();
+  const body = $('send-body').value.trim();
+  const re = $('send-re').value.trim();
+  if (!to || !body) return toast('to + body required', true);
+  try {
+    const payload = { from: alias, to, body, channel: getChannel() };
+    if (re) payload.re = re;
+    await apiPost('/api/orch/send', payload);
+    $('send-body').value = '';
+    $('send-to').value = '';
+    $('send-re').value = '';
+    toast('sent');
+    refresh();
+  } catch (err){ toast('send failed: ' + err.message, true); }
+});
+
+$('alias').addEventListener('change', () => { setAlias($('alias').value); refresh(); });
+$('channel').addEventListener('change', () => { setChannel($('channel').value); refresh(); });
+$('refresh').addEventListener('click', refresh);
+
+$('auto').addEventListener('click', () => {
+  autoPoll = !autoPoll;
+  $('auto').textContent = 'auto-poll: ' + (autoPoll ? 'on' : 'off');
+  if (autoPoll){ pollTimer = setInterval(refresh, 5000); } else { clearInterval(pollTimer); pollTimer = null; }
+});
+
+// boot
+setAlias(localStorage.getItem('orchAlias') || '');
+setChannel(localStorage.getItem('orchChannel') || 'main');
+refresh();
+pollTimer = setInterval(refresh, 5000);
+</script>
+</body></html>`;
+}
+
 function sendHtml(res: ServerResponse, body: string, status = 200): void {
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
   res.end(body);
@@ -4264,9 +4571,26 @@ export function startServer(opts: ServeOptions): ServerHandle {
       }
     }
 
+    // ---- Orchestration API ----
+    // All endpoints under /api/orch/* talk to the on-disk transport
+    // directly (default path: $XDG_DATA_HOME/llmux/orchestration). The
+    // daemon does NOT need to hold the transport open — orch.* functions
+    // are stateless per call (file-system read/write each time). Operators
+    // can hit these endpoints alongside CLI usage; the source of truth is
+    // the git repo, not the daemon's in-memory state.
+    if (url.pathname.startsWith('/api/orch/')) {
+      const orchResp = await handleOrchApi(url, method, req);
+      if (orchResp) {
+        return sendJson(res, orchResp.body, orchResp.status);
+      }
+    }
+
     // ---- Pages ----
     if (url.pathname === '/') {
       return sendHtml(res, pickerPage());
+    }
+    if (url.pathname === '/orch') {
+      return sendHtml(res, orchPage());
     }
     if (url.pathname.startsWith('/session/')) {
       const name = decodeURIComponent(url.pathname.slice('/session/'.length));
