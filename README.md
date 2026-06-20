@@ -440,7 +440,7 @@ multiple tools can share one tailnet host):
 | App | HTTP port | HTTPS port |
 |---|---|---|
 | llmux | `3080` | `3443` |
-| vyzr  | `4080` | `4443` |
+| vyzr  | `3081` | `3444` |
 
 (Pick non-overlapping ports for any additional Cordfuse app you front.)
 
