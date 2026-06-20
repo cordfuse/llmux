@@ -20,11 +20,12 @@ import {
   asyncBackupPush,
 } from './transport.ts';
 import {
-  decideWake, recipients, type ActivationMessage, type WakeDecision,
+  decideWake, recipients, reList, type ActivationMessage, type WakeDecision,
 } from './activation.ts';
 import {
   acquireClaim, releaseClaim, readClaim, isClaimLive, CLAIM_TTL_MS, type ClaimRecord,
 } from './claims.ts';
+import { ackMessage as ackOnDisk, listAcked } from './acks.ts';
 import { stateDir } from './state.ts';
 
 /**
@@ -177,8 +178,25 @@ export function inbox(
     return m ? String(m.data['from']) : undefined;
   };
 
+  // Bug-1 fix: build the set of msg-ids this alias has already replied to,
+  // by walking its own outgoing messages' re: pointers. Without this,
+  // every poll re-surfaces the same already-replied task.
+  const repliedByMe = new Set<string>();
+  for (const m of messages) {
+    if (String(m.data['from']) !== alias) continue;
+    const reIds = reList(m.data['re']);
+    for (const id of reIds) repliedByMe.add(id);
+  }
+
+  // Bug-2 fix: also load the per-alias ack-set (operator-driven
+  // "processed without reply" — load-bearing for coordinator-shaped
+  // participants who receive terminal replies and never reply back).
+  const acked = listAcked(transportRoot, alias);
+
   const filtered: OrchMessage[] = [];
   for (const m of messages) {
+    if (repliedByMe.has(m.relPath)) continue;
+    if (acked.has(m.relPath)) continue;
     const activationMsg: ActivationMessage = {
       from: String(m.data['from']),
       to: recipients(m.data['to']),
@@ -196,6 +214,18 @@ export function inbox(
     if (filtered.length >= limit) break;
   }
   return filtered;
+}
+
+/**
+ * Operator-driven "I've processed this message without replying."
+ * Symmetric with claims/release in that it's per-(alias, msg-id) keyed.
+ * Use case: coordinator collects worker replies + aggregates; needs to
+ * clear them from inbox without sending a reply back up the chain.
+ *
+ * Idempotent — re-acking is a no-op.
+ */
+export function ack(transportRoot: string, msgId: string, alias: string): void {
+  ackOnDisk(transportRoot, alias, msgId);
 }
 
 /**

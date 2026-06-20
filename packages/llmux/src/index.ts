@@ -568,6 +568,15 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
       else console.log(`released ${msgId} (was held by ${me})`);
       return;
     }
+    case 'ack': {
+      const me = requireAlias('ack');
+      const msgId = parsed.positional[0];
+      if (!msgId) throw new Error('`llmux orch ack` needs <msg-id> as the first positional arg');
+      orch.ack(root, msgId, me);
+      if (json) console.log(JSON.stringify({ ok: true, acked: msgId, alias: me }));
+      else console.log(`acked ${msgId} for ${me} (filtered from inbox; not re-deliverable)`);
+      return;
+    }
     case 'status': {
       const result = orch.status(root);
       if (json) console.log(JSON.stringify(result));
@@ -581,7 +590,7 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
     }
     default:
       throw new Error(
-        `unknown orch verb "${verb}". Try one of: init | backup | send | inbox | next | reply | release | status`,
+        `unknown orch verb "${verb}". Try one of: init | backup | send | inbox | next | reply | release | ack | status`,
       );
   }
 }
