@@ -431,7 +431,7 @@ function autoPickQrEndpoint(port: number): { label: string; url: string } {
  * Resolve the port the daemon is (or will be) bound to. Mirrors `handleServe`'s
  * precedence so `token create --qr` from a separate terminal builds a URL that
  * actually reaches the running daemon:
- *   CLI --port > LLMUXD_PORT > LLMUX_PORT (legacy) > config.server.port > 3030
+ *   CLI --port > LLMUXD_PORT > LLMUX_PORT (legacy) > config.server.port > 3001
  * The CLI flag is consulted via the caller — pass `args.flags.port` as the
  * `explicitPort` argument when invoking.
  */
@@ -441,7 +441,7 @@ function endpointPort(explicitPort?: string): number {
     explicitPort ??
     process.env.LLMUXD_PORT ??
     process.env.LLMUX_PORT ??
-    String(cfg.server.port ?? 3030);
+    String(cfg.server.port ?? 3001);
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0 || n > 65535) {
     throw new Error(`invalid port: ${raw}`);
@@ -844,7 +844,7 @@ export function handleSettingsShow(args: ParsedArgs): void {
     yamlText,
     stateDir: state.stateDir(),
     tmuxAvailable,
-    port: Number(process.env.LLMUXD_PORT ?? process.env.LLMUX_PORT ?? cfg.server.port ?? 3030),
+    port: Number(process.env.LLMUXD_PORT ?? process.env.LLMUX_PORT ?? cfg.server.port ?? 3001),
     listenHost: process.env.LLMUXD_HOST ?? '0.0.0.0',
     env: {
       LLMUXD_PORT: process.env.LLMUXD_PORT ?? null,
