@@ -2,6 +2,7 @@
 alias: opencode
 name: OpenCode
 description: Monte Carlo worker
+species: machine
 ---
 
 # Persona

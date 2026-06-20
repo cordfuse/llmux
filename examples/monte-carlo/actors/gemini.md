@@ -2,6 +2,7 @@
 alias: gemini
 name: Gemini
 description: Monte Carlo worker
+species: machine
 ---
 
 # Persona

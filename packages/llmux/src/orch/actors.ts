@@ -23,10 +23,20 @@ import { dirname, join, resolve } from 'path';
 import { parseFrontmatter } from './frontmatter.ts';
 import { logError } from './state.ts';
 
+export type ActorSpecies = 'machine' | 'human';
+
 export interface ActorFrontmatter {
   alias: string;
   name?: string;
   description?: string;
+  /**
+   * Whether this participant is a software agent or a human operator.
+   * Defaults to 'machine' when omitted (preserves backwards compat with
+   * older actor files that pre-date this field). Powers UI affordances
+   * (chip colour, message-from styling), future filtering, and semantic
+   * broadcast targets (e.g., "to: all-humans" — v1.1+).
+   */
+  species?: ActorSpecies;
   includes?: string[];
 }
 
@@ -34,6 +44,7 @@ export interface LoadedActor {
   alias: string;
   name: string;
   description: string;
+  species: ActorSpecies;
   /** Persona — the actor file's markdown body, unchanged. */
   persona: string;
   /** Skills — concatenation of each resolved `includes:` ref's body. */
@@ -42,6 +53,17 @@ export interface LoadedActor {
   systemPrompt: string;
   /** Refs that couldn't be resolved (logged + skipped). For diagnostics. */
   unresolvedIncludes: string[];
+}
+
+/**
+ * Lightweight summary of every actor in the transport — name + species
+ * without the body content. Used by the web UI for chip rendering and any
+ * caller that just needs the participant roster, not full personas.
+ */
+export interface ActorSummary {
+  alias: string;
+  species: ActorSpecies;
+  name?: string;
 }
 
 export function actorPath(transportRoot: string, alias: string): string {
@@ -92,11 +114,42 @@ export function loadActor(transportRoot: string, alias: string): LoadedActor {
     alias,
     name: parsed.data.name ?? alias,
     description: persona,
+    species: parsed.data.species === 'human' ? 'human' : 'machine',
     persona: personaBody,
     skills,
     systemPrompt,
     unresolvedIncludes: unresolved,
   };
+}
+
+/**
+ * Lightweight enumeration — alias + species + name for every actor in
+ * the transport, no body parsing for unrelated content. Cheap to call
+ * from the web UI (every chip refresh) and from list-style CLI verbs.
+ */
+export function listActorSummaries(transportRoot: string): ActorSummary[] {
+  const dir = join(transportRoot, 'data', 'actors');
+  if (!existsSync(dir)) return [];
+  const out: ActorSummary[] = [];
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.md')) continue;
+    if (name === '.gitkeep') continue;
+    const alias = name.slice(0, -3);
+    if (!alias) continue;
+    try {
+      const raw = readFileSync(join(dir, name), 'utf-8');
+      const parsed = parseFrontmatter<ActorFrontmatter>(raw);
+      const species: ActorSpecies = parsed.data.species === 'human' ? 'human' : 'machine';
+      const summary: ActorSummary = { alias, species };
+      if (parsed.data.name) summary.name = parsed.data.name;
+      out.push(summary);
+    } catch {
+      // Skip unreadable actor files but still surface the alias so it's
+      // visible something exists at this path.
+      out.push({ alias, species: 'machine' });
+    }
+  }
+  return out.sort((a, b) => a.alias.localeCompare(b.alias));
 }
 
 interface ResolveResult {

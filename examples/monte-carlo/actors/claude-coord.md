@@ -2,6 +2,7 @@
 alias: claude-coord
 name: Claude (Coordinator)
 description: Monte Carlo π estimation orchestrator
+species: machine
 includes:
   - ./skills/montecarlo-coordinate.md
 ---

@@ -192,10 +192,13 @@ export function gitInit(path: string, opts: InitOptions): GitResult {
   mkdirSync(join(path, 'data', 'channels', 'main'), { recursive: true });
   mkdirSync(join(path, 'data', 'actors'), { recursive: true });
   writeFileSync(join(path, 'data', 'channels', 'main', '.gitkeep'), '');
-  writeFileSync(join(path, 'data', 'actors', '.gitkeep'), '');
   writeFileSync(join(path, 'LLMUX-TRANSPORT-VERSION'), `${opts.protocolVersion}\n`);
   writeFileSync(join(path, 'README.md'), opts.readme);
   writeFileSync(join(path, 'PROTOCOL.md'), opts.protocol);
+  // Default 'operator' actor (species: human). Every transport ships with
+  // a first-class human participant so the operator can send/receive on
+  // the bus without inventing an ad-hoc alias. Edit or delete to taste.
+  writeFileSync(join(path, 'data', 'actors', 'operator.md'), DEFAULT_OPERATOR_ACTOR);
   // Initial commit.
   captureGit(path, ['add', '-A']);
   const commit = captureGit(path, ['commit', '-m', 'llmux orch init: transport bootstrap']);
@@ -204,6 +207,24 @@ export function gitInit(path: string, opts: InitOptions): GitResult {
   }
   return { ok: true };
 }
+
+const DEFAULT_OPERATOR_ACTOR = `---
+alias: operator
+name: Operator
+description: Human operator on this bus
+species: human
+---
+
+# Persona
+
+You are the human operator on this llmux orchestration bus. You're not an
+agent — you're a person reading and writing messages through the web UI
+or CLI. Bots on the bus can address you as \`operator\` if they need a
+human in the loop (e.g., escalation, decision needed, ambiguous task).
+
+Edit this file to add your own persona, skills, or rename the alias.
+Delete it if you don't want a default operator participant.
+`;
 
 // Clone an existing remote transport into `path` — the DR-restore path
 // when an operator runs `llmux orch init --remote <url>` against a remote

@@ -2,6 +2,7 @@
 alias: claude-worker
 name: Claude
 description: Monte Carlo worker
+species: machine
 ---
 
 # Persona

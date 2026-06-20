@@ -2,6 +2,7 @@
 alias: agy
 name: Antigravity (agy)
 description: Monte Carlo worker
+species: machine
 ---
 
 # Persona

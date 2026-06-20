@@ -2,6 +2,7 @@
 alias: codex
 name: Codex
 description: Monte Carlo worker
+species: machine
 ---
 
 # Persona

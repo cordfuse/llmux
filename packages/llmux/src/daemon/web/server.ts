@@ -17,7 +17,7 @@ import { getAddresses } from '../net.ts';
 import { loadConfig, loadOverride, overridePath, saveOverride, type LlmuxConfig, type TurnqConfig } from '../config.ts';
 import * as orch from '../../orch/orch.ts';
 import { defaultTransportRoot } from '../../orch/init.ts';
-import { loadActor, listActors } from '../../orch/actors.ts';
+import { loadActor, listActors, listActorSummaries } from '../../orch/actors.ts';
 
 function readDaemonVersion(): string {
   // Resolve package.json relative to this source file so the version stays
@@ -3392,7 +3392,10 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Pr
       return { body: messages, status: 200 };
     }
     if (path === '/api/orch/actors' && method === 'GET') {
-      return { body: listActors(root), status: 200 };
+      // Returns [{alias, species, name?}] — richer than the old bare
+      // string list. UI uses species to colour chips, future filtering
+      // hooks in here too. Old shape was string[] (alias names only).
+      return { body: listActorSummaries(root), status: 200 };
     }
     if (path.startsWith('/api/orch/actor/') && method === 'GET') {
       const alias = decodeURIComponent(path.slice('/api/orch/actor/'.length));
@@ -3531,9 +3534,15 @@ function orchPage(): string {
   .toast{position:fixed;bottom:20px;right:20px;background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;padding:10px 14px;border-radius:6px;font:12px ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:opacity 180ms ease,transform 180ms ease;pointer-events:none;z-index:70}
   .toast.show{opacity:1;transform:translateY(0)}
   .toast.err{color:#f85149;border-color:#4a2329;background:#1f1416}
-  .alias-chip{background:#1c2128;color:#c9d1d9;border:1px solid #262c34;border-radius:14px;padding:5px 12px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease,color 150ms ease}
+  .alias-chip{background:#1c2128;color:#c9d1d9;border:1px solid #262c34;border-radius:14px;padding:5px 10px 5px 8px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease,color 150ms ease;display:inline-flex;align-items:center;gap:6px}
   .alias-chip:hover{background:#252b34;border-color:#3a414b}
   .alias-chip.active{background:#11192b;color:#7cc4ff;border-color:#2d4a66}
+  .alias-chip .species-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+  .alias-chip .species-dot.machine{background:#7cc4ff}
+  .alias-chip .species-dot.human{background:#7ee787}
+  .alias-chip.human{border-color:#1f4528;background:#0d1a13}
+  .alias-chip.human:hover{background:#11281b;border-color:#1f4528}
+  .alias-chip.human.active{background:#11281b;color:#7ee787;border-color:#1f4528}
   .identity-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#11141a;border:1px solid #1f2329;border-radius:8px;margin-bottom:8px;flex-wrap:wrap}
   .identity-label{color:#9aa0a6;font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
   .identity-row input{flex:1 1 200px;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none;min-width:160px}
@@ -3751,8 +3760,9 @@ async function refreshActorOptions(){
     }
     const current = getAlias();
     chipsDiv.innerHTML = actors.map(function(a){
-      const active = (a === current) ? ' active' : '';
-      return '<button type="button" class="alias-chip' + active + '" data-alias="' + escapeHtml(a) + '">' + escapeHtml(a) + '</button>';
+      const species = (a.species === 'human') ? 'human' : 'machine';
+      const active = (a.alias === current) ? ' active' : '';
+      return '<button type="button" class="alias-chip ' + species + active + '" data-alias="' + escapeHtml(a.alias) + '" title="' + species + '"><span class="species-dot ' + species + '"></span>' + escapeHtml(a.alias) + '</button>';
     }).join('');
     chipsDiv.querySelectorAll('.alias-chip').forEach(function(btn){
       btn.addEventListener('click', function(){
