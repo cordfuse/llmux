@@ -1,8 +1,8 @@
 #!/bin/bash
 # Write-op CLI test matrix for @cordfuse/llmux v0.12.4.
 #
-# Isolation: spins up a fresh daemon on port 13030 with its own
-# XDG_STATE_HOME so the running operator daemon at :3030 is untouched.
+# Isolation: spins up a fresh daemon on port 13001 with its own
+# XDG_STATE_HOME so the running operator daemon at :3001 is untouched.
 # All test tmux sessions are prefixed `llmuxtest-` so cleanup can be
 # targeted without nuking the operator's real sessions.
 #
@@ -12,7 +12,7 @@
 set +e
 REPO="$( cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd )"
 LLMUX="node $REPO/packages/llmux/dist/index.js"
-TEST_PORT=13030
+TEST_PORT=13001
 TEST_STATE=$(mktemp -d -t llmux-wtest.XXXXX)
 TEST_CONFIG=$(mktemp -d -t llmux-wcfg.XXXXX)  # serves as cwd to avoid project-local .llmux.yaml pickup
 DAEMON_LOG="$TEST_STATE/daemon.log"
