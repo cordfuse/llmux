@@ -18,6 +18,9 @@ import { init as orchInit, defaultTransportRoot } from './orch/init.ts';
 import { syncBackupPush } from './orch/transport.ts';
 import * as orch from './orch/orch.ts';
 import { loadFleet, startFleet, stopFleet } from './orch/fleet.ts';
+import { login as authLogin, logout as authLogout, whoami as authWhoami } from './v2/auth/login.ts';
+import { loadCredentials, setActiveProfile } from './v2/auth/credentials.ts';
+import { readPassphrase } from './v2/auth/prompt.ts';
 
 // ----------------- version helper -----------------
 
@@ -149,6 +152,14 @@ Logs verbs (always local — reads the daemon's in-process ring buffer):
 
 Settings verbs (always local — diagnostic dump):
   settings show [--json]                        config source, state dir, env, loaded YAML
+
+Auth verbs (v2 — client-side credentials at ~/.config/llmux/credentials.json):
+  auth login --server <url> [--username U]      passphrase-auth to a v2 daemon; save token
+             [--profile N] [--passphrase P]
+  auth logout [--profile N] [--no-revoke]       remove saved profile (default: revoke server-side)
+  auth whoami [--profile N]                     show the active (or named) profile
+  auth list                                     list saved profiles
+  auth use <profile>                            mark a saved profile as active
 
 Global flags:
   --server <url>     route session/agent verbs to a remote daemon over HTTP
@@ -395,6 +406,114 @@ async function dispatchAgent(verb: string | undefined, args: string[], env: Glob
     }
     default:
       throw new Error(`unknown agent verb "${verb}"`);
+  }
+}
+
+async function dispatchAuth(verb: string | undefined, args: string[], env: GlobalEnv): Promise<void> {
+  if (!verb) {
+    printVerbHelp('auth', verb);
+    return;
+  }
+  const parsed = parseArgs(args, {
+    username: { kind: 'string', description: 'application-layer username' },
+    profile: { kind: 'string', description: 'profile name (defaults to host-port slug)' },
+    passphrase: { kind: 'string', description: 'passphrase (env LLMUX_PASSPHRASE fallback; interactive prompt if neither)' },
+    'no-revoke': { kind: 'boolean', description: 'with logout: skip server-side token revoke' },
+    json: { kind: 'boolean', description: 'emit JSON' },
+  });
+
+  switch (verb) {
+    case 'login': {
+      const serverUrl = env.server ?? process.env.LLMUX_SERVER;
+      if (!serverUrl) throw new Error('auth login requires --server <url> or LLMUX_SERVER');
+      const username = (parsed.flags.username as string | undefined)
+        ?? parsed.positional[0];
+      if (!username) throw new Error('auth login requires --username <name>');
+      const passphrase = (parsed.flags.passphrase as string | undefined)
+        ?? process.env.LLMUX_PASSPHRASE
+        ?? await readPassphrase(`Passphrase for ${username}@${serverUrl}: `);
+      const result = await authLogin({
+        serverUrl,
+        username,
+        passphrase,
+        ...(parsed.flags.profile ? { profileName: parsed.flags.profile as string } : {}),
+      });
+      if (parsed.flags.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.ok) process.exit(1);
+        return;
+      }
+      if (!result.ok) {
+        console.error(`auth login failed: ${result.error ?? 'unknown'}${result.status ? ` (HTTP ${result.status})` : ''}`);
+        process.exit(1);
+      }
+      console.log(`logged in as ${result.username} → profile "${result.profileName}" (saved to ~/.config/llmux/credentials.json)`);
+      return;
+    }
+    case 'logout': {
+      const result = await authLogout({
+        ...(parsed.flags.profile ? { profileName: parsed.flags.profile as string } : {}),
+        revokeOnServer: !parsed.flags['no-revoke'],
+      });
+      if (parsed.flags.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.ok) process.exit(1);
+        return;
+      }
+      if (!result.ok) {
+        console.error(`auth logout: ${result.error}`);
+        process.exit(1);
+      }
+      const tail = result.revokedOnServer === false ? ' (server revoke failed — local profile removed anyway)' : '';
+      console.log(`logged out of profile "${result.profileName}"${tail}`);
+      return;
+    }
+    case 'whoami': {
+      const result = authWhoami(parsed.flags.profile as string | undefined);
+      if (parsed.flags.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.ok) process.exit(1);
+        return;
+      }
+      if (!result.ok) {
+        console.error(result.error);
+        process.exit(1);
+      }
+      const p = result.profile!;
+      console.log(`profile: ${result.profileName}`);
+      console.log(`server : ${p.serverUrl}`);
+      console.log(`user   : ${p.username}`);
+      console.log(`since  : ${p.savedAt}`);
+      return;
+    }
+    case 'list': {
+      const file = loadCredentials();
+      const rows = Object.entries(file.profiles).map(([name, p]) => ({
+        name, active: name === file.active, ...p,
+      }));
+      if (parsed.flags.json) {
+        console.log(JSON.stringify(rows, null, 2));
+        return;
+      }
+      if (rows.length === 0) {
+        console.log('no profiles saved — run `llmux auth login --server <url> --username <u>`');
+        return;
+      }
+      for (const r of rows) {
+        const marker = r.active ? '*' : ' ';
+        console.log(`${marker} ${r.name.padEnd(24)}  ${r.username.padEnd(16)}  ${r.serverUrl}`);
+      }
+      return;
+    }
+    case 'use': {
+      const name = parsed.positional[0];
+      if (!name) throw new Error('auth use requires <profile>');
+      setActiveProfile(name);
+      console.log(`active profile: ${name}`);
+      return;
+    }
+    default:
+      throw new Error(`unknown auth verb "${verb}"`);
   }
 }
 
@@ -673,6 +792,9 @@ async function main(): Promise<void> {
         return;
       case 'orch':
         await dispatchOrch(verb, remainder);
+        return;
+      case 'auth':
+        await dispatchAuth(verb, remainder, env);
         return;
       // Backward-compat shorthand — some shells will already have `llmuxd serve`
       // wired up. These verbs sit at noun-position so all of rest.slice(1) is
