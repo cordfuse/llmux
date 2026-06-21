@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { tryV2Route, initV2Routes, getV2User } from '../v2-routes.ts';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -133,6 +134,47 @@ const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`
 // tailnet host can't coexist as installs. Operators add the URL as a
 // Chrome bookmark / home-screen shortcut instead. `BRAND_SVG` is still
 // used as the browser-tab favicon.
+
+// ---------- shared drawer ----------
+
+// Single source of truth for the nav-drawer markup, shared between the
+// picker page and the orchestration page. Items with data-page are
+// captured by per-page JS (picker = SPA tab flip; orch = localStorage
+// write + redirect to /). Items with only href are real navigations
+// (Account, Users — they go to dedicated v2 pages).
+function renderNavDrawer(host: string, activeId: string): string {
+  const items = [
+    { id: 'sessions', icon: '▦', label: 'Sessions', dataPage: 'sessions' },
+    { id: 'orch',     icon: '⇄', label: 'Orchestration', href: '/orch' },
+    { id: 'tokens',   icon: '⚿', label: 'Tokens', dataPage: 'tokens' },
+    { id: 'agents',   icon: '⌬', label: 'Agents', dataPage: 'agents' },
+    { id: 'logs',     icon: '▤', label: 'Logs', dataPage: 'logs' },
+    { id: 'settings', icon: '⚙', label: 'Settings', dataPage: 'settings' },
+    { id: 'account',  icon: '◉', label: 'Account', href: '/account' },
+    { id: 'users',    icon: '☷', label: 'Users', href: '/admin/users' },
+    { id: 'about',    icon: 'ⓘ', label: 'About', dataPage: 'about' },
+  ];
+  const links = items.map(it => {
+    const active = it.id === activeId ? ' class="active"' : '';
+    const attrs: string[] = [];
+    if (it.href) attrs.push(`href="${it.href}"`);
+    if (it.dataPage) attrs.push(`data-page="${it.dataPage}"`);
+    return `    <a${attrs.length ? ' ' + attrs.join(' ') : ''}${active}><span class="nav-icon">${it.icon}</span>${it.label}</a>`;
+  }).join('\n');
+  return `<div id="nav-backdrop" aria-hidden="true"></div>
+<aside id="nav-drawer" aria-hidden="true">
+  <div class="nav-header">
+    <span class="nav-brand">LLMUX</span>
+    <span class="nav-host">${escapeHtml(host)}</span>
+  </div>
+  <nav>
+${links}
+  </nav>
+  <div class="nav-footer">
+    <span>v${escapeHtml(DAEMON_VERSION)}</span>
+  </div>
+</aside>`;
+}
 
 // ---------- pages ----------
 
@@ -516,25 +558,7 @@ function pickerPage(): string {
   }
 </style></head>
 <body>
-<div id="nav-backdrop" aria-hidden="true"></div>
-<aside id="nav-drawer" aria-hidden="true">
-  <div class="nav-header">
-    <span class="nav-brand">LLMUX</span>
-    <span class="nav-host">${escapeHtml(host)}</span>
-  </div>
-  <nav>
-    <a data-page="sessions" class="active"><span class="nav-icon">▦</span>Sessions</a>
-    <a href="/orch"><span class="nav-icon">⇄</span>Orchestration</a>
-    <a data-page="tokens"><span class="nav-icon">⚿</span>Tokens</a>
-    <a data-page="agents"><span class="nav-icon">⌬</span>Agents</a>
-    <a data-page="logs"><span class="nav-icon">▤</span>Logs</a>
-    <a data-page="settings"><span class="nav-icon">⚙</span>Settings</a>
-    <a data-page="about"><span class="nav-icon">ⓘ</span>About</a>
-  </nav>
-  <div class="nav-footer">
-    <span>v${escapeHtml(DAEMON_VERSION)}</span>
-  </div>
-</aside>
+${renderNavDrawer(host, 'sessions')}
 <header>
   <div class="header-controls">
     <button id="nav-toggle" type="button" aria-label="open navigation" title="open navigation">☰</button>
@@ -3363,7 +3387,7 @@ async function readJsonBody(req: IncomingMessage, limit = 64 * 1024): Promise<un
 
 interface OrchResponse { body: unknown; status: number }
 
-async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Promise<OrchResponse | null> {
+async function handleOrchApi(url: URL, method: string, req: IncomingMessage, lockedAlias?: string): Promise<OrchResponse | null> {
   const root = defaultTransportRoot();
   const path = url.pathname;
   const qs = url.searchParams;
@@ -3408,7 +3432,7 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Pr
     }
     if (path === '/api/orch/send' && method === 'POST') {
       const body = await readJsonBody(req) as Record<string, unknown>;
-      const from = String(body['from'] ?? '');
+      const from = lockedAlias ?? String(body['from'] ?? '');
       const to = body['to'];
       const text = String(body['body'] ?? '');
       if (!from || !to || !text) return { body: { ok: false, error: 'from, to, body required' }, status: 400 };
@@ -3419,7 +3443,7 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Pr
     }
     if (path === '/api/orch/next' && method === 'POST') {
       const body = await readJsonBody(req) as Record<string, unknown>;
-      const alias = String(body['alias'] ?? '');
+      const alias = lockedAlias ?? String(body['alias'] ?? '');
       if (!alias) return { body: { ok: false, error: 'alias required' }, status: 400 };
       const channel = typeof body['channel'] === 'string' ? body['channel'] as string : 'main';
       const m = orch.claimNext(root, alias, { channel });
@@ -3428,7 +3452,7 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Pr
     if (path === '/api/orch/reply' && method === 'POST') {
       const body = await readJsonBody(req) as Record<string, unknown>;
       const msgId = String(body['msgId'] ?? '');
-      const alias = String(body['alias'] ?? '');
+      const alias = lockedAlias ?? String(body['alias'] ?? '');
       const text = String(body['body'] ?? '');
       if (!msgId || !alias || !text) return { body: { ok: false, error: 'msgId, alias, body required' }, status: 400 };
       const channel = typeof body['channel'] === 'string' ? body['channel'] as string : 'main';
@@ -3437,7 +3461,7 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Pr
     if (path === '/api/orch/release' && method === 'POST') {
       const body = await readJsonBody(req) as Record<string, unknown>;
       const msgId = String(body['msgId'] ?? '');
-      const alias = String(body['alias'] ?? '');
+      const alias = lockedAlias ?? String(body['alias'] ?? '');
       if (!msgId || !alias) return { body: { ok: false, error: 'msgId, alias required' }, status: 400 };
       orch.release(root, msgId, alias);
       return { body: { ok: true }, status: 200 };
@@ -3445,7 +3469,7 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Pr
     if (path === '/api/orch/ack' && method === 'POST') {
       const body = await readJsonBody(req) as Record<string, unknown>;
       const msgId = String(body['msgId'] ?? '');
-      const alias = String(body['alias'] ?? '');
+      const alias = lockedAlias ?? String(body['alias'] ?? '');
       if (!msgId || !alias) return { body: { ok: false, error: 'msgId, alias required' }, status: 400 };
       orch.ack(root, msgId, alias);
       return { body: { ok: true }, status: 200 };
@@ -3456,7 +3480,7 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage): Pr
   }
 }
 
-function orchPage(): string {
+function orchPage(authedUsername: string): string {
   // Operator console for the orch bus. Visually consistent with pickerPage:
   // same dark monospace palette, same hamburger nav drawer (with the same
   // items so navigation cross-page feels uniform). Polls /api/orch/inbox
@@ -3496,11 +3520,15 @@ function orchPage(): string {
   #nav-drawer a .nav-icon{font-size:16px;width:20px;text-align:center;color:inherit}
   #nav-drawer .nav-footer{padding:10px 20px 0;border-top:1px solid #1f2329;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;align-items:center}
   #meta{color:#7a7f87;font-size:11px}
-  .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
-  .toolbar label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em;display:flex;flex-direction:column;gap:3px}
-  .toolbar input{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none}
+  .toolbar{display:flex;gap:8px;margin-bottom:14px;align-items:end;flex-wrap:nowrap}
+  .toolbar label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em;display:flex;flex-direction:column;gap:3px;flex:1 1 80px;min-width:0}
+  .toolbar input{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none;width:100%;box-sizing:border-box;min-width:0}
   .toolbar input:focus{border-color:#2d4a66}
-  .toolbar button{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  .toolbar button{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 12px;font:13px ui-monospace,monospace;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+  @media (max-width:600px){
+    .toolbar{gap:6px}
+    .toolbar button{padding:7px 9px;font-size:12px}
+  }
   .toolbar button.muted{color:#e6e8eb;border-color:#262c34}
   .toolbar button:hover{background:#252b34}
   .toolbar button.on{background:#11281b;color:#7ee787;border-color:#1f4528}
@@ -3508,8 +3536,8 @@ function orchPage(): string {
   .empty{padding:30px;text-align:center;color:#7a7f87;font-size:13px;background:#11141a;border:1px solid #1f2329;border-radius:8px}
   details{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:14px;margin-bottom:14px}
   details summary{cursor:pointer;color:#7cc4ff;font-size:13px;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
-  details .send-row{display:flex;gap:8px;margin-top:10px}
-  details .send-row input{flex:1;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none}
+  details .send-row{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+  details .send-row input{width:100%;box-sizing:border-box;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none}
   details .send-row input:focus{border-color:#2d4a66}
   details textarea{width:100%;min-height:90px;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:10px;font:13px ui-monospace,monospace;margin-top:8px;box-sizing:border-box;outline:none;resize:vertical}
   details textarea:focus{border-color:#2d4a66}
@@ -3547,30 +3575,13 @@ function orchPage(): string {
   .identity-label{color:#9aa0a6;font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
   .identity-row input{flex:1 1 200px;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none;min-width:160px}
   .identity-row input:focus{border-color:#2d4a66}
+  .identity-locked{flex:1 1 200px;background:#0b0c10;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;font-weight:600;min-width:160px}
   .identity-hint{flex:0 1 100%;font-size:11px;color:#7a7f87;font-style:italic;margin-top:2px}
   @media (min-width:601px){ .identity-hint{flex:0 1 auto;margin-top:0} }
   .alias-chips-row{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
 </style>
 </head><body>
-<div id="nav-backdrop" aria-hidden="true"></div>
-<aside id="nav-drawer" aria-hidden="true">
-  <div class="nav-header">
-    <span class="nav-brand">LLMUX</span>
-    <span class="nav-host">${escapeHtml(host)}</span>
-  </div>
-  <nav>
-    <a data-target="sessions"><span class="nav-icon">▦</span>Sessions</a>
-    <a class="active"><span class="nav-icon">⇄</span>Orchestration</a>
-    <a data-target="tokens"><span class="nav-icon">⚿</span>Tokens</a>
-    <a data-target="agents"><span class="nav-icon">⌬</span>Agents</a>
-    <a data-target="logs"><span class="nav-icon">▤</span>Logs</a>
-    <a data-target="settings"><span class="nav-icon">⚙</span>Settings</a>
-    <a data-target="about"><span class="nav-icon">ⓘ</span>About</a>
-  </nav>
-  <div class="nav-footer">
-    <span>v${escapeHtml(DAEMON_VERSION)}</span>
-  </div>
-</aside>
+${renderNavDrawer(host, 'orch')}
 <header>
   <div class="header-controls">
     <button id="nav-toggle" type="button" aria-label="open navigation" title="open navigation">☰</button>
@@ -3584,24 +3595,20 @@ function orchPage(): string {
 </header>
 
 <div class="toolbar">
-  <label>channel<input id="channel" value="main" style="width:120px" /></label>
-  <div style="align-self:flex-end;display:flex;gap:8px;margin-left:auto">
-    <button id="refresh" class="muted" type="button">refresh</button>
-    <button id="auto" class="on" type="button">auto-poll · 5s</button>
-  </div>
+  <label>channel<input id="channel" value="main" /></label>
+  <button id="refresh" class="muted" type="button">refresh</button>
+  <button id="auto" class="on" type="button">auto-poll · 5s</button>
 </div>
 <div class="stats" id="stats" style="display:none"></div>
 
 <div class="identity-row">
-  <span class="identity-label">you:</span>
-  <input id="alias" placeholder="pick a chip or type a name (operator, steve)" />
-  <span class="identity-hint">used to send messages and act on (claim/reply/ack/release)</span>
+  <span class="identity-label">sending as:</span>
+  <span id="alias-display" class="identity-locked">${escapeHtml(authedUsername)}</span>
+  <span class="identity-hint">your authenticated identity — server-enforced, no spoofing</span>
 </div>
-<div id="alias-chips" class="alias-chips-row"></div>
-<div class="stats" id="stats" style="display:none"></div>
 
 <details>
-  <summary>＋ send a message (as <span id="from-label">— pick an alias first —</span>)</summary>
+  <summary>＋ send a message (as <span id="from-label">${escapeHtml(authedUsername)}</span>)</summary>
   <div class="send-row">
     <input id="send-to" placeholder="to: alias OR all (broadcast)" />
     <input id="send-re" placeholder="re: parent-msg-id (optional)" />
@@ -3619,9 +3626,11 @@ const $ = (id) => document.getElementById(id);
 let autoPoll = true;
 let pollTimer = null;
 
-function setAlias(v){ localStorage.setItem('orchAlias', v); $('alias').value = v; $('from-label').textContent = v || '— pick an alias first —'; }
+// Identity is server-enforced — baked into the page from the v2-authed
+// session. No browser-side override, no localStorage, no spoofing.
+const AUTHED_ALIAS = ${JSON.stringify(authedUsername)};
+function getAlias(){ return AUTHED_ALIAS; }
 function setChannel(v){ localStorage.setItem('orchChannel', v); $('channel').value = v; }
-function getAlias(){ return $('alias').value.trim(); }
 function getChannel(){ return $('channel').value.trim() || 'main'; }
 
 function toast(msg, isErr){
@@ -3734,7 +3743,6 @@ $('send-btn').addEventListener('click', async function(){
   } catch (err){ toast('send failed: ' + err.message, true); }
 });
 
-$('alias').addEventListener('change', function(){ setAlias($('alias').value); refresh(); });
 $('channel').addEventListener('change', function(){ setChannel($('channel').value); refresh(); });
 $('refresh').addEventListener('click', refresh);
 
@@ -3746,36 +3754,6 @@ $('auto').addEventListener('click', function(){
   if (autoPoll){ pollTimer = setInterval(refresh, 5000); } else { clearInterval(pollTimer); pollTimer = null; }
 });
 
-// Render known actors as clickable chips under the input. Operators can
-// also type a free-text alias for ad-hoc roles. Chips are more discoverable
-// than a <datalist> dropdown (especially on mobile, where datalist UX
-// varies wildly between browsers).
-async function refreshActorOptions(){
-  const chipsDiv = $('alias-chips');
-  try {
-    const actors = await apiGet('/api/orch/actors');
-    if (!actors || !actors.length){
-      chipsDiv.innerHTML = '<span style="font-size:11px;color:#7a7f87;font-style:italic">no actors in transport yet — type a name above to start</span>';
-      return;
-    }
-    const current = getAlias();
-    chipsDiv.innerHTML = actors.map(function(a){
-      const species = (a.species === 'human') ? 'human' : 'machine';
-      const active = (a.alias === current) ? ' active' : '';
-      return '<button type="button" class="alias-chip ' + species + active + '" data-alias="' + escapeHtml(a.alias) + '" title="' + species + '"><span class="species-dot ' + species + '"></span>' + escapeHtml(a.alias) + '</button>';
-    }).join('');
-    chipsDiv.querySelectorAll('.alias-chip').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        setAlias(btn.dataset.alias);
-        refreshActorOptions();   // re-render to update active state
-        refresh();
-      });
-    });
-  } catch(err){
-    chipsDiv.innerHTML = '<span style="font-size:11px;color:#f85149">failed to load actors: ' + escapeHtml(err.message) + '</span>';
-  }
-}
-
 // nav drawer — open/close + cross-page navigation
 const navToggle = $('nav-toggle');
 const navDrawer = $('nav-drawer');
@@ -3784,18 +3762,17 @@ function openDrawer(){ navDrawer.classList.add('open'); navBackdrop.classList.ad
 function closeDrawer(){ navDrawer.classList.remove('open'); navBackdrop.classList.remove('show'); }
 navToggle.addEventListener('click', openDrawer);
 navBackdrop.addEventListener('click', closeDrawer);
-navDrawer.querySelectorAll('a[data-target]').forEach(function(a){
+navDrawer.querySelectorAll('a[data-page]').forEach(function(a){
   a.addEventListener('click', function(e){
     e.preventDefault();
-    try { localStorage.setItem('llmux.page', a.dataset.target); } catch(_){}
+    try { localStorage.setItem('llmux.page', a.dataset.page); } catch(_){}
     location.href = '/';
   });
 });
 
-// boot
-setAlias(localStorage.getItem('orchAlias') || '');
+// boot — drop any stale localStorage.orchAlias from pre-v2 sessions
+try { localStorage.removeItem('orchAlias'); } catch (_) {}
 setChannel(localStorage.getItem('orchChannel') || 'main');
-refreshActorOptions();
 refresh();
 pollTimer = setInterval(refresh, 5000);
 </script>
@@ -4238,6 +4215,12 @@ export function startServer(opts: ServeOptions): ServerHandle {
   const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const method = req.method ?? 'GET';
+
+    // ---- v2 auth routes (independent of v1 SAS auth) ----
+    // Setup wizard, login, account, admin/users — all use llmux_session
+    // cookie + identity-bound tokens. The v1 SAS cookie (llmuxd_token)
+    // doesn't bleed into these and vice versa.
+    if (await tryV2Route(req, res)) return;
 
     // ---- Deep-link auth: ?token=<sas> on any path (LEGACY) ----
     // v0.22.0 moved first-tap pairing to a URL fragment (#token=) so the
@@ -4730,7 +4713,14 @@ export function startServer(opts: ServeOptions): ServerHandle {
     // can hit these endpoints alongside CLI usage; the source of truth is
     // the git repo, not the daemon's in-memory state.
     if (url.pathname.startsWith('/api/orch/')) {
-      const orchResp = await handleOrchApi(url, method, req);
+      // v2 alias enforcement: if a v2 session is present, the caller's
+      // identity is server-authoritative. Override any client-supplied
+      // `from` / `alias` field on POST endpoints to match the v2 user.
+      // Defense-in-depth — the browser UI is already locked to the
+      // authed username, but this stops a v1-SAS-authed curl from
+      // posting with a fake from.
+      const v2User = await getV2User(req);
+      const orchResp = await handleOrchApi(url, method, req, v2User?.username);
       if (orchResp) {
         return sendJson(res, orchResp.body, orchResp.status);
       }
@@ -4741,7 +4731,12 @@ export function startServer(opts: ServeOptions): ServerHandle {
       return sendHtml(res, pickerPage());
     }
     if (url.pathname === '/orch') {
-      return sendHtml(res, orchPage());
+      const v2User = await getV2User(req);
+      if (!v2User) {
+        res.writeHead(302, { location: '/login?returnTo=%2Forch' });
+        return res.end();
+      }
+      return sendHtml(res, orchPage(v2User.username));
     }
     if (url.pathname.startsWith('/session/')) {
       const name = decodeURIComponent(url.pathname.slice('/session/'.length));
@@ -4785,6 +4780,13 @@ export function startServer(opts: ServeOptions): ServerHandle {
   });
 
   http.listen(opts.port, opts.host);
+
+  // Initialise the v2 auth subsystem after the http server is bound so
+  // the setup-token URL printed in the banner uses the correct port.
+  // Failure here is non-fatal — v1 picker keeps working without v2.
+  void initV2Routes(opts.port).catch((err) => {
+    console.error('[v2] init failed (v1 picker unaffected):', err);
+  });
 
   return {
     port: opts.port,

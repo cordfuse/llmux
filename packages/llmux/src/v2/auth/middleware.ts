@@ -86,7 +86,9 @@ export async function authenticate(
 /**
  * Convenience: pull the Authorization header off a Node http IncomingMessage
  * (or any object with a headers map) and authenticate. Saves callers from
- * doing the header-name dance themselves.
+ * doing the header-name dance themselves. Also falls back to the
+ * `llmux_session` cookie so browser sessions work without JS having to
+ * juggle Authorization on every request.
  */
 export async function authenticateRequest(
   req: { headers: Record<string, string | string[] | undefined> },
@@ -94,5 +96,37 @@ export async function authenticateRequest(
 ): Promise<AuthResult> {
   const raw = req.headers['authorization'] ?? req.headers['Authorization'];
   const header = Array.isArray(raw) ? raw[0] : raw;
-  return authenticate(extractBearer(header), ctx);
+  const fromHeader = extractBearer(header);
+  if (fromHeader) return authenticate(fromHeader, ctx);
+
+  const cookieRaw = req.headers['cookie'];
+  const cookieHeader = Array.isArray(cookieRaw) ? cookieRaw.join('; ') : cookieRaw;
+  const fromCookie = extractSessionCookie(cookieHeader);
+  return authenticate(fromCookie, ctx);
+}
+
+/** Parse the `llmux_session` value out of a Cookie header. */
+export function extractSessionCookie(cookieHeader: string | undefined): string | undefined {
+  if (!cookieHeader || typeof cookieHeader !== 'string') return undefined;
+  for (const part of cookieHeader.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const name = part.slice(0, eq).trim();
+    if (name === 'llmux_session') return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return undefined;
+}
+
+/** Set-Cookie value for a freshly issued session token. HttpOnly + SameSite=Lax. */
+export function sessionCookieFor(wireToken: string, opts?: { secure?: boolean }): string {
+  const flags = ['Path=/', 'HttpOnly', 'SameSite=Lax'];
+  if (opts?.secure) flags.push('Secure');
+  return `llmux_session=${encodeURIComponent(wireToken)}; ${flags.join('; ')}`;
+}
+
+/** Set-Cookie value that clears the session. */
+export function clearSessionCookie(opts?: { secure?: boolean }): string {
+  const flags = ['Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'];
+  if (opts?.secure) flags.push('Secure');
+  return `llmux_session=; ${flags.join('; ')}`;
 }

@@ -13,6 +13,8 @@ export interface AdminUsersPageData {
   host: string;
   currentUser: User;
   users: User[];
+  /** Optional — restrict the drawer to a subset of V2_NAV (dev-server only). */
+  navItemIds?: readonly string[];
 }
 
 export function adminUsersPage(data: AdminUsersPageData): string {
@@ -29,6 +31,7 @@ export function adminUsersPage(data: AdminUsersPageData): string {
     activeNav: 'users',
     isAdmin: true,
     pageTitle: 'Users',
+    ...(data.navItemIds ? { navItemIds: data.navItemIds } : {}),
     extraCss: `
   .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
   .toolbar .spacer{flex:1}

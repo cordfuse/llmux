@@ -120,8 +120,19 @@ export const V2_NAV: NavItem[] = [
   { id: 'users',    label: 'Users', icon: '☷', href: '/admin/users', adminOnly: true },
 ];
 
-export function navDrawer(opts: { host: string; activeId?: string; isAdmin?: boolean }): string {
-  const items = V2_NAV.filter(i => !i.adminOnly || opts.isAdmin)
+/**
+ * IDs of the v2-auth-only items. The dev-server serves only these routes;
+ * pass to pageShell({ navItemIds: V2_AUTH_NAV_IDS }) to hide the picker-
+ * shared items (sessions/orch/tokens/agents/logs/settings) that don't
+ * exist on the v2 dev-server's port.
+ */
+export const V2_AUTH_NAV_IDS = ['account', 'users'] as const;
+
+export function navDrawer(opts: { host: string; activeId?: string; isAdmin?: boolean; itemIds?: readonly string[] }): string {
+  const allowed = opts.itemIds ? new Set(opts.itemIds) : undefined;
+  const items = V2_NAV
+    .filter(i => allowed === undefined || allowed.has(i.id))
+    .filter(i => !i.adminOnly || opts.isAdmin)
     .map(item => {
       const active = item.id === opts.activeId ? ' class="active"' : '';
       const href = item.href ? ` href="${escapeHtml(item.href)}"` : '';
@@ -170,12 +181,19 @@ export interface PageShellOpts {
   pageTitle?: string;
   /** JS to run after DOMContentLoaded (no <script> tags — wrapped here). */
   inlineScript?: string;
+  /** Restrict the drawer to this subset of V2_NAV ids. Omit for full nav. */
+  navItemIds?: readonly string[];
 }
 
 /** Render a complete <!doctype html> page that matches the picker's look. */
 export function pageShell(opts: PageShellOpts): string {
   const css = `${commonStyles()}${opts.extraCss ?? ''}`;
-  const nav = opts.withNav ? navDrawer({ host: opts.host, ...(opts.activeNav ? { activeId: opts.activeNav } : {}), ...(opts.isAdmin !== undefined ? { isAdmin: opts.isAdmin } : {}) }) : '';
+  const nav = opts.withNav ? navDrawer({
+    host: opts.host,
+    ...(opts.activeNav ? { activeId: opts.activeNav } : {}),
+    ...(opts.isAdmin !== undefined ? { isAdmin: opts.isAdmin } : {}),
+    ...(opts.navItemIds ? { itemIds: opts.navItemIds } : {}),
+  }) : '';
   const header = brandHeader({ host: opts.host, withNavToggle: opts.withNav, ...(opts.pageTitle ? { pageTitle: opts.pageTitle } : {}) });
   const script = opts.inlineScript ? `<script>${opts.inlineScript}</script>` : '';
   const navScript = opts.withNav ? NAV_TOGGLE_SCRIPT : '';

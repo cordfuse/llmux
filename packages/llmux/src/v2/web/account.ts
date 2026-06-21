@@ -16,6 +16,8 @@ export interface AccountPageData {
   host: string;
   user: User;
   tokens: IdentityToken[];
+  /** Optional — restrict the drawer to a subset of V2_NAV (dev-server only). */
+  navItemIds?: readonly string[];
 }
 
 export function accountPage(data: AccountPageData): string {
@@ -30,6 +32,7 @@ export function accountPage(data: AccountPageData): string {
     activeNav: 'account',
     isAdmin: data.user.admin,
     pageTitle: 'Account',
+    ...(data.navItemIds ? { navItemIds: data.navItemIds } : {}),
     body: `
 <section class="about-card">
   <h3>Profile</h3>
