@@ -103,25 +103,31 @@ export function dropToService(config: SystemConfig): DropResult {
 export function checkSystemModeReadiness(config: SystemConfig): string[] {
   const problems: string[] = [];
 
-  // 1. Config dir exists and is readable.
-  const configDir = config.dataDir.replace(/\/[^/]*$/, '') || '/etc/llmux';
-  if (!existsSync('/etc/llmux')) {
-    problems.push('/etc/llmux does not exist — run deploy/install.sh first');
-  } else {
-    try { accessSync('/etc/llmux', fsConstants.R_OK); }
-    catch { problems.push('/etc/llmux is not readable'); }
+  // User mode skips all system-only checks. The dev-server entrypoint
+  // auto-creates the user-mode directories on first run, so missing
+  // paths just mean "first launch."
+  if (!config.userMode) {
+    // 1. Config dir exists and is readable.
+    if (!existsSync('/etc/llmux')) {
+      problems.push('/etc/llmux does not exist — run deploy/install.sh first');
+    } else {
+      try { accessSync('/etc/llmux', fsConstants.R_OK); }
+      catch { problems.push('/etc/llmux is not readable'); }
+    }
+
+    // 2. Data dir exists (after privilege drop, by the service user).
+    if (!existsSync(config.dataDir)) {
+      problems.push(`${config.dataDir} does not exist — run deploy/install.sh first`);
+    }
+
+    // 3. Service user is resolvable.
+    const idCheck = spawnSync('id', ['-u', config.serviceUser], { encoding: 'utf-8' });
+    if (idCheck.status !== 0) {
+      problems.push(`service user '${config.serviceUser}' does not exist — run deploy/install.sh first`);
+    }
   }
 
-  // 2. Data dir exists and is writable (after privilege drop, by the service user).
-  if (!existsSync(config.dataDir)) {
-    problems.push(`${config.dataDir} does not exist — run deploy/install.sh first`);
-  }
-
-  // 3. Service user is resolvable (try `id -u <user>`; quiet failure means unknown user).
-  const idCheck = spawnSync('id', ['-u', config.serviceUser], { encoding: 'utf-8' });
-  if (idCheck.status !== 0) {
-    problems.push(`service user '${config.serviceUser}' does not exist — run deploy/install.sh first`);
-  }
+  // The following checks apply in BOTH modes:
 
   // 4. Chosen worker spawner helper is on PATH.
   const spawnerBin = config.workerSpawner;
@@ -130,17 +136,13 @@ export function checkSystemModeReadiness(config: SystemConfig): string[] {
     problems.push(`worker spawner '${spawnerBin}' is not on PATH`);
   }
 
-  // 5. TLS files exist if configured (config validator already checks this,
-  //    but re-check here in case files were removed between config load and boot).
+  // 5. TLS files exist if configured.
   if (config.tlsCertPath && !existsSync(config.tlsCertPath)) {
     problems.push(`TLS cert ${config.tlsCertPath} does not exist`);
   }
   if (config.tlsKeyPath && !existsSync(config.tlsKeyPath)) {
     problems.push(`TLS key ${config.tlsKeyPath} does not exist`);
   }
-
-  // Suppress unused-var lint for configDir (we may want to use it later).
-  void configDir;
 
   return problems;
 }

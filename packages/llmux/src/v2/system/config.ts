@@ -8,8 +8,12 @@
 //   V2-SYSTEM-AUTH-DESIGN.md § "Build plan" — Phase 2
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import { parse as parseYaml } from 'yaml';
-import { SYSTEM_CONFIG_DIR, SYSTEM_DATA_DIR, SYSTEM_TRANSPORT_DIR, SERVICE_USER, SERVICE_GROUP } from './paths.ts';
+import {
+  SYSTEM_CONFIG_DIR, SYSTEM_DATA_DIR, SYSTEM_TRANSPORT_DIR, SERVICE_USER, SERVICE_GROUP,
+  USER_MODE_DATA_DIR, USER_MODE_TRANSPORT_DIR,
+} from './paths.ts';
 
 /**
  * On-disk YAML config schema. Defaults below; operator overrides via
@@ -32,6 +36,17 @@ export interface SystemConfig {
   serviceGroup: string;
   /** How to spawn per-user workers. Defaults to systemd-run on linux+systemd hosts. */
   workerSpawner: 'systemd-run' | 'sudo' | 'runuser';
+  /**
+   * Dev/test mode. When true:
+   *   - Default paths flip to ~/.local/share/llmux/v2-dev (no root required)
+   *   - serviceUser / serviceGroup default to the current OS user
+   *   - Readiness checks for system-only paths (/etc/llmux, /var/lib/llmux,
+   *     'llmux' service user) are skipped
+   *   - dropToService is a no-op (already true for non-root, but explicit
+   *     in dev mode regardless)
+   * Production deployments leave this false.
+   */
+  userMode: boolean;
 }
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
@@ -42,7 +57,23 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   serviceUser: SERVICE_USER,
   serviceGroup: SERVICE_GROUP,
   workerSpawner: 'systemd-run',
+  userMode: false,
 };
+
+/** Defaults when userMode is true — paths in $HOME, service user = current OS user. */
+export function userModeDefaults(): SystemConfig {
+  const me = userInfo();
+  return {
+    listenPort: 3001,
+    listenHost: '127.0.0.1',
+    transportDir: USER_MODE_TRANSPORT_DIR,
+    dataDir: USER_MODE_DATA_DIR,
+    serviceUser: me.username,
+    serviceGroup: me.username,
+    workerSpawner: 'sudo',  // systemd-run --uid requires polkit in non-root; sudo is the dev fallback
+    userMode: true,
+  };
+}
 
 const VALID_SPAWNERS: ReadonlyArray<SystemConfig['workerSpawner']> = ['systemd-run', 'sudo', 'runuser'];
 
@@ -54,6 +85,12 @@ const VALID_SPAWNERS: ReadonlyArray<SystemConfig['workerSpawner']> = ['systemd-r
  * Trust: called from BOOT context (as root, before privilege drop).
  */
 export function loadSystemConfig(path: string = `${SYSTEM_CONFIG_DIR}/config.yaml`): SystemConfig {
+  // The userMode env-var shortcut, useful for one-shot test runs:
+  //   LLMUX_V2_USER_MODE=1 llmuxd ...
+  // Equivalent to loadUserModeConfig() with no on-disk overrides.
+  if (process.env['LLMUX_V2_USER_MODE'] === '1' && !existsSync(path)) {
+    return userModeDefaults();
+  }
   if (!existsSync(path)) {
     return { ...DEFAULT_SYSTEM_CONFIG };
   }
@@ -74,7 +111,10 @@ export function loadSystemConfig(path: string = `${SYSTEM_CONFIG_DIR}/config.yam
   }
 
   const overrides = parsed as Record<string, unknown>;
-  const merged: SystemConfig = { ...DEFAULT_SYSTEM_CONFIG };
+  // userMode in the YAML flips the defaults BEFORE per-field merge so any
+  // explicit overrides still win on top.
+  const base = overrides['userMode'] === true ? userModeDefaults() : { ...DEFAULT_SYSTEM_CONFIG };
+  const merged: SystemConfig = { ...base };
 
   // Per-field merge + per-field validation. Explicit beats clever.
   if (overrides['listenPort'] !== undefined) {
