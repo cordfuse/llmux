@@ -7,6 +7,8 @@
 //   V2-SYSTEM-AUTH-DESIGN.md § "Data plane (v2)" — /etc/llmux/config.yaml row
 //   V2-SYSTEM-AUTH-DESIGN.md § "Build plan" — Phase 2
 
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { parse as parseYaml } from 'yaml';
 import { SYSTEM_CONFIG_DIR, SYSTEM_DATA_DIR, SYSTEM_TRANSPORT_DIR, SERVICE_USER, SERVICE_GROUP } from './paths.ts';
 
 /**
@@ -42,17 +44,109 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   workerSpawner: 'systemd-run',
 };
 
+const VALID_SPAWNERS: ReadonlyArray<SystemConfig['workerSpawner']> = ['systemd-run', 'sudo', 'runuser'];
+
 /**
  * Read /etc/llmux/config.yaml, merge over DEFAULT_SYSTEM_CONFIG, validate.
- * Throws on syntactically-invalid YAML; missing file is fine (defaults).
+ * Throws on syntactically-invalid YAML or validation failures; missing
+ * file is fine (returns defaults).
  *
  * Trust: called from BOOT context (as root, before privilege drop).
  */
-export function loadSystemConfig(_path: string = `${SYSTEM_CONFIG_DIR}/config.yaml`): SystemConfig {
-  // TODO(phase 2): YAML parse + merge over DEFAULT_SYSTEM_CONFIG + validation
-  //   - Parse with `yaml` (already a dep)
-  //   - Validate listenPort range, listenHost format, TLS paths exist if set
-  //   - Validate workerSpawner is one of the supported helpers
-  //   - Return merged config
-  return { ...DEFAULT_SYSTEM_CONFIG };
+export function loadSystemConfig(path: string = `${SYSTEM_CONFIG_DIR}/config.yaml`): SystemConfig {
+  if (!existsSync(path)) {
+    return { ...DEFAULT_SYSTEM_CONFIG };
+  }
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf-8');
+  } catch (err) {
+    throw new Error(`config: cannot read ${path}: ${(err as Error).message}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(raw) ?? {};
+  } catch (err) {
+    throw new Error(`config: invalid YAML at ${path}: ${(err as Error).message}`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`config: ${path} must be a YAML mapping at the top level`);
+  }
+
+  const overrides = parsed as Record<string, unknown>;
+  const merged: SystemConfig = { ...DEFAULT_SYSTEM_CONFIG };
+
+  // Per-field merge + per-field validation. Explicit beats clever.
+  if (overrides['listenPort'] !== undefined) {
+    const v = overrides['listenPort'];
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 65535) {
+      throw new Error(`config: listenPort must be an integer 1..65535 (got ${JSON.stringify(v)})`);
+    }
+    merged.listenPort = v;
+  }
+  if (overrides['listenHost'] !== undefined) {
+    if (typeof overrides['listenHost'] !== 'string') {
+      throw new Error(`config: listenHost must be a string`);
+    }
+    merged.listenHost = overrides['listenHost'] as string;
+  }
+  if (overrides['tlsCertPath'] !== undefined) {
+    if (typeof overrides['tlsCertPath'] !== 'string') throw new Error('config: tlsCertPath must be a string');
+    merged.tlsCertPath = overrides['tlsCertPath'] as string;
+  }
+  if (overrides['tlsKeyPath'] !== undefined) {
+    if (typeof overrides['tlsKeyPath'] !== 'string') throw new Error('config: tlsKeyPath must be a string');
+    merged.tlsKeyPath = overrides['tlsKeyPath'] as string;
+  }
+  if ((merged.tlsCertPath && !merged.tlsKeyPath) || (!merged.tlsCertPath && merged.tlsKeyPath)) {
+    throw new Error('config: tlsCertPath and tlsKeyPath must both be set, or neither');
+  }
+  if (merged.tlsCertPath && !existsSync(merged.tlsCertPath)) {
+    throw new Error(`config: tlsCertPath ${merged.tlsCertPath} does not exist`);
+  }
+  if (merged.tlsKeyPath && !existsSync(merged.tlsKeyPath)) {
+    throw new Error(`config: tlsKeyPath ${merged.tlsKeyPath} does not exist`);
+  }
+  if (overrides['transportDir'] !== undefined) {
+    if (typeof overrides['transportDir'] !== 'string') throw new Error('config: transportDir must be a string');
+    merged.transportDir = overrides['transportDir'] as string;
+  }
+  if (overrides['dataDir'] !== undefined) {
+    if (typeof overrides['dataDir'] !== 'string') throw new Error('config: dataDir must be a string');
+    merged.dataDir = overrides['dataDir'] as string;
+  }
+  if (overrides['serviceUser'] !== undefined) {
+    if (typeof overrides['serviceUser'] !== 'string') throw new Error('config: serviceUser must be a string');
+    merged.serviceUser = overrides['serviceUser'] as string;
+  }
+  if (overrides['serviceGroup'] !== undefined) {
+    if (typeof overrides['serviceGroup'] !== 'string') throw new Error('config: serviceGroup must be a string');
+    merged.serviceGroup = overrides['serviceGroup'] as string;
+  }
+  if (overrides['workerSpawner'] !== undefined) {
+    const v = overrides['workerSpawner'];
+    if (typeof v !== 'string' || !VALID_SPAWNERS.includes(v as SystemConfig['workerSpawner'])) {
+      throw new Error(`config: workerSpawner must be one of ${VALID_SPAWNERS.join(', ')} (got ${JSON.stringify(v)})`);
+    }
+    merged.workerSpawner = v as SystemConfig['workerSpawner'];
+  }
+
+  // Cross-field sanity: dataDir + transportDir should be readable/writable
+  // by the service user. We can't fully validate that as root (we haven't
+  // dropped yet), but we can at least check the path exists or is creatable.
+  for (const dir of [merged.dataDir, merged.transportDir]) {
+    try {
+      if (existsSync(dir)) {
+        const s = statSync(dir);
+        if (!s.isDirectory()) {
+          throw new Error(`config: ${dir} exists but is not a directory`);
+        }
+      }
+      // If it doesn't exist, install.sh creates it before first boot. Not an error here.
+    } catch (err) {
+      throw new Error(`config: ${dir} sanity check failed: ${(err as Error).message}`);
+    }
+  }
+
+  return merged;
 }
