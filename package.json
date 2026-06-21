@@ -8,8 +8,8 @@
   ],
   "scripts": {
     "llmux": "tsx packages/llmux/src/index.ts",
-    "build": "npm run build --workspace @cordfuse/llmux",
-    "typecheck": "npm run typecheck --workspace @cordfuse/llmux"
+    "build": "npm run build --workspace @cordfuse/orch-llmux",
+    "typecheck": "npm run typecheck --workspace @cordfuse/orch-llmux"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

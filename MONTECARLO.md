@@ -35,7 +35,7 @@ done
 `llmux` must be **v1.0 or newer** (orch + fleet support):
 
 ```sh
-llmux orch fleet >/dev/null 2>&1 && echo "ok" || npm i -g @cordfuse/llmux@latest
+llmux orch fleet >/dev/null 2>&1 && echo "ok" || npm i -g @cordfuse/orch-llmux@latest
 ```
 
 llmuxd must be running (`llmux server start` in another shell if it isn't already).
@@ -106,7 +106,7 @@ shape; only the coordinator's skill knows what this particular run does.
 
 | Symptom | Cause + fix |
 |---|---|
-| `MISSING: llmux orch fleet` | Old llmux — `npm i -g @cordfuse/llmux@latest` |
+| `MISSING: llmux orch fleet` | Old llmux — `npm i -g @cordfuse/orch-llmux@latest` |
 | Worker session is stuck on a permission prompt (opencode does this for `/tmp`) | `tmux attach -t opencode`, hit Enter to approve "Allow once" |
 | Coord re-polls forever, never finishes | One worker probably never replied. `tmux attach -t <alias>` to investigate |
 | Bootstrap prompts don't fire | Make sure `llmuxd` is running (`llmux server start`); fleet uses tmux send-keys directly, no daemon round-trip, so this is rare |

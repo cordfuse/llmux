@@ -25,7 +25,7 @@ Everything else daemon-side lives in `/etc/llmux/`, `/var/lib/llmux/`, `/var/log
 | Spawning agents | As the OS user (whoever owns the daemon) | As the `llmux` service user — agent CLI credentials live in `~llmux/.claude/`, `~llmux/.gemini/`, etc., **operator-managed centrally**, not per-llmux-user |
 | Tmux | User's tmux server | Single `llmux`-owned tmux server. Sessions tagged with owning user; daemon enforces "Alice sees Alice's sessions" at the API layer |
 | Bootstrap | None | First-run setup wizard (one-time setup token printed to terminal/journal) |
-| Install | `npm install -g @cordfuse/llmux` | `sudo ./deploy/install.sh` |
+| Install | `npm install -g @cordfuse/orch-llmux` | `sudo ./deploy/install.sh` |
 | Run | `llmux server start` | `systemctl enable --now llmuxd` |
 
 **v1.x deliberately has no new auth code.** The existing SAS token system is network-gating only; identity is the OS user. This document is exclusively about v2.

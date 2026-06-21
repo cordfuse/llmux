@@ -27,17 +27,17 @@ jobs:
 
       - name: Pack tarball
         run: |
-          cd packages/llmux && npm pack && mv cordfuse-llmux-*.tgz ../../
+          cd packages/llmux && npm pack && mv cordfuse-orch-llmux-*.tgz ../../
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            cordfuse-llmux-*.tgz
+            cordfuse-orch-llmux-*.tgz
           generate_release_notes: true
 
-      - name: Publish @cordfuse/llmux to npm
+      - name: Publish @cordfuse/orch-llmux to npm
         if: ${{ env.NPM_TOKEN != '' }}
         working-directory: packages/llmux
         run: npm publish --access public
