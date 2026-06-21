@@ -27,7 +27,7 @@ function readVersion(): string {
     for (const candidate of [resolve(here, '../package.json'), resolve(here, '../../package.json')]) {
       try {
         const pkg = JSON.parse(readFileSync(candidate, 'utf8'));
-        if (pkg.name === '@cordfuse/orch-llmux' && typeof pkg.version === 'string') return pkg.version;
+        if (pkg.name === '@cordfuse/llmux' && typeof pkg.version === 'string') return pkg.version;
       } catch {}
     }
   } catch {}

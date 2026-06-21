@@ -1,11 +1,9 @@
 # llmux
 
-[![npm version](https://img.shields.io/npm/v/@cordfuse/orch-llmux.svg?logo=npm&label=npm)](https://www.npmjs.com/package/@cordfuse/orch-llmux)
-[![npm downloads](https://img.shields.io/npm/dm/@cordfuse/orch-llmux.svg?label=downloads)](https://www.npmjs.com/package/@cordfuse/orch-llmux)
+[![npm version](https://img.shields.io/npm/v/@cordfuse/llmux.svg?logo=npm&label=npm)](https://www.npmjs.com/package/@cordfuse/llmux)
+[![npm downloads](https://img.shields.io/npm/dm/@cordfuse/llmux.svg?label=downloads)](https://www.npmjs.com/package/@cordfuse/llmux)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![node](https://img.shields.io/node/v/@cordfuse/orch-llmux.svg?label=node)](./packages/llmux/package.json)
-
-> Part of **Cordfuse Orchestration** — sibling to [`@cordfuse/orch-crosstalk`](https://www.npmjs.com/package/@cordfuse/orch-crosstalk) (async/fire-and-forget). `orch-llmux` is the interactive sibling.
+[![node](https://img.shields.io/node/v/@cordfuse/llmux.svg?label=node)](./packages/llmux/package.json)
 
 ## Problem
 
@@ -223,16 +221,12 @@ Then:
 
 ```bash
 # One package, one binary — installs on the daemon host AND any client machine
-npm install -g @cordfuse/orch-llmux
+npm install -g @cordfuse/llmux
 ```
 
-The npm package was renamed from `@cordfuse/llmux` to `@cordfuse/orch-llmux`
-to surface its place in the Cordfuse Orchestration family — siblings share
-the `@cordfuse/orch-*` prefix. Binary, repo, and tool name remain `llmux`.
-
 If you used the now-deprecated `@cordfuse/llmuxd` package: uninstall it and
-install `@cordfuse/orch-llmux` instead. The `llmuxd` binary is gone; the
-`llmux` binary covers both daemon and client roles.
+install `@cordfuse/llmux` instead. The `llmuxd` binary is gone; the `llmux`
+binary covers both daemon and client roles.
 
 ## 30-second quickstart
 

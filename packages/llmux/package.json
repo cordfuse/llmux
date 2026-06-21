@@ -1,5 +1,5 @@
 {
-  "name": "@cordfuse/orch-llmux",
+  "name": "@cordfuse/llmux",
   "version": "0.34.0",
   "description": "tmux-based AI agent dispatcher — REST/WS daemon + CLI client in one binary",
   "license": "MIT",
