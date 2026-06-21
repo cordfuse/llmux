@@ -1,0 +1,64 @@
+# llmuxd — system service (v2)
+#
+# Install: place at /etc/systemd/system/llmuxd.service, then:
+#   systemctl daemon-reload
+#   systemctl enable --now llmuxd
+#
+# Prereqs (handled by deploy/install.sh):
+#   - 'llmux' system user + group exist
+#   - /etc/llmux/ (root:llmux 0750) + /etc/llmux/config.yaml (root:llmux 0640)
+#   - /var/lib/llmux/ (llmux:llmux 0750)
+#   - /var/log/llmux/ (llmux:llmux 0750)
+#   - /var/run/llmux/ (root:llmux 0750) — created by RuntimeDirectory= below
+#
+# Worker spawning: llmuxd starts as root briefly (to bind privileged port
+# if configured), drops to 'llmux' via privilege.ts, then spawns per-user
+# workers via `systemd-run --uid=<user>`. The --uid invocation requires
+# llmux be either root OR a member of the 'systemd-run-uid' polkit policy.
+# Default config binds 3001 (unprivileged), so root is not actually required
+# at boot — User=llmux below is fine for that path. Override with
+# AmbientCapabilities=CAP_NET_BIND_SERVICE if you bind <1024.
+
+[Unit]
+Description=llmux orchestration daemon
+Documentation=https://github.com/cordfuse/llmux
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=llmux
+Group=llmux
+ExecStart=/usr/bin/llmuxd --system-mode --config /etc/llmux/config.yaml
+Restart=on-failure
+RestartSec=5
+
+# Directories systemd will create + chown for us
+RuntimeDirectory=llmux
+RuntimeDirectoryMode=0750
+StateDirectory=llmux
+StateDirectoryMode=0750
+LogsDirectory=llmux
+LogsDirectoryMode=0750
+
+# Hardening (sensible defaults; tune per host policy)
+NoNewPrivileges=false   # MUST be false — llmuxd needs to setuid for worker spawn
+ProtectSystem=strict
+ProtectHome=read-only   # daemon reads /home for getpwnam + transport access; never writes
+ReadWritePaths=/var/lib/llmux /var/log/llmux /var/run/llmux
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=false  # systemd-run needs cgroup access
+RestrictSUIDSGID=false      # required for spawning per-user workers
+SystemCallFilter=@system-service @setuid
+
+# Network
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
