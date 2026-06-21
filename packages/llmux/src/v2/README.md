@@ -23,6 +23,12 @@ packages/llmux/src/v2/
   worker/
     spawner.ts       — spawn per-user worker processes via systemd-run
     registry.ts      — track which user has which worker running
+  web/
+    README.md        — DESIGN-CONSISTENCY REQUIREMENT for v2 web pages
+    setup.ts         — first-run wizard page
+    login.ts         — username + passphrase login form
+    account.ts       — operator's own name/passphrase/tokens
+    admin-users.ts   — admin-only user CRUD
 ```
 
 Plus `deploy/`:
