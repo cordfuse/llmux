@@ -4,37 +4,69 @@
 // any non-public path AND users.json is NOT empty (if it's empty, setup
 // gate wins and serves /setup instead).
 //
-// VISUAL CONSISTENCY REQUIREMENT — read packages/llmux/src/v2/web/README.md
-// before implementing. Match pickerPage() exactly.
+// Visual consistency: pageShell() in layout.ts.
 //
 // References:
 //   V2-SYSTEM-AUTH-DESIGN.md § "Operator workflows (v2)"
 //   V2-SYSTEM-AUTH-DESIGN.md § "Web UI (v2)" — /login row
-//   packages/llmux/src/daemon/web/server.ts sendGate() — current auth page (v1.x token gate)
-//   packages/llmux/src/daemon/web/server.ts pickerPage() — visual source of truth
 
-/**
- * Render the /login page HTML.
- *
- * Form fields:
- *   - Username
- *   - Passphrase
- *
- * POSTs to /api/login. On success: server sets session cookie + redirects.
- * On failure: in-page error message (use .toast pattern from orchPage()).
- *
- * If a `return-to` query param is present, the cookie redirects there
- * after success; otherwise to /.
- */
-export function loginPage(_returnToUrl?: string): string {
-  // TODO(phase 7): implement
-  //   - Same head/style block as pickerPage() VERBATIM
-  //   - Hide nav drawer (operator isn't auth'd yet)
-  //   - Show centered .about-card with form (matches token-create-form pattern)
-  //   - Form: username + passphrase + submit
-  //   - On submit: POST /api/login with credentials
-  //   - On 401: toast 'invalid credentials' (red — color #f85149)
-  //   - On success: read Location header from response, navigate
-  //   - Include a small footer hint: "Forgot passphrase? Run `llmux user reset-passphrase <username>` from the daemon host."
-  throw new Error('TODO(phase 7): see packages/llmux/src/v2/web/README.md for visual requirements');
+import { pageShell, escapeHtml, TOAST_HELPER } from './layout.ts';
+
+export function loginPage(opts: { host: string; returnTo?: string }): string {
+  const returnToSafe = opts.returnTo ? escapeHtml(opts.returnTo) : '/';
+  return pageShell({
+    title: `llmux on ${opts.host} · Sign in`,
+    host: opts.host,
+    withNav: false,
+    pageTitle: 'Sign in',
+    body: `
+<div class="centered-card">
+  <div class="about-card">
+    <h3>Sign in</h3>
+    <form id="login-form" autocomplete="on" novalidate>
+      <input type="hidden" name="returnTo" value="${returnToSafe}">
+      <div class="field">
+        <label for="li-username">Username</label>
+        <input id="li-username" name="username" type="text" autocomplete="username" pattern="[a-z0-9_-]+" required autofocus>
+      </div>
+      <div class="field">
+        <label for="li-passphrase">Passphrase</label>
+        <input id="li-passphrase" name="passphrase" type="password" autocomplete="current-passphrase" minlength="8" required>
+      </div>
+      <div class="actions">
+        <button type="submit" class="primary" id="li-submit">Sign in</button>
+      </div>
+    </form>
+  </div>
+  <p class="footer-note">Forgot your passphrase? Run <code>sudo llmux user reset-passphrase &lt;username&gt;</code> on the daemon host.</p>
+</div>`,
+    inlineScript: `${TOAST_HELPER}
+(() => {
+  const form = document.getElementById('login-form');
+  const submit = document.getElementById('li-submit');
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    submit.disabled = true;
+    const fd = new FormData(form);
+    const body = { username: fd.get('username'), passphrase: fd.get('passphrase') };
+    try {
+      const r = await fetch('/api/auth/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.token) {
+        // The server is expected to set the session cookie out-of-band
+        // (Set-Cookie on the response); the body is informational only.
+        window.showToast('Signed in — redirecting.', 'ok');
+        const dest = fd.get('returnTo') || '/';
+        setTimeout(() => location.assign(dest), 400);
+      } else {
+        window.showToast(data.error || ('sign-in failed (' + r.status + ')'), 'err');
+        submit.disabled = false;
+      }
+    } catch (e) {
+      window.showToast('network error: ' + e.message, 'err');
+      submit.disabled = false;
+    }
+  });
+})();`,
+  });
 }

@@ -1,44 +1,163 @@
-// Account page — change name + passphrase for the logged-in user.
+// Account page — change name + passphrase, manage own tokens.
 //
-// Trust context: SERVICE. Authenticated users only. Action handlers
-// require the user to re-prompt their current passphrase before
-// changing anything (defense-in-depth per V2-SYSTEM-AUTH-DESIGN.md
-// § "Sensitive actions — when re-prompting is OK").
+// Trust context: SERVICE. Authenticated users only. Sensitive actions
+// (passphrase change, token revoke) require re-prompting the current
+// passphrase — defense-in-depth per V2-SYSTEM-AUTH-DESIGN.md §
+// "Sensitive actions — when re-prompting is OK".
 //
-// VISUAL CONSISTENCY REQUIREMENT — read packages/llmux/src/v2/web/README.md
-// before implementing. Match pickerPage() exactly. This page lives
-// under the same nav drawer as sessions/orch/tokens/etc., so the drawer
-// is present and the user can navigate away.
-//
-// References:
-//   V2-SYSTEM-AUTH-DESIGN.md § "Web UI (v2)" — /account row
-//   V2-SYSTEM-AUTH-DESIGN.md § "CLI surface (v2)" — llmux auth passwd parallel
-//   packages/llmux/src/daemon/web/server.ts pickerPage() — visual source of truth
+// Visual consistency: pageShell() in layout.ts. Drawer present; this
+// page lives under the same nav as sessions/orch/tokens/etc.
 
-/**
- * Render the /account page HTML.
- *
- * Sections (each in its own .about-card):
- *   1. Profile — display name + username (username read-only; rename
- *      means delete + recreate, not exposed here)
- *   2. Change passphrase — old + new + confirm. Re-prompts old passphrase
- *      on every change (defense-in-depth).
- *   3. Active tokens — list of tokens owned by this user, with revoke
- *      buttons. Reuses the token-actions pattern from pickerPage's
- *      tokens page.
- *
- * POSTs to /api/account/profile, /api/account/passphrase,
- * /api/tokens/:id (DELETE).
- */
-export function accountPage(_currentUsername: string): string {
-  // TODO(phase 7): implement
-  //   - Same head/style/header/nav-drawer as pickerPage() (drawer 'active' on Settings)
-  //   - Three .about-card panels stacked
-  //   - Profile card: kv list of {Display name, Username (read-only)}
-  //     with an inline 'edit' on the display name that swaps to an input + save
-  //   - Passphrase card: form with old/new/confirm; on submit POSTs to
-  //     /api/account/passphrase; toast success/failure
-  //   - Tokens card: reuse the token table styling from #page-tokens;
-  //     show only the current user's tokens; revoke action with confirmation
-  throw new Error('TODO(phase 7): see packages/llmux/src/v2/web/README.md for visual requirements');
+import { pageShell, escapeHtml, TOAST_HELPER } from './layout.ts';
+import type { User } from '../auth/users.ts';
+import type { IdentityToken } from '../auth/tokens.ts';
+
+export interface AccountPageData {
+  host: string;
+  user: User;
+  tokens: IdentityToken[];
+}
+
+export function accountPage(data: AccountPageData): string {
+  const userJson = JSON.stringify({ username: data.user.username, name: data.user.name, admin: data.user.admin });
+  const tokensJson = JSON.stringify(data.tokens.map(t => ({
+    tokenId: t.tokenId, name: t.name, createdAt: t.createdAt, lastUsedAt: t.lastUsedAt, expiresAt: t.expiresAt,
+  })));
+  return pageShell({
+    title: `llmux on ${data.host} · Account`,
+    host: data.host,
+    withNav: true,
+    activeNav: 'account',
+    isAdmin: data.user.admin,
+    pageTitle: 'Account',
+    body: `
+<section class="about-card">
+  <h3>Profile</h3>
+  <div class="field">
+    <label>Username</label>
+    <input id="ac-username" type="text" value="${escapeHtml(data.user.username)}" readonly disabled>
+    <span class="help">Usernames are immutable. Username rename = delete + recreate (admin).</span>
+  </div>
+  <form id="ac-profile-form">
+    <div class="field">
+      <label for="ac-name">Display name</label>
+      <input id="ac-name" name="name" type="text" value="${escapeHtml(data.user.name)}" required>
+    </div>
+    <div class="actions">
+      <button type="submit" class="primary">Save profile</button>
+    </div>
+  </form>
+</section>
+
+<section class="about-card">
+  <h3>Change passphrase</h3>
+  <p class="sub">You'll be signed out of this device after saving. Re-sign-in with the new passphrase.</p>
+  <form id="ac-pp-form" autocomplete="off">
+    <div class="field">
+      <label for="ac-pp-old">Current passphrase</label>
+      <input id="ac-pp-old" name="oldPassphrase" type="password" required>
+    </div>
+    <div class="field">
+      <label for="ac-pp-new">New passphrase</label>
+      <input id="ac-pp-new" name="newPassphrase" type="password" minlength="8" required>
+    </div>
+    <div class="field">
+      <label for="ac-pp-confirm">Confirm new passphrase</label>
+      <input id="ac-pp-confirm" name="confirm" type="password" minlength="8" required>
+      <span class="err" id="ac-pp-err" hidden>Passphrases don't match.</span>
+    </div>
+    <div class="actions">
+      <button type="submit" class="primary">Update passphrase</button>
+    </div>
+  </form>
+</section>
+
+<section class="about-card">
+  <h3>Active tokens</h3>
+  <p class="sub">Each row is a device or CLI that has signed in as you. Revoke any you don't recognise.</p>
+  <table id="ac-tokens">
+    <thead><tr><th>Device</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+    <tbody id="ac-tokens-tbody"></tbody>
+  </table>
+</section>`,
+    inlineScript: `${TOAST_HELPER}
+(() => {
+  const me = ${userJson};
+  const tokens = ${tokensJson};
+
+  // Profile save
+  const pForm = document.getElementById('ac-profile-form');
+  pForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(pForm);
+    try {
+      const r = await fetch('/api/account/profile', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ name: fd.get('name') }) });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) window.showToast('Profile saved.', 'ok');
+      else window.showToast(data.error || ('save failed (' + r.status + ')'), 'err');
+    } catch (e) { window.showToast('network error: ' + e.message, 'err'); }
+  });
+
+  // Passphrase change
+  const ppForm = document.getElementById('ac-pp-form');
+  const ppNew = document.getElementById('ac-pp-new');
+  const ppConfirm = document.getElementById('ac-pp-confirm');
+  const ppErr = document.getElementById('ac-pp-err');
+  ppConfirm.addEventListener('input', () => { ppErr.hidden = !ppConfirm.value || ppNew.value === ppConfirm.value; });
+  ppForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (ppNew.value !== ppConfirm.value) { ppErr.hidden = false; ppConfirm.focus(); return; }
+    const fd = new FormData(ppForm);
+    try {
+      const r = await fetch('/api/account/passphrase', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ oldPassphrase: fd.get('oldPassphrase'), newPassphrase: fd.get('newPassphrase') }) });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        window.showToast('Passphrase updated — signing out.', 'ok');
+        setTimeout(() => location.assign('/login'), 800);
+      } else {
+        window.showToast(data.error || ('passphrase change failed (' + r.status + ')'), 'err');
+      }
+    } catch (e) { window.showToast('network error: ' + e.message, 'err'); }
+  });
+
+  // Tokens table
+  function fmt(iso) { return iso ? new Date(iso).toLocaleString() : '—'; }
+  function render() {
+    const tbody = document.getElementById('ac-tokens-tbody');
+    tbody.innerHTML = '';
+    if (tokens.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:#7a7f87;font-style:italic;text-align:center;padding:18px">No active tokens.</td></tr>';
+      return;
+    }
+    for (const t of tokens) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td><span class="username">' + escapeText(t.name || 'unnamed') + '</span></td>' +
+                     '<td class="when">' + fmt(t.createdAt) + '</td>' +
+                     '<td class="when">' + fmt(t.lastUsedAt) + '</td>' +
+                     '<td class="row-actions"><button class="danger" data-id="' + t.tokenId + '">Revoke</button></td>';
+      tbody.appendChild(tr);
+    }
+    for (const btn of tbody.querySelectorAll('button.danger')) {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Revoke this token? Any session using it will be signed out.')) return;
+        const id = btn.dataset.id;
+        try {
+          const r = await fetch('/api/tokens/' + encodeURIComponent(id), { method:'DELETE' });
+          if (r.ok) {
+            const idx = tokens.findIndex(t => t.tokenId === id);
+            if (idx >= 0) tokens.splice(idx, 1);
+            render();
+            window.showToast('Token revoked.', 'ok');
+          } else {
+            const d = await r.json().catch(() => ({}));
+            window.showToast(d.error || 'revoke failed', 'err');
+          }
+        } catch (e) { window.showToast('network error: ' + e.message, 'err'); }
+      });
+    }
+  }
+  function escapeText(s) { const div = document.createElement('div'); div.textContent = s || ''; return div.innerHTML; }
+  render();
+})();`,
+  });
 }
