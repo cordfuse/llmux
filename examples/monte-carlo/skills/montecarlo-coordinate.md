@@ -6,8 +6,9 @@ workers only follow the recipe that arrives in each task.
 
 ## Dispatch
 
-For each worker, send a task message via `llmux orch send --to <worker>`
-with this body (substitute the dart count for `<N>`):
+For each worker, send a task message via `llmux orch send --to <worker> --body "<text>"`
+(or pass the body as a positional arg after the flags). Substitute the dart
+count for `<N>` in the body:
 
 ```
 throw <N> darts. Use this exact Python script (real RNG — LLM-generated

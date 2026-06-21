@@ -26,9 +26,10 @@ function readDaemonVersion(): string {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
     for (const candidate of [
-      resolve(here, '../../package.json'),
-      resolve(here, '../package.json'),
-      resolve(here, './package.json'),
+      resolve(here, '../../package.json'),    // built dist/ layout
+      resolve(here, '../package.json'),       // alternative built layout
+      resolve(here, './package.json'),        // single-file build
+      resolve(here, '../../../package.json'), // src/daemon/web/ → packages/llmux/ (tsx-source mode)
     ]){
       try {
         const pkg = JSON.parse(readFileSync(candidate, 'utf8'));

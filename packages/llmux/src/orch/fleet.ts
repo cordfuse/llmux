@@ -20,6 +20,26 @@
 import { existsSync, readFileSync } from 'fs';
 import { spawnSync } from 'child_process';
 import { parse as parseYaml } from 'yaml';
+import * as tmux from '../daemon/tmux.ts';
+
+/**
+ * Resolve the `llmux` binary to invoke for child commands. When the user
+ * is running this code via tsx (e.g., `npx tsx packages/llmux/src/index.ts
+ * orch fleet start`), we want session-start to ALSO go through the same
+ * tsx + source path so any local fixes apply. Falls back to the globally-
+ * installed `llmux` binary otherwise.
+ *
+ * Detection: process.argv[1] is the entry file. If it ends in .ts and
+ * tsx is on PATH, build a `npx tsx <entry>` invocation. Otherwise use
+ * plain `llmux`.
+ */
+function resolveLlmuxCmd(): { cmd: string; prefix: string[] } {
+  const entry = process.argv[1] ?? '';
+  if (entry.endsWith('.ts') && existsSync(entry)) {
+    return { cmd: 'npx', prefix: ['tsx', entry] };
+  }
+  return { cmd: 'llmux', prefix: [] };
+}
 
 export interface FleetSession {
   name: string;
@@ -92,13 +112,15 @@ export function startFleet(fleet: Fleet, opts: { settleSec?: number; perPromptSe
       report.skipped.push(s.name);
       continue;
     }
+    const { cmd, prefix } = resolveLlmuxCmd();
     const args = [
+      ...prefix,
       'session', 'start', s.agent,
       '--name', s.name,
       '--orch-alias', s.orchAlias,
     ];
     if (s.cwd) args.push('--cwd', s.cwd);
-    const r = spawnSync('llmux', args, { encoding: 'utf-8' });
+    const r = spawnSync(cmd, args, { encoding: 'utf-8' });
     if (r.status !== 0) {
       report.errors.push({ name: s.name, phase: 'spawn', error: (r.stderr || r.stdout).trim().slice(0, 300) });
       continue;
@@ -116,9 +138,16 @@ export function startFleet(fleet: Fleet, opts: { settleSec?: number; perPromptSe
     if (!s.bootstrap) continue;
     const exists = listSessionNames().has(s.name);
     if (!exists) continue;
-    const r = spawnSync('tmux', ['send-keys', '-t', s.name, s.bootstrap, 'Enter'], { encoding: 'utf-8' });
-    if (r.status !== 0) {
-      report.errors.push({ name: s.name, phase: 'bootstrap', error: (r.stderr || r.stdout).trim().slice(0, 300) });
+    // Use tmux.sendKeys (paste-mode-aware: 250ms pause between text and
+    // Enter) instead of raw `tmux send-keys text Enter` — ink-based TUIs
+    // (Claude Code, OpenCode, agy) detect fast Enter as a paste-mode
+    // newline rather than submit, so bootstraps end up sitting in the
+    // input box unsubmitted. Without this, the MC fleet workers all hung
+    // on their first prompt.
+    try {
+      tmux.sendKeys(s.name, s.bootstrap, { enter: true });
+    } catch (err) {
+      report.errors.push({ name: s.name, phase: 'bootstrap', error: (err as Error).message.slice(0, 300) });
       continue;
     }
     report.bootstrapped.push(s.name);

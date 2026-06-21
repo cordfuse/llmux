@@ -571,6 +571,7 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
     from: { kind: 'string', description: 'Sender alias override — send only (defaults to --alias or $LLMUX_ORCH_ALIAS)' },
     channel: { kind: 'string', description: 'Channel name (default: main)' },
     re: { kind: 'string', description: 'Parent msg-id for replies — send only' },
+    body: { kind: 'string', description: 'Message body — send only (alternative to positional). Useful for shell-piped or multi-line bodies.' },
     limit: { kind: 'string', description: 'Max messages to return — inbox only (default: 50)' },
     'include-claimed': { kind: 'boolean', description: 'Include messages claimed by other aliases — inbox only' },
     file: { kind: 'string', description: 'Fleet YAML config path — fleet start/stop only' },
@@ -624,8 +625,9 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
       const me = requireAlias('send');
       const to = typeof parsed.flags['to'] === 'string' ? parsed.flags['to'] as string : undefined;
       if (!to) throw new Error('`llmux orch send` needs --to <alias|all>');
-      const body = parsed.positional.join(' ').trim();
-      if (!body) throw new Error('`llmux orch send` needs a message body as positional arg');
+      const bodyFlag = typeof parsed.flags['body'] === 'string' ? parsed.flags['body'] as string : '';
+      const body = bodyFlag.trim() || parsed.positional.join(' ').trim();
+      if (!body) throw new Error('`llmux orch send` needs a message body (--body "text" or positional arg)');
       const from = typeof parsed.flags['from'] === 'string' ? parsed.flags['from'] as string : me;
       const input: orch.SendInput = { from, to, body, channel };
       if (typeof parsed.flags['re'] === 'string') input.re = parsed.flags['re'] as string;
