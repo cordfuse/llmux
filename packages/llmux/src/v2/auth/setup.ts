@@ -106,7 +106,7 @@ export async function handleSetupSubmit(
 ): Promise<SetupSubmitResult> {
   // TODO(phase 6): implement
   //   - Validate setup token
-  //   - Validate username format + OS user exists (getpwnam)
+  //   - Validate username format (application-layer only; NO OS user lookup)
   //   - Validate passphrase basic strength
   //   - userStore.createUser({ ...input, admin: true })
   //   - tokenStore.mint({ username, name: `${name}'s first device` })

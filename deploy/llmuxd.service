@@ -11,13 +11,10 @@
 #   - /var/log/llmux/ (llmux:llmux 0750)
 #   - /var/run/llmux/ (root:llmux 0750) — created by RuntimeDirectory= below
 #
-# Worker spawning: llmuxd starts as root briefly (to bind privileged port
-# if configured), drops to 'llmux' via privilege.ts, then spawns per-user
-# workers via `systemd-run --uid=<user>`. The --uid invocation requires
-# llmux be either root OR a member of the 'systemd-run-uid' polkit policy.
-# Default config binds 3001 (unprivileged), so root is not actually required
-# at boot — User=llmux below is fine for that path. Override with
-# AmbientCapabilities=CAP_NET_BIND_SERVICE if you bind <1024.
+# Architecture: Grafana model. Single service user owns everything.
+# Multi-tenant is application-layer (users.json + tokens.json). Daemon
+# NEVER reads or writes any /home/* path — see V2-SYSTEM-AUTH-DESIGN.md
+# § "$HOME principle."
 
 [Unit]
 Description=llmux orchestration daemon
@@ -33,7 +30,7 @@ ExecStart=/usr/bin/llmuxd --system-mode --config /etc/llmux/config.yaml
 Restart=on-failure
 RestartSec=5
 
-# Directories systemd will create + chown for us
+# Directories systemd creates + chowns for us
 RuntimeDirectory=llmux
 RuntimeDirectoryMode=0750
 StateDirectory=llmux
@@ -41,24 +38,32 @@ StateDirectoryMode=0750
 LogsDirectory=llmux
 LogsDirectoryMode=0750
 
-# Hardening (sensible defaults; tune per host policy)
-NoNewPrivileges=false   # MUST be false — llmuxd needs to setuid for worker spawn
+# Hardening — aggressive defaults, all safe because the daemon never
+# reaches into /home or spawns user-owned processes
+NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=read-only   # daemon reads /home for getpwnam + transport access; never writes
+ProtectHome=true            # full deny — daemon has no business in /home
 ReadWritePaths=/var/lib/llmux /var/log/llmux /var/run/llmux
 PrivateTmp=true
 PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
-ProtectControlGroups=false  # systemd-run needs cgroup access
-RestrictSUIDSGID=false      # required for spawning per-user workers
-SystemCallFilter=@system-service @setuid
+ProtectControlGroups=true   # not spawning per-user workers; no cgroup access needed
+RestrictSUIDSGID=true       # daemon never setuid's anywhere
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 # Network
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 # Resource limits
 LimitNOFILE=65536
+
+# CapabilityBoundingSet kept empty — daemon needs no extra capabilities
+# under the Grafana model. Override only if binding a privileged port (<1024):
+#   AmbientCapabilities=CAP_NET_BIND_SERVICE
+#   CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target

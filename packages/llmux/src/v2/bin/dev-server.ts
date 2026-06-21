@@ -1,32 +1,28 @@
 #!/usr/bin/env node
-// v2 dev-server — boots the v2 daemon in USER MODE for development.
+// v2 dev-server — boots the v2 daemon code in DEV MODE for development.
 //
 // Run with:
-//   LLMUX_V2_USER_MODE=1 npx tsx packages/llmux/src/v2/bin/dev-server.ts
+//   LLMUX_V2_DEV=1 npx tsx packages/llmux/src/v2/bin/dev-server.ts
 // Or:
-//   npm run dev:v2  (after package.json wires it up)
+//   npx tsx packages/llmux/src/v2/bin/dev-server.ts  (script sets the env var)
 //
 // What this does:
-//   1. Loads system config — flips to userMode defaults so all paths live
+//   1. Loads system config — flips to devMode defaults so all paths live
 //      under ~/.local/share/llmux/v2-dev/ + ~/.config/llmux/v2-dev/
-//   2. Runs readiness checks (in userMode, only checks the worker spawner
+//   2. Runs readiness checks (in devMode, only checks the worker spawner
 //      helper + TLS files if configured — skips all system-only checks)
-//   3. Calls dropToService — a no-op in userMode (or non-root)
-//   4. Creates the user-mode directories if missing (first run)
+//   3. Calls dropToService — a no-op in devMode (or non-root)
+//   4. Creates the dev-mode directories if missing (first run)
 //   5. Reports the bootable state — Phases 3+ will hook the actual HTTP
 //      server, user store, setup wizard here
 //
-// What this does NOT do (yet):
-//   - Bind a listen port (Phase 3+ wires the HTTP server)
-//   - Mint a setup token (Phase 6 implements that)
-//   - Run the auth gate or setup wizard (Phases 6-7)
-//   - Spawn per-user workers (Phase 5 — only meaningful with real root anyway)
-//
-// Each subsequent v2 phase fills in one of those gaps. For now, this
-// script proves the boot path works end-to-end without sudo.
+// IMPORTANT — dev mode is the ONLY context in which v2 code touches a
+// user's $HOME, and it does so because the daemon IS the operator in
+// dev mode (not a separate service user). Production v2 daemon NEVER
+// reads or writes any /home/* path.
 
 import { existsSync, mkdirSync } from 'node:fs';
-import { loadSystemConfig, userModeDefaults, type SystemConfig } from '../system/config.ts';
+import { loadSystemConfig, devModeDefaults, type SystemConfig } from '../system/config.ts';
 import { dropToService, checkSystemModeReadiness } from '../system/privilege.ts';
 
 function banner(line: string): void {
@@ -36,18 +32,17 @@ function banner(line: string): void {
 }
 
 async function main(): Promise<void> {
-  banner('llmuxd v2 — dev-server (user mode, no sudo)');
+  banner('llmuxd v2 — dev-server (dev mode, no sudo)');
 
-  // Force user mode via env var. Operators who run with LLMUX_V2_USER_MODE
-  // set already get this; we set it explicitly so this script is the
-  // single-source-of-truth entrypoint for "boot v2 without sudo."
-  process.env['LLMUX_V2_USER_MODE'] = '1';
+  // Force dev mode via env var. Single-source-of-truth entrypoint for
+  // "boot v2 without sudo."
+  process.env['LLMUX_V2_DEV'] = '1';
   const config: SystemConfig = process.env['LLMUX_V2_CONFIG']
     ? loadSystemConfig(process.env['LLMUX_V2_CONFIG'])
-    : userModeDefaults();
+    : devModeDefaults();
 
   console.log('  config:');
-  console.log('    userMode      :', config.userMode);
+  console.log('    devMode       :', config.devMode);
   console.log('    serviceUser   :', config.serviceUser);
   console.log('    listenHost:port:', `${config.listenHost}:${config.listenPort}`);
   console.log('    dataDir       :', config.dataDir);

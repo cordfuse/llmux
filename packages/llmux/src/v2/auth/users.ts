@@ -11,7 +11,8 @@
 //   V2-SYSTEM-AUTH-DESIGN.md § "Build plan" — Phase 3
 
 export interface User {
-  /** Stable identifier. MUST match an existing OS user on the host. Also the user's orch alias. */
+  /** Stable identifier. Application-layer only — does NOT need to match any OS user on the host.
+   *  Also the user's orch alias. Format: [a-z0-9_-]+ */
   username: string;
   /** Display name. */
   name: string;
@@ -64,8 +65,9 @@ export class FileUserStore implements UserStore {
   //   - Atomic write: tmp file + rename
   //   - scrypt hashing: crypto.scryptSync with N=2^17 (or higher), random salt
   //   - Hash format: `scrypt$N$saltBase64$hashBase64` (self-describing for future tuning)
-  //   - createUser validates: username matches /^[a-z0-9_-]+$/, OS user exists via getpwnam,
-  //     not already in store, passphrase passes basic length check (>= 8 chars suggested)
+  //   - createUser validates: username matches /^[a-z0-9_-]+$/,
+  //     not already in store, passphrase passes basic length check (>= 8 chars suggested).
+  //     Application-layer username only — NO OS user lookup (per Grafana model).
   //   - verifyPassphrase uses crypto.timingSafeEqual to prevent timing attacks
 
   constructor(private _storePath: string) {}

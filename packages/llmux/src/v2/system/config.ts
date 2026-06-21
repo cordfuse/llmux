@@ -12,7 +12,7 @@ import { userInfo } from 'node:os';
 import { parse as parseYaml } from 'yaml';
 import {
   SYSTEM_CONFIG_DIR, SYSTEM_DATA_DIR, SYSTEM_TRANSPORT_DIR, SERVICE_USER, SERVICE_GROUP,
-  USER_MODE_DATA_DIR, USER_MODE_TRANSPORT_DIR,
+  DEV_MODE_DATA_DIR, DEV_MODE_TRANSPORT_DIR,
 } from './paths.ts';
 
 /**
@@ -44,9 +44,15 @@ export interface SystemConfig {
    *     'llmux' service user) are skipped
    *   - dropToService is a no-op (already true for non-root, but explicit
    *     in dev mode regardless)
+   *
+   * IMPORTANT — dev mode is the ONLY context in which v2 code touches a
+   * user's $HOME, and it does so because the daemon IS the operator in
+   * dev mode. Production v2 daemon (devMode: false) never reads or writes
+   * any /home/* path.
+   *
    * Production deployments leave this false.
    */
-  userMode: boolean;
+  devMode: boolean;
 }
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
@@ -57,21 +63,21 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   serviceUser: SERVICE_USER,
   serviceGroup: SERVICE_GROUP,
   workerSpawner: 'systemd-run',
-  userMode: false,
+  devMode: false,
 };
 
-/** Defaults when userMode is true — paths in $HOME, service user = current OS user. */
-export function userModeDefaults(): SystemConfig {
+/** Defaults when devMode is true — paths in $HOME, service user = current OS user. */
+export function devModeDefaults(): SystemConfig {
   const me = userInfo();
   return {
     listenPort: 3001,
     listenHost: '127.0.0.1',
-    transportDir: USER_MODE_TRANSPORT_DIR,
-    dataDir: USER_MODE_DATA_DIR,
+    transportDir: DEV_MODE_TRANSPORT_DIR,
+    dataDir: DEV_MODE_DATA_DIR,
     serviceUser: me.username,
     serviceGroup: me.username,
-    workerSpawner: 'sudo',  // systemd-run --uid requires polkit in non-root; sudo is the dev fallback
-    userMode: true,
+    workerSpawner: 'sudo',
+    devMode: true,
   };
 }
 
@@ -85,11 +91,11 @@ const VALID_SPAWNERS: ReadonlyArray<SystemConfig['workerSpawner']> = ['systemd-r
  * Trust: called from BOOT context (as root, before privilege drop).
  */
 export function loadSystemConfig(path: string = `${SYSTEM_CONFIG_DIR}/config.yaml`): SystemConfig {
-  // The userMode env-var shortcut, useful for one-shot test runs:
-  //   LLMUX_V2_USER_MODE=1 llmuxd ...
-  // Equivalent to loadUserModeConfig() with no on-disk overrides.
-  if (process.env['LLMUX_V2_USER_MODE'] === '1' && !existsSync(path)) {
-    return userModeDefaults();
+  // Dev-mode env-var shortcut, useful for one-shot test runs:
+  //   LLMUX_V2_DEV=1 llmuxd ...
+  // Equivalent to devModeDefaults() with no on-disk overrides.
+  if (process.env['LLMUX_V2_DEV'] === '1' && !existsSync(path)) {
+    return devModeDefaults();
   }
   if (!existsSync(path)) {
     return { ...DEFAULT_SYSTEM_CONFIG };
@@ -111,9 +117,9 @@ export function loadSystemConfig(path: string = `${SYSTEM_CONFIG_DIR}/config.yam
   }
 
   const overrides = parsed as Record<string, unknown>;
-  // userMode in the YAML flips the defaults BEFORE per-field merge so any
+  // devMode in the YAML flips the defaults BEFORE per-field merge so any
   // explicit overrides still win on top.
-  const base = overrides['userMode'] === true ? userModeDefaults() : { ...DEFAULT_SYSTEM_CONFIG };
+  const base = overrides['devMode'] === true ? devModeDefaults() : { ...DEFAULT_SYSTEM_CONFIG };
   const merged: SystemConfig = { ...base };
 
   // Per-field merge + per-field validation. Explicit beats clever.

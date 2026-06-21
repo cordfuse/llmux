@@ -106,7 +106,7 @@ export function checkSystemModeReadiness(config: SystemConfig): string[] {
   // User mode skips all system-only checks. The dev-server entrypoint
   // auto-creates the user-mode directories on first run, so missing
   // paths just mean "first launch."
-  if (!config.userMode) {
+  if (!config.devMode) {
     // 1. Config dir exists and is readable.
     if (!existsSync('/etc/llmux')) {
       problems.push('/etc/llmux does not exist — run deploy/install.sh first');

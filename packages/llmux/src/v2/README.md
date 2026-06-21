@@ -20,9 +20,6 @@ packages/llmux/src/v2/
     users.ts         — user store (CRUD, scrypt hashing)
     tokens.ts        — identity-bound token store
     setup.ts         — first-run setup wizard
-  worker/
-    spawner.ts       — spawn per-user worker processes via systemd-run
-    registry.ts      — track which user has which worker running
   web/
     README.md        — DESIGN-CONSISTENCY REQUIREMENT for v2 web pages
     setup.ts         — first-run wizard page
@@ -50,19 +47,26 @@ Each file:
 
 ## Trust boundaries (read these before implementing anything)
 
-v2 spans three distinct privilege contexts. Every function in this tree
-runs in exactly one of them. Mixing them is the bug.
+v2 spans two privilege contexts. Every function in this tree runs in
+exactly one of them.
 
 | Context | Runs as | Code that runs here |
 |---|---|---|
 | **Boot** | `root` (briefly, before privilege drop) | `system/privilege.ts` `dropToService()` + initial config load |
-| **Service** | `llmux:llmux` (most of the daemon) | Auth + routing + user/token CRUD + setup wizard + spawning workers via `systemd-run` |
-| **Worker** | each authenticated user's uid | Tmux sessions, agent CLIs, per-user state R/W, orch transport writes |
+| **Service** | `llmux:llmux` (everything after the drop) | Auth, routing, user/token CRUD, setup wizard, tmux sessions, agent CLIs — all owned by the service user |
 
-The hub-and-spoke shape (JupyterHub-style) means the service-context daemon
-NEVER directly touches a user's home directory or runs agent CLIs.
-It delegates everything that needs the user's identity to a worker spawned
-with that user's uid.
+The **`$HOME` principle** (load-bearing): production v2 daemon NEVER reads
+or writes any `/home/*` path. All daemon state lives in `/etc/llmux/`,
+`/var/lib/llmux/`, `/var/log/llmux/`, `/var/run/llmux/`. Agent CLI
+credentials live in `~llmux/.claude/`, `~llmux/.gemini/`, etc. — the
+service user's own home, operator-managed centrally. Multi-user
+isolation is at the application layer (Grafana / Postgres model), not
+per-OS-user. The ONE exception: each operator's own `~/.config/llmux/
+credentials.json` on their own machine — but that's read by their llmux
+CLI, not by the daemon.
+
+Dev mode (`LLMUX_V2_DEV=1`) is the ONLY context in which v2 code touches
+$HOME, and it does so because the daemon IS the operator in dev mode.
 
 ## When this scaffold becomes implementation
 

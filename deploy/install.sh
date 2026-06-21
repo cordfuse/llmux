@@ -27,6 +27,8 @@ if ! getent group llmux >/dev/null; then
   echo "created group: llmux"
 fi
 if ! id llmux >/dev/null 2>&1; then
+  # --home-dir /var/lib/llmux: agent CLI credentials (~llmux/.claude/, etc.)
+  # live here, operator-managed centrally. Daemon NEVER reads /home/*.
   useradd --system --gid llmux --home-dir /var/lib/llmux \
           --shell /usr/sbin/nologin --comment "llmux daemon" llmux
   echo "created user: llmux"
