@@ -65,8 +65,11 @@ per-OS-user. The ONE exception: each operator's own `~/.config/llmux/
 credentials.json` on their own machine — but that's read by their llmux
 CLI, not by the daemon.
 
-Dev mode (`LLMUX_V2_DEV=1`) is the ONLY context in which v2 code touches
-$HOME, and it does so because the daemon IS the operator in dev mode.
+User mode (`LLMUX_USER_MODE=1`) is the ONLY context in which v2 code
+touches $HOME, and it does so because the daemon IS the operator in
+user mode. Two intended use cases: (a) dev/test without sudo, (b) a
+solo operator who doesn't want a system service and just runs llmux
+as themselves, like v1.x.
 
 ## When this scaffold becomes implementation
 

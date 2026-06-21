@@ -25,19 +25,21 @@ export const SERVICE_GROUP = 'llmux';
 /** Where the daemon's pid + the one-time setup token live (tmpfs/ephemeral). */
 export const RUNTIME_DIR = '/var/run/llmux';
 
-// ── Dev-mode overrides ───────────────────────────────────────────────────
+// ── User-mode overrides ──────────────────────────────────────────────────
 //
-// When `devMode: true` is set in SystemConfig (or LLMUX_V2_DEV=1 in env),
-// all paths shift into the current OS user's home so the v2 daemon code
-// can boot + serve + persist state without root or any sudo-touched system
-// directories. Lets you exercise Phases 3-9 (users, tokens, setup wizard,
-// account/admin pages, orch enforcement) without running install.sh.
+// When `userMode: true` is set in SystemConfig (or LLMUX_USER_MODE=1 in
+// env), the daemon code runs AS the operator (not as a separate service
+// user) and all paths shift into the operator's home. Two intended use
+// cases:
+//   1. Dev/test of v2 code without needing root or install.sh
+//   2. Operators who don't want to deploy llmux as a system service —
+//      they just run it as themselves, like v1.x
 //
-// IMPORTANT — dev mode is the ONLY context in which v2 code touches a
-// user's $HOME, and it does so because the daemon IS the operator in dev
-// mode (not a separate service user). Production v2 daemon NEVER reads or
-// writes any /home/* path. See V2-SYSTEM-AUTH-DESIGN.md § "$HOME usage
-// principle."
+// IMPORTANT — user mode is the ONLY context in which v2 code touches a
+// user's $HOME, and it does so because the daemon IS the operator in
+// user mode (not a separate service user). System mode (the v2 default)
+// NEVER reads or writes any /home/* path. See V2-SYSTEM-AUTH-DESIGN.md
+// § "$HOME principle."
 
 function xdgData(home: string = homedir()): string {
   return process.env['XDG_DATA_HOME'] ?? join(home, '.local', 'share');
@@ -49,14 +51,14 @@ function xdgState(home: string = homedir()): string {
   return process.env['XDG_STATE_HOME'] ?? join(home, '.local', 'state');
 }
 
-/** Dev-mode equivalent of /etc/llmux. Only used when devMode=true. */
-export const DEV_MODE_CONFIG_DIR = join(xdgConfig(), 'llmux', 'v2-dev');
-/** Dev-mode equivalent of /var/lib/llmux. Only used when devMode=true. */
-export const DEV_MODE_DATA_DIR = join(xdgData(), 'llmux', 'v2-dev');
-/** Dev-mode equivalent of /var/lib/llmux/orchestration. Only used when devMode=true. */
-export const DEV_MODE_TRANSPORT_DIR = join(DEV_MODE_DATA_DIR, 'orchestration');
-/** Dev-mode equivalent of /var/run/llmux. Only used when devMode=true. */
-export const DEV_MODE_RUNTIME_DIR = join(xdgState(), 'llmux', 'v2-dev', 'run');
+/** User-mode equivalent of /etc/llmux. Only used when userMode=true. */
+export const USER_MODE_CONFIG_DIR = join(xdgConfig(), 'llmux', 'v2');
+/** User-mode equivalent of /var/lib/llmux. Only used when userMode=true. */
+export const USER_MODE_DATA_DIR = join(xdgData(), 'llmux', 'v2');
+/** User-mode equivalent of /var/lib/llmux/orchestration. Only used when userMode=true. */
+export const USER_MODE_TRANSPORT_DIR = join(USER_MODE_DATA_DIR, 'orchestration');
+/** User-mode equivalent of /var/run/llmux. Only used when userMode=true. */
+export const USER_MODE_RUNTIME_DIR = join(xdgState(), 'llmux', 'v2', 'run');
 
 // ── Per-operator client-side paths (unchanged by mode) ───────────────────
 //

@@ -12,7 +12,7 @@ import { userInfo } from 'node:os';
 import { parse as parseYaml } from 'yaml';
 import {
   SYSTEM_CONFIG_DIR, SYSTEM_DATA_DIR, SYSTEM_TRANSPORT_DIR, SERVICE_USER, SERVICE_GROUP,
-  DEV_MODE_DATA_DIR, DEV_MODE_TRANSPORT_DIR,
+  USER_MODE_DATA_DIR, USER_MODE_TRANSPORT_DIR,
 } from './paths.ts';
 
 /**
@@ -37,22 +37,25 @@ export interface SystemConfig {
   /** How to spawn per-user workers. Defaults to systemd-run on linux+systemd hosts. */
   workerSpawner: 'systemd-run' | 'sudo' | 'runuser';
   /**
-   * Dev/test mode. When true:
-   *   - Default paths flip to ~/.local/share/llmux/v2-dev (no root required)
+   * User mode. When true the daemon runs AS the operator (not as a
+   * separate service user) and:
+   *   - Default paths flip to ~/.local/share/llmux/v2 (no root required)
    *   - serviceUser / serviceGroup default to the current OS user
    *   - Readiness checks for system-only paths (/etc/llmux, /var/lib/llmux,
    *     'llmux' service user) are skipped
-   *   - dropToService is a no-op (already true for non-root, but explicit
-   *     in dev mode regardless)
+   *   - dropToService is a no-op
    *
-   * IMPORTANT — dev mode is the ONLY context in which v2 code touches a
+   * Two intended use cases for userMode=true:
+   *   1. Dev/test of v2 code without sudo / install.sh
+   *   2. Operators who don't want a system service — they run llmux as
+   *      themselves, like v1.x
+   *
+   * IMPORTANT — user mode is the ONLY context in which v2 code touches a
    * user's $HOME, and it does so because the daemon IS the operator in
-   * dev mode. Production v2 daemon (devMode: false) never reads or writes
-   * any /home/* path.
-   *
-   * Production deployments leave this false.
+   * user mode. System mode (the v2 default, userMode: false) NEVER reads
+   * or writes any /home/* path.
    */
-  devMode: boolean;
+  userMode: boolean;
 }
 
 export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
@@ -63,21 +66,21 @@ export const DEFAULT_SYSTEM_CONFIG: SystemConfig = {
   serviceUser: SERVICE_USER,
   serviceGroup: SERVICE_GROUP,
   workerSpawner: 'systemd-run',
-  devMode: false,
+  userMode: false,
 };
 
-/** Defaults when devMode is true — paths in $HOME, service user = current OS user. */
-export function devModeDefaults(): SystemConfig {
+/** Defaults when userMode is true — paths in $HOME, service user = current OS user. */
+export function userModeDefaults(): SystemConfig {
   const me = userInfo();
   return {
     listenPort: 3001,
     listenHost: '127.0.0.1',
-    transportDir: DEV_MODE_TRANSPORT_DIR,
-    dataDir: DEV_MODE_DATA_DIR,
+    transportDir: USER_MODE_TRANSPORT_DIR,
+    dataDir: USER_MODE_DATA_DIR,
     serviceUser: me.username,
     serviceGroup: me.username,
     workerSpawner: 'sudo',
-    devMode: true,
+    userMode: true,
   };
 }
 
@@ -91,11 +94,11 @@ const VALID_SPAWNERS: ReadonlyArray<SystemConfig['workerSpawner']> = ['systemd-r
  * Trust: called from BOOT context (as root, before privilege drop).
  */
 export function loadSystemConfig(path: string = `${SYSTEM_CONFIG_DIR}/config.yaml`): SystemConfig {
-  // Dev-mode env-var shortcut, useful for one-shot test runs:
-  //   LLMUX_V2_DEV=1 llmuxd ...
-  // Equivalent to devModeDefaults() with no on-disk overrides.
-  if (process.env['LLMUX_V2_DEV'] === '1' && !existsSync(path)) {
-    return devModeDefaults();
+  // User-mode env-var shortcut, useful for one-shot test runs:
+  //   LLMUX_USER_MODE=1 llmuxd ...
+  // Equivalent to userModeDefaults() with no on-disk overrides.
+  if (process.env['LLMUX_USER_MODE'] === '1' && !existsSync(path)) {
+    return userModeDefaults();
   }
   if (!existsSync(path)) {
     return { ...DEFAULT_SYSTEM_CONFIG };
@@ -117,9 +120,9 @@ export function loadSystemConfig(path: string = `${SYSTEM_CONFIG_DIR}/config.yam
   }
 
   const overrides = parsed as Record<string, unknown>;
-  // devMode in the YAML flips the defaults BEFORE per-field merge so any
+  // userMode in the YAML flips the defaults BEFORE per-field merge so any
   // explicit overrides still win on top.
-  const base = overrides['devMode'] === true ? devModeDefaults() : { ...DEFAULT_SYSTEM_CONFIG };
+  const base = overrides['userMode'] === true ? userModeDefaults() : { ...DEFAULT_SYSTEM_CONFIG };
   const merged: SystemConfig = { ...base };
 
   // Per-field merge + per-field validation. Explicit beats clever.

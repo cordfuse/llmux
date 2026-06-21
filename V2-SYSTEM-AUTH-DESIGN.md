@@ -10,7 +10,7 @@
 
 The only legitimate $HOME usage anywhere in v2 is:
 1. **The operator's own CLI** reading their own `~/.config/llmux/credentials.json` to send as a bearer token. The daemon never sees this file. Same shape as `~/.aws/credentials`, `~/.kube/config`, `~/.docker/config.json` — those tools' daemons don't touch them either.
-2. **Dev mode only** (`LLMUX_V2_DEV=1`) — runs the v2 daemon code AS the operator (not as a separate service user) for testing without sudo. In dev mode, the daemon writing to `~/.local/share/llmux/v2-dev/` is the operator writing to their own home, not "system daemon reaches into a user's home."
+2. **User mode** (`LLMUX_USER_MODE=1`) — runs the v2 daemon code AS the operator (not as a separate service user). Two valid use cases: (a) dev/test of v2 code without sudo, (b) a solo operator who doesn't want a system service and just runs llmux as themselves, like v1.x. In user mode the daemon writing to `~/.local/share/llmux/v2/` is the operator writing to their own home, not "system daemon reaches into a user's home."
 
 Everything else daemon-side lives in `/etc/llmux/`, `/var/lib/llmux/`, `/var/log/llmux/`, or `/var/run/llmux/`. This is the architectural commitment.
 
@@ -238,14 +238,19 @@ All visually consistent with v1.x picker/orch pages (see `packages/llmux/src/v2/
 
 The "never nag" guarantee: operator types passphrase **twice in lifetime per machine** (setup + auth login). Sensitive admin actions add a third time per action.
 
-## Dev mode (`LLMUX_V2_DEV=1`)
+## User mode (`LLMUX_USER_MODE=1`)
 
-Lets you exercise the bulk of v2 code paths without sudo, for development iteration:
+Runs the v2 daemon AS the operator (not as the `llmux` service user). Two intended use cases:
 
-- Paths flip to `~/.local/share/llmux/v2-dev/` + `~/.config/llmux/v2-dev/`
-- serviceUser defaults to current OS user
+1. **Dev/test** — exercise the bulk of v2 code paths without sudo, for development iteration.
+2. **Solo operator** — someone who doesn't want a system service and just wants to run llmux as themselves, the v1.x way, with v2's auth + features available.
+
+When `userMode: true`:
+
+- Paths flip to `~/.local/share/llmux/v2/` + `~/.config/llmux/v2/`
+- `serviceUser` / `serviceGroup` default to the current OS user
 - Readiness checks for `/etc/llmux`, `/var/lib/llmux`, `llmux` system user are skipped
-- `dropToService` is a no-op (already true for non-root)
+- `dropToService` is a no-op
 - Listen host defaults to `127.0.0.1`
 
 Run via:
@@ -253,7 +258,7 @@ Run via:
 npx tsx packages/llmux/src/v2/bin/dev-server.ts
 ```
 
-Dev mode is the ONE place where v2 code touches `$HOME`, and it does so because the daemon IS the operator in dev mode. Production deploy (`devMode: false`, default) never touches `/home/*`.
+User mode is the ONE place where v2 code touches `$HOME`, and it does so because the daemon IS the operator in user mode. System mode (`userMode: false`, the v2 default) never touches `/home/*`.
 
 ## What's NOT in this design
 
