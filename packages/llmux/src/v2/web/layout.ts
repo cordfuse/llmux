@@ -84,9 +84,18 @@ export function commonStyles(): string {
   td .when{color:#9aa0a6;font-size:11px}
   td.row-actions{text-align:right;white-space:nowrap}
   td.row-actions button{padding:6px 10px;font-size:12px;margin-left:6px}
+  /* Mobile: collapse each row into a stacked card so every column +
+     the actions stay on screen instead of getting cropped off the right
+     edge. The thead row hides entirely; cells render as labeled blocks. */
   @media (max-width:600px){
-    td.row-actions button{display:block;width:100%;margin:4px 0 0;padding:7px 8px}
-    td.row-actions button:first-child{margin-top:0}
+    table,tbody,tr,td{display:block;width:100%;box-sizing:border-box}
+    thead{display:none}
+    tr{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:10px 12px;margin-bottom:10px}
+    td{border:none;padding:4px 0}
+    td::before{content:attr(data-label);display:block;font-size:10px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+    td.row-actions{text-align:left;display:flex;gap:6px;flex-wrap:wrap;padding-top:8px;margin-top:4px;border-top:1px solid #1f2329}
+    td.row-actions::before{display:none}
+    td.row-actions button{flex:1 1 auto;margin:0;padding:8px 10px;font-size:12px;min-width:0}
   }
   `;
 }

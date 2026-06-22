@@ -212,6 +212,7 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
       : operatorPrompts;
     const llmuxEnv: Record<string, string> = { LLMUX_SESSION: sessionName, LLMUX_AGENT: agent.key };
     if (orchAlias) llmuxEnv['LLMUX_ORCH_ALIAS'] = orchAlias;
+    agent.preSpawn?.({ cwd });
     tmux.newSession({
       name: sessionName,
       command: buildAgentCommand(agent, flagsOverride, effectiveResume),
@@ -632,6 +633,7 @@ async function respawnOne(target: string, opts: { skipInit?: boolean } = {}): Pr
     tmux.killSession(target);
   }
 
+  agent.preSpawn?.({ cwd: session.cwd });
   tmux.newSession({
     name: session.name,
     command: buildAgentCommand(agent, session.flags, session.resumeFrom),

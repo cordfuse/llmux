@@ -311,9 +311,12 @@ function pickerPage(): string {
   #settings-grid .settings-status{font-size:11px;color:#7a7f87;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
   #settings-grid .settings-status.ok{color:#7ee787}
   #settings-grid .settings-status.err{color:#ff7b72}
-  #settings-grid .settings-save{background:#388bfd;color:#fff;border:none;border-radius:4px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer}
-  #settings-grid .settings-save:hover{background:#4895ff}
-  #settings-grid .settings-save:disabled{background:#3a4047;color:#7a7f87;cursor:not-allowed}
+  /* Match the rest of the app's primary-button style (subtle sky-blue text
+     on dark bg with sky-blue border) — was an outlier with solid #388bfd. */
+  #settings-grid .settings-save{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease}
+  #settings-grid .settings-save:hover:not(:disabled){background:#11141a;border-color:#3e6082}
+  #settings-grid .settings-save:active{transform:scale(.96)}
+  #settings-grid .settings-save:disabled{opacity:.4;cursor:not-allowed}
   #settings-grid .overlay-badge{display:inline-block;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#0b0c10;background:#7cc4ff;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle}
   .agents-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;font-size:12px;color:#9aa0a6;flex-wrap:wrap;gap:10px}
   .agents-bar #agents-summary{color:#c9d1d9}
@@ -3521,6 +3524,22 @@ function orchPage(authedUsername: string): string {
   #nav-drawer a .nav-icon{font-size:16px;width:20px;text-align:center;color:inherit}
   #nav-drawer .nav-footer{padding:10px 20px 0;border-top:1px solid #1f2329;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;align-items:center}
   #meta{color:#7a7f87;font-size:11px}
+  .channel-row{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+  .channel-label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em}
+  /* Custom dropdown — compact regardless of channel count. Native <select>
+     has flaky mobile UX (no "+ new" affordance), so this is a small
+     custom widget with the same shape as the rest of the app's controls. */
+  .channel-picker{position:relative;align-self:flex-start;min-width:180px}
+  .channel-trigger{display:flex;align-items:center;justify-content:space-between;width:100%;background:#0b0c10;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 12px;font:13px ui-monospace,monospace;cursor:pointer;font-weight:600}
+  .channel-trigger:hover{background:#11192b}
+  .channel-chevron{color:#7a7f87;margin-left:10px;font-size:10px}
+  .channel-popup{display:none;position:absolute;top:calc(100% + 4px);left:0;min-width:100%;max-width:min(320px,90vw);max-height:280px;overflow-y:auto;background:#0e1116;border:1px solid #262c34;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.5);z-index:30;padding:4px 0}
+  .channel-popup.open{display:block}
+  .channel-option{display:block;width:100%;text-align:left;background:transparent;color:#c9d1d9;border:none;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  .channel-option:hover{background:#11192b}
+  .channel-option.active{color:#7cc4ff;font-weight:600;background:#11192b}
+  .channel-option.add{color:#7cc4ff;border-top:1px solid #262c34;margin-top:4px;padding-top:10px}
+  .channel-option.add:hover{background:#11192b}
   .toolbar{display:flex;gap:8px;margin-bottom:14px;align-items:end;flex-wrap:nowrap}
   .toolbar label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em;display:flex;flex-direction:column;gap:3px;flex:1 1 80px;min-width:0}
   .toolbar input{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none;width:100%;box-sizing:border-box;min-width:0}
@@ -3545,7 +3564,33 @@ function orchPage(authedUsername: string): string {
   details .send-actions{display:flex;justify-content:flex-end;margin-top:10px}
   details .send-actions button{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
   details .send-actions button:hover{background:#252b34}
+  /* Thread = one dispatch + its replies. Wrap in a subtle outer border
+     so the grouping is unmistakable; root sits flush, replies indent
+     with a clear chunk and get a lighter background to read as "nested". */
+  /* Stronger thread border + accent color so each thread reads as a single
+     grouped unit, not a loose pile of cards. */
+  .thread{margin-bottom:18px;border:1px solid #262c34;border-left:4px solid #2d4a66;border-radius:8px;padding:12px;background:#0d0f14}
+  .thread .msg{margin-bottom:8px}
+  .thread .msg:last-of-type{margin-bottom:0}
+  .thread-summary{font-size:10px;color:#7cc4ff;text-transform:uppercase;letter-spacing:.08em;padding:0 0 8px 4px;font-weight:600}
   .msg{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:12px 14px;margin-bottom:10px}
+  /* Replies indent visibly under their dispatch with a sky-blue rail
+     and a lighter card bg so the parent/child relationship reads at a
+     glance. Depth caps at 4 to prevent runaway nesting. */
+  .msg.reply{margin-left:36px;background:#161a22;border-left:3px solid #2d4a66;position:relative}
+  /* Connecting elbow from rail to parent's bottom-left corner. */
+  .msg.reply::before{content:"";position:absolute;left:-22px;top:18px;width:18px;height:2px;background:#2d4a66}
+  .msg.reply.depth-2{margin-left:64px}
+  .msg.reply.depth-3{margin-left:92px}
+  .msg.reply.depth-4{margin-left:120px}
+  @media (max-width:600px){
+    .thread{padding:8px}
+    .msg.reply{margin-left:20px}
+    .msg.reply::before{left:-14px;width:12px}
+    .msg.reply.depth-2{margin-left:36px}
+    .msg.reply.depth-3{margin-left:52px}
+    .msg.reply.depth-4{margin-left:68px}
+  }
   .msg-head{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:#9aa0a6;margin-bottom:8px;align-items:baseline;flex-wrap:wrap}
   .msg-route{display:inline-flex;gap:6px;align-items:baseline;flex-wrap:wrap}
   .msg-from{color:#7cc4ff;font-weight:600}
@@ -3595,8 +3640,22 @@ ${renderNavDrawer(host, 'orch')}
   <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · Orchestration</h1>
 </header>
 
+<div class="channel-row">
+  <span class="channel-label">channel</span>
+  <div class="channel-picker" id="channel-picker">
+    <button type="button" class="channel-trigger" id="channel-trigger" aria-haspopup="listbox" aria-expanded="false">
+      <span id="channel-current">main</span>
+      <span class="channel-chevron">▾</span>
+    </button>
+    <div class="channel-popup" id="channel-popup" role="listbox"></div>
+  </div>
+  <!-- Hidden input — existing getChannel()/setChannel() (localStorage
+       persistence, refresh wiring) stays the source of truth; the picker
+       drives this value. -->
+  <input type="hidden" id="channel" value="main" />
+</div>
 <div class="toolbar">
-  <label>channel<input id="channel" value="main" /></label>
+  <button id="claim-next" type="button" title="claim the next unclaimed message addressed to you">claim next</button>
   <button id="refresh" class="muted" type="button">refresh</button>
   <button id="auto" class="on" type="button">auto-poll · 5s</button>
 </div>
@@ -3631,7 +3690,55 @@ let pollTimer = null;
 // session. No browser-side override, no localStorage, no spoofing.
 const AUTHED_ALIAS = ${JSON.stringify(authedUsername)};
 function getAlias(){ return AUTHED_ALIAS; }
-function setChannel(v){ localStorage.setItem('orchChannel', v); $('channel').value = v; }
+function setChannel(v){
+  localStorage.setItem('orchChannel', v);
+  $('channel').value = v;
+  const cur = $('channel-current');
+  if (cur) cur.textContent = v;
+}
+function closeChannelPopup(){
+  const p = $('channel-popup');
+  const t = $('channel-trigger');
+  if (p) p.classList.remove('open');
+  if (t) t.setAttribute('aria-expanded', 'false');
+}
+function openChannelPopup(){
+  const p = $('channel-popup');
+  const t = $('channel-trigger');
+  if (p) p.classList.add('open');
+  if (t) t.setAttribute('aria-expanded', 'true');
+}
+function renderChannelPicker(known){
+  const popup = $('channel-popup');
+  if (!popup) return;
+  const current = getChannel();
+  const set = new Set(known);
+  set.add(current);
+  const list = Array.from(set);
+  list.sort();
+  popup.innerHTML = list.map(function(c){
+    const active = c === current ? ' active' : '';
+    return '<button type="button" class="channel-option' + active + '" data-ch="' + escapeHtml(c) + '">' + escapeHtml(c) + '</button>';
+  }).join('') + '<button type="button" class="channel-option add" id="channel-add">+ new channel…</button>';
+  popup.querySelectorAll('.channel-option[data-ch]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      const v = btn.dataset.ch;
+      closeChannelPopup();
+      if (v && v !== getChannel()) { setChannel(v); refresh(); }
+    });
+  });
+  const addBtn = $('channel-add');
+  if (addBtn) addBtn.addEventListener('click', function(){
+    const name = prompt('New channel name:');
+    closeChannelPopup();
+    if (!name) return;
+    const clean = name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+    if (!clean) return;
+    setChannel(clean);
+    renderChannelPicker(list);
+    refresh();
+  });
+}
 function getChannel(){ return $('channel').value.trim() || 'main'; }
 
 function toast(msg, isErr){
@@ -3664,38 +3771,131 @@ async function refresh(){
     const status = await apiGet('/api/orch/status');
     $('stats').textContent = 'transport ' + status.transportRoot + '   ·   channels [' + status.channels.join(',') + ']   ·   live claims ' + status.liveClaims;
     $('stats').style.display = '';
+    // Render the channel dropdown options. The picker stays compact (single
+    // trigger button) regardless of how many channels exist. Channels
+    // materialize on first send, so brand-new names from "+ new" are fine.
+    renderChannelPicker(Array.isArray(status.channels) ? status.channels : ['main']);
   } catch(_){}
 
-  // Global bus view by default — every message in the channel, newest first.
-  // This is the operator situational-awareness view (vs the per-alias inbox).
+  // Global bus view by default — every message in the channel, threaded.
+  // Roots (messages with no \`re:\`) are sorted newest-first; replies sit
+  // chronologically under their root. Multi-parent \`re:\` arrays nest
+  // under the first parent. Replies whose parent isn't in the current
+  // view (cropped by limit) are rendered as their own root.
   try {
     const messages = await apiGet('/api/orch/messages?channel=' + encodeURIComponent(getChannel()));
     if (!messages.length){
       $('messages').innerHTML = '<div class="empty">no messages on the bus in channel <strong>' + escapeHtml(getChannel()) + '</strong> yet</div>';
       return;
     }
-    $('messages').innerHTML = messages.map(function(m){
-      const claim = m.claimed ? '<span class="claim-badge">claimed: ' + escapeHtml(m.claimed.alias) + '</span>' : '';
-      const re = m.re ? '<span class="msg-re">re: ' + escapeHtml(fmtRe(m.re)) + '</span>' : '';
-      return [
-        '<div class="msg">',
-        '  <div class="msg-head">',
-        '    <span class="msg-route"><span class="msg-from">', escapeHtml(m.from), '</span><span class="msg-arrow">→</span><span class="msg-to">', escapeHtml(fmtTo(m.to)), '</span>', re, claim, '</span>',
-        '    <span class="msg-id">', escapeHtml(m.id), '</span>',
-        '  </div>',
-        '  <div class="msg-body">', escapeHtml(m.body), '</div>',
-        '  <div class="msg-actions">',
-        '    <button class="primary" onclick="doReply(\\''+ m.id +'\\')">reply</button>',
-        '    <button onclick="doClaim(\\''+ m.id +'\\')">claim next</button>',
-        '    <button onclick="doAck(\\''+ m.id +'\\')">ack</button>',
-        '    <button onclick="doRelease(\\''+ m.id +'\\')">release</button>',
-        '  </div>',
-        '</div>',
-      ].join('');
-    }).join('');
+    $('messages').innerHTML = renderThreaded(messages);
   } catch (err){
     toast('refresh failed: ' + err.message, true);
   }
+}
+
+function renderMsg(m, depth){
+  const claim = m.claimed ? '<span class="claim-badge">claimed: ' + escapeHtml(m.claimed.alias) + '</span>' : '';
+  const re = m.re ? '<span class="msg-re">re: ' + escapeHtml(fmtRe(m.re)) + '</span>' : '';
+  const depthClass = depth > 0 ? ' reply depth-' + Math.min(depth, 4) : '';
+
+  // Per-v2 identity lock: only render actions the operator can actually
+  // perform on this message. The server enforces alias=AUTHED_ALIAS on
+  // every reply/ack/release POST; rendering ungated buttons would produce
+  // 403s on click. Better: hide what's not actionable.
+  const toList = Array.isArray(m.to) ? m.to : [m.to];
+  const addressedToMe = toList.indexOf(AUTHED_ALIAS) >= 0 || toList.indexOf('all') >= 0;
+  const claimedByMe = !!(m.claimed && m.claimed.alias === AUTHED_ALIAS);
+  const buttons = [];
+  if (addressedToMe) buttons.push('<button class="primary" onclick="doReply(\\''+ m.id +'\\')">reply</button>');
+  if (addressedToMe && !claimedByMe) buttons.push('<button onclick="doAck(\\''+ m.id +'\\')">ack</button>');
+  if (claimedByMe) buttons.push('<button onclick="doRelease(\\''+ m.id +'\\')">release</button>');
+  const actions = buttons.length > 0
+    ? '<div class="msg-actions">' + buttons.join('') + '</div>'
+    : '';
+
+  return [
+    '<div class="msg' + depthClass + '">',
+    '  <div class="msg-head">',
+    '    <span class="msg-route"><span class="msg-from">', escapeHtml(m.from), '</span><span class="msg-arrow">→</span><span class="msg-to">', escapeHtml(fmtTo(m.to)), '</span>', re, claim, '</span>',
+    '    <span class="msg-id">', escapeHtml(m.id), '</span>',
+    '  </div>',
+    '  <div class="msg-body">', escapeHtml(m.body), '</div>',
+    actions,
+    '</div>',
+  ].join('');
+}
+
+function renderThreaded(messages){
+  // 1. Index by id for parent lookup.
+  const byId = new Map();
+  for (const m of messages) byId.set(m.id, m);
+
+  // 2. For each msg, find its root (walk up the re-chain). Roots are
+  //    messages with no re, or whose parent isn't in the view.
+  function rootOf(m){
+    let cur = m;
+    const seen = new Set();
+    while (cur.re){
+      if (seen.has(cur.id)) return cur.id; // cycle safety
+      seen.add(cur.id);
+      const pid = Array.isArray(cur.re) ? cur.re[0] : cur.re;
+      const parent = byId.get(pid);
+      if (!parent) return cur.id; // parent cropped — be your own root
+      cur = parent;
+    }
+    return cur.id;
+  }
+
+  // 3. Compute depth for indent (root = 0, direct reply = 1, etc.)
+  function depthOf(m){
+    let d = 0;
+    let cur = m;
+    const seen = new Set();
+    while (cur.re && d < 8){
+      if (seen.has(cur.id)) break;
+      seen.add(cur.id);
+      const pid = Array.isArray(cur.re) ? cur.re[0] : cur.re;
+      const parent = byId.get(pid);
+      if (!parent) break;
+      d++;
+      cur = parent;
+    }
+    return d;
+  }
+
+  // 4. Group by root id.
+  const byRoot = new Map(); // rootId -> [msg, ...]
+  for (const m of messages){
+    const rid = rootOf(m);
+    if (!byRoot.has(rid)) byRoot.set(rid, []);
+    byRoot.get(rid).push(m);
+  }
+
+  // 5. Sort roots by their timestamp DESC; within each thread, ASC
+  //    (oldest dispatch at top, replies underneath chronologically).
+  //    The API returns messages with a timestamp field (not createdAt) —
+  //    earlier draft used the wrong key and the sort was a silent no-op
+  //    that left replies above their parent in the visual.
+  const roots = Array.from(byRoot.entries()).sort(function(a, b){
+    const ra = byId.get(a[0]);
+    const rb = byId.get(b[0]);
+    const ta = ra ? ra.timestamp : a[1][0].timestamp;
+    const tb = rb ? rb.timestamp : b[1][0].timestamp;
+    return (tb || '').localeCompare(ta || '');
+  });
+
+  return roots.map(function(entry){
+    const items = entry[1].slice().sort(function(a, b){ return (a.timestamp || '').localeCompare(b.timestamp || ''); });
+    const cards = items.map(function(m){ return renderMsg(m, depthOf(m)); }).join('');
+    const replyCount = items.length - 1;
+    // Summary at TOP of thread (above root) — operator scans top-down,
+    // wants to know "is there a reply here?" before reading the dispatch.
+    const summary = replyCount > 0
+      ? '<div class="thread-summary">↳ ' + replyCount + ' repl' + (replyCount === 1 ? 'y' : 'ies') + '</div>'
+      : '';
+    return '<div class="thread">' + summary + cards + '</div>';
+  }).join('');
 }
 
 function requireYou(){
@@ -3744,8 +3944,21 @@ $('send-btn').addEventListener('click', async function(){
   } catch (err){ toast('send failed: ' + err.message, true); }
 });
 
-$('channel').addEventListener('change', function(){ setChannel($('channel').value); refresh(); });
 $('refresh').addEventListener('click', refresh);
+$('claim-next').addEventListener('click', function(){ doClaim(null); });
+
+// Channel picker open/close
+$('channel-trigger').addEventListener('click', function(e){
+  e.stopPropagation();
+  const popup = $('channel-popup');
+  if (popup && popup.classList.contains('open')) closeChannelPopup();
+  else openChannelPopup();
+});
+document.addEventListener('click', function(e){
+  const picker = $('channel-picker');
+  if (picker && !picker.contains(e.target)) closeChannelPopup();
+});
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeChannelPopup(); });
 
 $('auto').addEventListener('click', function(){
   autoPoll = !autoPoll;
@@ -3931,6 +4144,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
 
   const llmuxEnv: Record<string, string> = { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key };
   if (input.orchAlias) llmuxEnv['LLMUX_ORCH_ALIAS'] = input.orchAlias;
+  agentDef.preSpawn?.({ cwd });
   try {
     tmux.newSession({
       name,
@@ -3976,6 +4190,7 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
     }
   }
   try {
+    agent.preSpawn?.({ cwd: session.cwd });
     tmux.newSession({
       name: session.name,
       command: buildAgentCommand(agent, session.flags, session.resumeFrom),
@@ -4017,6 +4232,7 @@ function resumeConversation(
   }
 
   try {
+    agent.preSpawn?.({ cwd: session.cwd });
     tmux.newSession({
       name: session.name,
       command: buildAgentCommand(agent, session.flags, conversationId),
@@ -4133,6 +4349,7 @@ export function editSession(
     if (agent && isAgentInstalled(agent)) {
       try {
         tmux.killSession(updated.name);
+        agent.preSpawn?.({ cwd: updated.cwd });
         tmux.newSession({
           name: updated.name,
           command: buildAgentCommand(agent, updated.flags, updated.resumeFrom),
@@ -4300,7 +4517,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
     }
 
     // ---- Token management (CRUD) ----
-    // List: never includes the token VALUE — only id / name / timestamps.
+    // List: never includes the token VALUE — only id / name / createdAts.
     // Create: returns the value ONCE. After the response is sent, the
     //   plaintext is unreachable from the daemon's REST surface again.
     //   Mirrors the CLI's "show once" semantics.
@@ -4323,7 +4540,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
         const expiresAt = typeof body.expiresAt === 'string' && body.expiresAt.length > 0 ? body.expiresAt : undefined;
         const pairingOrigin = typeof body.pairingOrigin === 'string' && body.pairingOrigin.length > 0 ? body.pairingOrigin : undefined;
         if (expiresAt && isNaN(new Date(expiresAt).getTime())) {
-          return sendJson(res, { ok: false, error: 'expiresAt must be an ISO-8601 timestamp' }, 400);
+          return sendJson(res, { ok: false, error: 'expiresAt must be an ISO-8601 createdAt' }, 400);
         }
         const rec = authStore.createAuthToken({
           ...(name !== undefined ? { name } : {}),

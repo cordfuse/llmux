@@ -5,7 +5,9 @@
 #
 # Each session entry:
 #   name        — tmux session name
-#   agent       — llmux agent CLI (claude / gemini / agy / opencode / codex)
+#   agent       — llmux agent CLI (claude / agy / opencode / codex). Gemini CLI
+#                  was dropped when Google sunset the OAuth tier on 2026-06-18
+#                  and replaced it with Antigravity (the `agy` CLI).
 #   orch_alias  — sets $LLMUX_ORCH_ALIAS in the spawn env so `llmux orch …`
 #                  calls from the agent's bash tool default to the right identity
 #   bootstrap   — optional; one-shot prompt fired into the session after spawn
@@ -22,19 +24,13 @@ sessions:
     agent: claude
     orch_alias: claude-coord
     bootstrap: |
-      Start a Monte Carlo π estimation run NOW. You are claude-coord. Read your skill: `cat ~/.local/share/llmux/orchestration/data/actors/skills/montecarlo-coordinate.md`. Follow it to completion. Use N=10000 darts per worker. The 5 workers are: claude-worker, gemini, agy, opencode, codex. Begin.
+      Start a Monte Carlo π estimation run NOW. You are claude-coord. Read your skill: `cat ~/.local/share/llmux/orchestration/data/actors/skills/montecarlo-coordinate.md`. Follow it to completion. Use N=10000 darts per worker. The 4 workers are: claude-worker, agy, opencode, codex. Begin.
 
   - name: claude-worker
     agent: claude
     orch_alias: claude-worker
     bootstrap: |
       You are an llmux orch worker. Poll your inbox via `llmux orch next --alias claude-worker --json`. The task body contains a recipe — follow it exactly. Reply via `llmux orch reply <msg-id> --alias claude-worker <body>`. Then stop.
-
-  - name: gemini
-    agent: gemini
-    orch_alias: gemini
-    bootstrap: |
-      You are an llmux orch worker. Poll your inbox via `llmux orch next --alias gemini --json`. The task body contains a recipe — follow it exactly. Reply via `llmux orch reply <msg-id> --alias gemini <body>`. Then stop.
 
   - name: agy
     agent: agy

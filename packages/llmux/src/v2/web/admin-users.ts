@@ -129,9 +129,9 @@ export function adminUsersPage(data: AdminUsersPageData): string {
       const deleteBtn = u.username === me
         ? '<button disabled title="You cannot delete your own account">Delete</button>'
         : '<button class="danger" data-act="delete" data-u="' + escapeText(u.username) + '">Delete</button>';
-      tr.innerHTML = '<td><span class="username">' + escapeText(u.username) + '</span>' + selfBadge + adminBadge + '</td>' +
-                     '<td>' + escapeText(u.name) + '</td>' +
-                     '<td class="when">' + fmt(u.createdAt) + '</td>' +
+      tr.innerHTML = '<td data-label="Username"><span class="username">' + escapeText(u.username) + '</span>' + selfBadge + adminBadge + '</td>' +
+                     '<td data-label="Name">' + escapeText(u.name) + '</td>' +
+                     '<td class="when" data-label="Created">' + fmt(u.createdAt) + '</td>' +
                      '<td class="row-actions"><button data-act="reset" data-u="' + escapeText(u.username) + '">Reset pass</button>' + deleteBtn + '</td>';
       tbody.appendChild(tr);
     }
