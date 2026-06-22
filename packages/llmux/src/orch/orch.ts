@@ -153,6 +153,25 @@ export interface InboxOptions {
   limit?: number;          // default 50
   /** Include messages that are currently claimed by ANOTHER alias. Default false. */
   includeClaimedByOthers?: boolean;
+  /**
+   * Cursor for at-least-once polling — only return messages whose
+   * relPath is lexicographically greater than this. relPath sorts
+   * temporally (ISO-8601 timestamp prefix), so passing the last-seen
+   * relPath cuts work to "what's new since then." Inspired by
+   * @cordfuse/crosstalk's git-commit cursor pattern: cheap polls,
+   * no re-scan, no risk of missing late-arriving messages.
+   *
+   * Callers using the cursor should read `nextCursor` from the inbox
+   * RESULT (via inboxWithCursor) and pass that back next poll.
+   */
+  since?: string;
+}
+
+export interface InboxWithCursorResult {
+  messages: OrchMessage[];
+  /** The greatest relPath returned this call, or the value of `since`
+   *  if no messages matched. Callers pass this as `since` next poll. */
+  nextCursor: string;
 }
 
 /**
@@ -193,8 +212,12 @@ export function inbox(
   // participants who receive terminal replies and never reply back).
   const acked = listAcked(transportRoot, alias);
 
+  const since = opts.since ?? '';
   const filtered: OrchMessage[] = [];
   for (const m of messages) {
+    // Cursor filter — skip anything at or before `since`. relPath sorts
+    // temporally so this is a pure string compare.
+    if (since && m.relPath <= since) continue;
     if (repliedByMe.has(m.relPath)) continue;
     if (acked.has(m.relPath)) continue;
     const activationMsg: ActivationMessage = {
@@ -214,6 +237,29 @@ export function inbox(
     if (filtered.length >= limit) break;
   }
   return filtered;
+}
+
+/**
+ * Cursor-aware inbox. Returns messages + the cursor to use on the next
+ * poll. Equivalent to `inbox()` for the message list, but also computes
+ * `nextCursor` = max(relPaths returned, since). Callers persist the
+ * cursor between polls (in shell var, file, daemon state, etc.) to
+ * achieve at-least-once delivery without rescan.
+ *
+ * If no new messages match, nextCursor equals the input `since` —
+ * caller can poll again with the same cursor cheaply.
+ */
+export function inboxWithCursor(
+  transportRoot: string,
+  alias: string,
+  opts: InboxOptions = {},
+): InboxWithCursorResult {
+  const messages = inbox(transportRoot, alias, opts);
+  let nextCursor = opts.since ?? '';
+  for (const m of messages) {
+    if (m.id > nextCursor) nextCursor = m.id;
+  }
+  return { messages, nextCursor };
 }
 
 /**

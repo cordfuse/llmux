@@ -574,6 +574,7 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
     body: { kind: 'string', description: 'Message body — send only (alternative to positional). Useful for shell-piped or multi-line bodies.' },
     limit: { kind: 'string', description: 'Max messages to return — inbox only (default: 50)' },
     'include-claimed': { kind: 'boolean', description: 'Include messages claimed by other aliases — inbox only' },
+    since: { kind: 'string', description: 'Cursor (last seen msg-id) — only return messages newer than this. Use with --json + read .nextCursor for at-least-once polling without rescan.' },
     file: { kind: 'string', description: 'Fleet YAML config path — fleet start/stop only' },
     json: { kind: 'boolean', description: 'emit JSON' },
   });
@@ -639,15 +640,27 @@ async function dispatchOrch(verb: string | undefined, args: string[]): Promise<v
     case 'inbox': {
       const me = requireAlias('inbox');
       const limit = typeof parsed.flags['limit'] === 'string' ? parseInt(parsed.flags['limit'] as string, 10) : 50;
-      const messages = orch.inbox(root, me, {
+      const since = typeof parsed.flags['since'] === 'string' ? parsed.flags['since'] as string : undefined;
+      const inboxOpts: orch.InboxOptions = {
         channel,
         limit: Number.isFinite(limit) ? limit : 50,
         includeClaimedByOthers: !!parsed.flags['include-claimed'],
-      });
+      };
+      if (since !== undefined) inboxOpts.since = since;
+      // When --json + --since are both used, surface the nextCursor so
+      // scripted callers can pass it back on the next poll for cheap +
+      // reliable at-least-once delivery. Without --since, fall through
+      // to the bare-array shape for backwards compat with v1 callers.
+      if (json && since !== undefined) {
+        const result = orch.inboxWithCursor(root, me, inboxOpts);
+        console.log(JSON.stringify(result));
+        return;
+      }
+      const messages = orch.inbox(root, me, inboxOpts);
       if (json) {
         console.log(JSON.stringify(messages));
       } else if (messages.length === 0) {
-        console.log(`inbox empty for ${me} (channel=${channel})`);
+        console.log(`inbox empty for ${me} (channel=${channel}${since ? ` since=${since}` : ''})`);
       } else {
         for (const m of messages) {
           const claimMark = m.claimed ? `[claimed by ${m.claimed.alias}]` : '';

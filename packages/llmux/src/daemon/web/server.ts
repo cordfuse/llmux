@@ -3406,7 +3406,17 @@ async function handleOrchApi(url: URL, method: string, req: IncomingMessage, loc
       const channel = qs.get('channel') ?? 'main';
       const limit = qs.get('limit') ? parseInt(qs.get('limit')!, 10) : 50;
       const includeClaimed = qs.get('include_claimed') === 'true';
-      const messages = orch.inbox(root, alias, { channel, limit, includeClaimedByOthers: includeClaimed });
+      const since = qs.get('since');
+      const inboxOpts: orch.InboxOptions = { channel, limit, includeClaimedByOthers: includeClaimed };
+      if (since !== null && since !== '') inboxOpts.since = since;
+      // When `since` is present, return the cursor-aware shape
+      // { messages, nextCursor } so scripted pollers can advance their
+      // cursor cheaply. Without `since`, preserve the v1 bare-array
+      // response shape so existing /orch web-page polls keep working.
+      if (since !== null && since !== '') {
+        return { body: orch.inboxWithCursor(root, alias, inboxOpts), status: 200 };
+      }
+      const messages = orch.inbox(root, alias, inboxOpts);
       return { body: messages, status: 200 };
     }
     // Global bus view — every message in the channel regardless of addressing
