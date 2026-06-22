@@ -145,8 +145,8 @@ const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`
 // (Account, Users — they go to dedicated v2 pages).
 function renderNavDrawer(host: string, activeId: string): string {
   const items = [
-    { id: 'sessions', icon: '▦', label: 'Sessions', dataPage: 'sessions' },
-    { id: 'orch',     icon: '⇄', label: 'Orchestration', href: '/orch' },
+    { id: 'sessions', icon: '▦', label: 'Chat', dataPage: 'sessions' },
+    { id: 'orch',     icon: '⇄', label: 'Channels', href: '/orch' },
     { id: 'tokens',   icon: '⚿', label: 'Tokens', dataPage: 'tokens' },
     { id: 'agents',   icon: '⌬', label: 'Agents', dataPage: 'agents' },
     { id: 'logs',     icon: '▤', label: 'Logs', dataPage: 'logs' },
@@ -184,7 +184,7 @@ function pickerPage(): string {
   const host = hostname();
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>llmux on ${escapeHtml(host)} · Sessions</title>
+<title>llmux on ${escapeHtml(host)} · Chat</title>
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <meta name="theme-color" content="#0b0c10">
@@ -573,7 +573,7 @@ ${renderNavDrawer(host, 'sessions')}
       <span>v${escapeHtml(DAEMON_VERSION)}</span>
     </div>
   </div>
-  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · <span id="page-title">Sessions</span></h1>
+  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · <span id="page-title">Chat</span></h1>
 </header>
 <div id="page-sessions" class="page active">
 <div id="new-form" aria-hidden="true">
@@ -850,7 +850,7 @@ ${renderNavDrawer(host, 'sessions')}
   // Last-viewed page persists in localStorage so a hard reload keeps the
   // operator on the same screen.
   const ROUTES = ['sessions', 'tokens', 'agents', 'logs', 'settings', 'about'];
-  const PAGE_TITLES = { sessions: 'Sessions', tokens: 'Tokens', agents: 'Agents', logs: 'Logs', settings: 'Settings', about: 'About' };
+  const PAGE_TITLES = { sessions: 'Chat', tokens: 'Tokens', agents: 'Agents', logs: 'Logs', settings: 'Settings', about: 'About' };
   const navToggle = document.getElementById('nav-toggle');
   const navDrawer = document.getElementById('nav-drawer');
   const navBackdrop = document.getElementById('nav-backdrop');
@@ -2579,7 +2579,7 @@ function sessionPage(name: string): string {
 </style></head>
 <body>
 <div id="topbar">
-  <button id="back" title="Back to sessions">⌂</button>
+  <button id="back" title="Back to chat list">⌂</button>
   <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span></span>
   <button id="copy-buf" title="Copy visible terminal text" aria-label="copy visible">Copy</button>
   <button id="copy-all" title="Copy full scrollback" aria-label="copy all">All</button>
@@ -3504,7 +3504,7 @@ function orchPage(authedUsername: string): string {
   const host = hostname();
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>llmux on ${escapeHtml(host)} · Orchestration</title>
+<title>llmux on ${escapeHtml(host)} · Channels</title>
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <meta name="theme-color" content="#0b0c10">
@@ -3647,7 +3647,7 @@ ${renderNavDrawer(host, 'orch')}
       <span>v${escapeHtml(DAEMON_VERSION)}</span>
     </div>
   </div>
-  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · Orchestration</h1>
+  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · Channels</h1>
 </header>
 
 <div class="channel-row">
