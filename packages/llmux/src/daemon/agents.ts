@@ -1,4 +1,4 @@
-import { accessSync, closeSync, constants, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
+import { accessSync, appendFileSync, closeSync, constants, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -37,6 +37,40 @@ export interface AgentHistoryAdapter {
   resumeFlag(conversationId: string): string;
 }
 
+/**
+ * Codex gates every spawn in a new cwd with an interactive y/n trust
+ * prompt and provides no CLI flag to skip it. The `-c` config override
+ * is parsed too late to win against the gate. Persisted trust in
+ * `~/.codex/config.toml` IS honored.
+ *
+ * This hook reads the current config (creating the file if missing),
+ * checks for the section, and appends a `[projects."<cwd>"]` entry
+ * with `trust_level = "trusted"` if absent. Idempotent — string-
+ * matches the literal section header before writing.
+ *
+ * Trust context: client/operator (preSpawn runs in the daemon process,
+ * which in v1.x + v2 user mode is the operator. In v2 system mode it's
+ * the `llmux` service user managing its own ~llmux/.codex/, not
+ * reaching into operator homes — see V2-SYSTEM-AUTH-DESIGN.md $HOME
+ * principle).
+ */
+function codexPreSpawnTrust(ctx: { cwd: string }): void {
+  try {
+    const dir = join(homedir(), '.codex');
+    const path = join(dir, 'config.toml');
+    const sectionHeader = `[projects."${ctx.cwd}"]`;
+    const content = existsSync(path) ? readFileSync(path, 'utf-8') : '';
+    if (content.includes(sectionHeader)) return; // already trusted
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const entry = (content.endsWith('\n') || content.length === 0 ? '' : '\n') +
+      `\n${sectionHeader}\ntrust_level = "trusted"\n`;
+    if (existsSync(path)) appendFileSync(path, entry);
+    else writeFileSync(path, entry, { mode: 0o600 });
+  } catch (err) {
+    console.warn(`[llmux] codex preSpawn trust write failed (proceeding): ${(err as Error).message}`);
+  }
+}
+
 export interface AgentDefinition {
   /** Key under `agents:` in .llmux.yaml; default tmux-session name. */
   key: string;
@@ -64,6 +98,16 @@ export interface AgentDefinition {
   envDefaults?: Record<string, string>;
   /** Conversation-history adapter — enables the "resume past conversation" picker. */
   history?: AgentHistoryAdapter;
+  /**
+   * One-shot side effects to run BEFORE tmux spawns the agent. Use for
+   * preparing per-cwd config the agent CLI requires on startup — e.g.,
+   * codex's per-directory trust gate that would otherwise block every
+   * spawn in a new cwd with a y/n prompt and no automation override.
+   *
+   * Must be idempotent — invoked on every spawn (and respawn). Failures
+   * are logged + swallowed; spawn proceeds without the side effect.
+   */
+  preSpawn?: (ctx: { cwd: string }) => void;
 }
 
 /**
@@ -902,7 +946,7 @@ const claudeInstalled = (): boolean => {
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', detectInstalled: claudeInstalled, installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory },
-  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory },
+  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory, preSpawn: codexPreSpawnTrust },
   agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install', history: agyHistory },
   gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli', history: geminiHistory },
   qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code', history: qwenHistory },

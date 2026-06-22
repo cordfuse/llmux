@@ -14,6 +14,13 @@ import * as tmux from './daemon/tmux.ts';
 import { DEFAULT_AGENTS, isAgentInstalled } from './daemon/agents.ts';
 import { buildAgentCommand, mergeSpawnEnv } from './daemon/web/server.ts';
 import { clientCommands } from './client/client.ts';
+import { init as orchInit, defaultTransportRoot } from './orch/init.ts';
+import { syncBackupPush } from './orch/transport.ts';
+import * as orch from './orch/orch.ts';
+import { loadFleet, startFleet, stopFleet } from './orch/fleet.ts';
+import { login as authLogin, logout as authLogout, whoami as authWhoami } from './v2/auth/login.ts';
+import { loadCredentials, setActiveProfile } from './v2/auth/credentials.ts';
+import { readPassphrase } from './v2/auth/prompt.ts';
 
 // ----------------- version helper -----------------
 
@@ -145,6 +152,14 @@ Logs verbs (always local — reads the daemon's in-process ring buffer):
 
 Settings verbs (always local — diagnostic dump):
   settings show [--json]                        config source, state dir, env, loaded YAML
+
+Auth verbs (v2 — client-side credentials at ~/.config/llmux/credentials.json):
+  auth login --server <url> [--username U]      passphrase-auth to a v2 daemon; save token
+             [--profile N] [--passphrase P]
+  auth logout [--profile N] [--no-revoke]       remove saved profile (default: revoke server-side)
+  auth whoami [--profile N]                     show the active (or named) profile
+  auth list                                     list saved profiles
+  auth use <profile>                            mark a saved profile as active
 
 Global flags:
   --server <url>     route session/agent verbs to a remote daemon over HTTP
@@ -293,6 +308,7 @@ function sessionLocalFlags() {
     apply: { kind: 'boolean' as const, description: 'with `edit`: respawn the session after patching' },
     init: { kind: 'string-array' as const, description: 'init prompt to fire on spawn (repeatable; composes with daemon.initPrompts)' },
     'skip-init': { kind: 'boolean' as const, description: 'skip firing init prompts on this spawn' },
+    'orch-alias': { kind: 'string' as const, description: 'register this session as an llmux orch bus participant under this alias (sets $LLMUX_ORCH_ALIAS in the agent env)' },
     json: { kind: 'boolean' as const, description: 'emit JSON' },
   };
 }
@@ -393,6 +409,114 @@ async function dispatchAgent(verb: string | undefined, args: string[], env: Glob
   }
 }
 
+async function dispatchAuth(verb: string | undefined, args: string[], env: GlobalEnv): Promise<void> {
+  if (!verb) {
+    printVerbHelp('auth', verb);
+    return;
+  }
+  const parsed = parseArgs(args, {
+    username: { kind: 'string', description: 'application-layer username' },
+    profile: { kind: 'string', description: 'profile name (defaults to host-port slug)' },
+    passphrase: { kind: 'string', description: 'passphrase (env LLMUX_PASSPHRASE fallback; interactive prompt if neither)' },
+    'no-revoke': { kind: 'boolean', description: 'with logout: skip server-side token revoke' },
+    json: { kind: 'boolean', description: 'emit JSON' },
+  });
+
+  switch (verb) {
+    case 'login': {
+      const serverUrl = env.server ?? process.env.LLMUX_SERVER;
+      if (!serverUrl) throw new Error('auth login requires --server <url> or LLMUX_SERVER');
+      const username = (parsed.flags.username as string | undefined)
+        ?? parsed.positional[0];
+      if (!username) throw new Error('auth login requires --username <name>');
+      const passphrase = (parsed.flags.passphrase as string | undefined)
+        ?? process.env.LLMUX_PASSPHRASE
+        ?? await readPassphrase(`Passphrase for ${username}@${serverUrl}: `);
+      const result = await authLogin({
+        serverUrl,
+        username,
+        passphrase,
+        ...(parsed.flags.profile ? { profileName: parsed.flags.profile as string } : {}),
+      });
+      if (parsed.flags.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.ok) process.exit(1);
+        return;
+      }
+      if (!result.ok) {
+        console.error(`auth login failed: ${result.error ?? 'unknown'}${result.status ? ` (HTTP ${result.status})` : ''}`);
+        process.exit(1);
+      }
+      console.log(`logged in as ${result.username} → profile "${result.profileName}" (saved to ~/.config/llmux/credentials.json)`);
+      return;
+    }
+    case 'logout': {
+      const result = await authLogout({
+        ...(parsed.flags.profile ? { profileName: parsed.flags.profile as string } : {}),
+        revokeOnServer: !parsed.flags['no-revoke'],
+      });
+      if (parsed.flags.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.ok) process.exit(1);
+        return;
+      }
+      if (!result.ok) {
+        console.error(`auth logout: ${result.error}`);
+        process.exit(1);
+      }
+      const tail = result.revokedOnServer === false ? ' (server revoke failed — local profile removed anyway)' : '';
+      console.log(`logged out of profile "${result.profileName}"${tail}`);
+      return;
+    }
+    case 'whoami': {
+      const result = authWhoami(parsed.flags.profile as string | undefined);
+      if (parsed.flags.json) {
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.ok) process.exit(1);
+        return;
+      }
+      if (!result.ok) {
+        console.error(result.error);
+        process.exit(1);
+      }
+      const p = result.profile!;
+      console.log(`profile: ${result.profileName}`);
+      console.log(`server : ${p.serverUrl}`);
+      console.log(`user   : ${p.username}`);
+      console.log(`since  : ${p.savedAt}`);
+      return;
+    }
+    case 'list': {
+      const file = loadCredentials();
+      const rows = Object.entries(file.profiles).map(([name, p]) => ({
+        name, active: name === file.active, ...p,
+      }));
+      if (parsed.flags.json) {
+        console.log(JSON.stringify(rows, null, 2));
+        return;
+      }
+      if (rows.length === 0) {
+        console.log('no profiles saved — run `llmux auth login --server <url> --username <u>`');
+        return;
+      }
+      for (const r of rows) {
+        const marker = r.active ? '*' : ' ';
+        console.log(`${marker} ${r.name.padEnd(24)}  ${r.username.padEnd(16)}  ${r.serverUrl}`);
+      }
+      return;
+    }
+    case 'use': {
+      const name = parsed.positional[0];
+      if (!name) throw new Error('auth use requires <profile>');
+      setActiveProfile(name);
+      console.log(`active profile: ${name}`);
+      return;
+    }
+    default:
+      throw new Error(`unknown auth verb "${verb}"`);
+  }
+}
+
 async function dispatchLogs(verb: string | undefined, args: string[]): Promise<void> {
   if (!verb) {
     printVerbHelp('logs', verb);
@@ -434,6 +558,215 @@ async function dispatchSettings(verb: string | undefined, args: string[]): Promi
   }
 }
 
+async function dispatchOrch(verb: string | undefined, args: string[]): Promise<void> {
+  if (!verb) {
+    printVerbHelp('orch', verb);
+    return;
+  }
+  const parsed = parseArgs(args, {
+    remote: { kind: 'string', description: 'Optional DR-only git remote (init only)' },
+    'transport-root': { kind: 'string', description: `Override the transport path (default: ${defaultTransportRoot()})` },
+    alias: { kind: 'string', description: 'Participant alias (defaults to $LLMUX_ORCH_ALIAS)' },
+    to: { kind: 'string', description: 'Recipient alias (or `all` for broadcast) — send only' },
+    from: { kind: 'string', description: 'Sender alias override — send only (defaults to --alias or $LLMUX_ORCH_ALIAS)' },
+    channel: { kind: 'string', description: 'Channel name (default: main)' },
+    re: { kind: 'string', description: 'Parent msg-id for replies — send only' },
+    body: { kind: 'string', description: 'Message body — send only (alternative to positional). Useful for shell-piped or multi-line bodies.' },
+    limit: { kind: 'string', description: 'Max messages to return — inbox only (default: 50)' },
+    'include-claimed': { kind: 'boolean', description: 'Include messages claimed by other aliases — inbox only' },
+    since: { kind: 'string', description: 'Cursor (last seen msg-id) — only return messages newer than this. Use with --json + read .nextCursor for at-least-once polling without rescan.' },
+    file: { kind: 'string', description: 'Fleet YAML config path — fleet start/stop only' },
+    json: { kind: 'boolean', description: 'emit JSON' },
+  });
+  const root = typeof parsed.flags['transport-root'] === 'string'
+    ? parsed.flags['transport-root'] as string
+    : defaultTransportRoot();
+  const aliasFlag = typeof parsed.flags['alias'] === 'string' ? parsed.flags['alias'] as string : undefined;
+  const aliasFromEnv = process.env['LLMUX_ORCH_ALIAS'];
+  const alias = aliasFlag ?? aliasFromEnv;
+  const channel = typeof parsed.flags['channel'] === 'string' ? parsed.flags['channel'] as string : 'main';
+  const json = !!parsed.flags['json'];
+
+  function requireAlias(verbName: string): string {
+    if (!alias) {
+      throw new Error(`\`llmux orch ${verbName}\` needs --alias <name> (or set $LLMUX_ORCH_ALIAS in the session env)`);
+    }
+    return alias;
+  }
+  switch (verb) {
+    case 'init': {
+      const opts: { transportRoot?: string; remote?: string } = {};
+      if (typeof parsed.flags['transport-root'] === 'string') opts.transportRoot = parsed.flags['transport-root'];
+      if (typeof parsed.flags['remote'] === 'string') opts.remote = parsed.flags['remote'];
+      const result = orchInit(opts);
+      if (json) {
+        console.log(JSON.stringify(result));
+      } else {
+        const remoteLine = result.remote ? `  remote: ${result.remote}\n` : '';
+        const modeLine = result.mode === 'clone'
+          ? 'cloned existing transport from remote (DR-restore path)'
+          : 'initialised fresh transport';
+        console.log(`llmux orch: ${modeLine}\n  path:   ${result.transportRoot}\n${remoteLine}`);
+      }
+      return;
+    }
+    case 'backup': {
+      const result = syncBackupPush(root);
+      if (json) {
+        console.log(JSON.stringify({ transportRoot: root, ...result }));
+      } else if (result.ok) {
+        console.log(`llmux orch: backup pushed to origin/main (${root})`);
+      } else {
+        console.error(`llmux orch: backup failed — ${result.error ?? 'unknown'}`);
+        process.exit(1);
+      }
+      return;
+    }
+    case 'send': {
+      const me = requireAlias('send');
+      const to = typeof parsed.flags['to'] === 'string' ? parsed.flags['to'] as string : undefined;
+      if (!to) throw new Error('`llmux orch send` needs --to <alias|all>');
+      const bodyFlag = typeof parsed.flags['body'] === 'string' ? parsed.flags['body'] as string : '';
+      const body = bodyFlag.trim() || parsed.positional.join(' ').trim();
+      if (!body) throw new Error('`llmux orch send` needs a message body (--body "text" or positional arg)');
+      const from = typeof parsed.flags['from'] === 'string' ? parsed.flags['from'] as string : me;
+      const input: orch.SendInput = { from, to, body, channel };
+      if (typeof parsed.flags['re'] === 'string') input.re = parsed.flags['re'] as string;
+      const result = orch.send(root, input);
+      if (json) console.log(JSON.stringify(result));
+      else console.log(`sent: ${result.id} (${from} → ${to}, channel=${channel})`);
+      return;
+    }
+    case 'inbox': {
+      const me = requireAlias('inbox');
+      const limit = typeof parsed.flags['limit'] === 'string' ? parseInt(parsed.flags['limit'] as string, 10) : 50;
+      const since = typeof parsed.flags['since'] === 'string' ? parsed.flags['since'] as string : undefined;
+      const inboxOpts: orch.InboxOptions = {
+        channel,
+        limit: Number.isFinite(limit) ? limit : 50,
+        includeClaimedByOthers: !!parsed.flags['include-claimed'],
+      };
+      if (since !== undefined) inboxOpts.since = since;
+      // When --json + --since are both used, surface the nextCursor so
+      // scripted callers can pass it back on the next poll for cheap +
+      // reliable at-least-once delivery. Without --since, fall through
+      // to the bare-array shape for backwards compat with v1 callers.
+      if (json && since !== undefined) {
+        const result = orch.inboxWithCursor(root, me, inboxOpts);
+        console.log(JSON.stringify(result));
+        return;
+      }
+      const messages = orch.inbox(root, me, inboxOpts);
+      if (json) {
+        console.log(JSON.stringify(messages));
+      } else if (messages.length === 0) {
+        console.log(`inbox empty for ${me} (channel=${channel}${since ? ` since=${since}` : ''})`);
+      } else {
+        for (const m of messages) {
+          const claimMark = m.claimed ? `[claimed by ${m.claimed.alias}]` : '';
+          console.log(`${m.id}  from=${m.from}  to=${formatTo(m.to)}  ${claimMark}`);
+        }
+      }
+      return;
+    }
+    case 'next': {
+      const me = requireAlias('next');
+      const m = orch.claimNext(root, me, { channel });
+      if (json) console.log(JSON.stringify(m));
+      else if (!m) console.log(`no work for ${me} (channel=${channel})`);
+      else {
+        console.log(`claimed ${m.id}`);
+        console.log(`from: ${m.from}`);
+        console.log(`to: ${formatTo(m.to)}`);
+        if (m.re) console.log(`re: ${Array.isArray(m.re) ? m.re.join(',') : m.re}`);
+        console.log('');
+        console.log(m.body);
+      }
+      return;
+    }
+    case 'reply': {
+      const me = requireAlias('reply');
+      const msgId = parsed.positional[0];
+      if (!msgId) throw new Error('`llmux orch reply` needs <msg-id> as the first positional arg');
+      const body = parsed.positional.slice(1).join(' ').trim();
+      if (!body) throw new Error('`llmux orch reply` needs a body as a positional arg after <msg-id>');
+      const result = orch.reply(root, msgId, me, body, channel);
+      if (json) console.log(JSON.stringify(result));
+      else console.log(`replied: ${result.id} (re: ${msgId})`);
+      return;
+    }
+    case 'release': {
+      const me = requireAlias('release');
+      const msgId = parsed.positional[0];
+      if (!msgId) throw new Error('`llmux orch release` needs <msg-id> as the first positional arg');
+      orch.release(root, msgId, me);
+      if (json) console.log(JSON.stringify({ ok: true, released: msgId }));
+      else console.log(`released ${msgId} (was held by ${me})`);
+      return;
+    }
+    case 'ack': {
+      const me = requireAlias('ack');
+      const msgId = parsed.positional[0];
+      if (!msgId) throw new Error('`llmux orch ack` needs <msg-id> as the first positional arg');
+      orch.ack(root, msgId, me);
+      if (json) console.log(JSON.stringify({ ok: true, acked: msgId, alias: me }));
+      else console.log(`acked ${msgId} for ${me} (filtered from inbox; not re-deliverable)`);
+      return;
+    }
+    case 'fleet': {
+      const sub = parsed.positional[0];
+      const file = typeof parsed.flags['file'] === 'string' ? parsed.flags['file'] as string : parsed.positional[1];
+      if (!file) throw new Error('`llmux orch fleet <start|stop>` needs --file <path> (or positional)');
+      const fleet = loadFleet(file);
+      if (sub === 'start') {
+        const r = startFleet(fleet);
+        if (json) { console.log(JSON.stringify(r)); return; }
+        if (r.spawned.length) console.log(`spawned: ${r.spawned.join(', ')}`);
+        if (r.skipped.length) console.log(`skipped (already running): ${r.skipped.join(', ')}`);
+        if (r.bootstrapped.length) console.log(`bootstrapped: ${r.bootstrapped.join(', ')}`);
+        if (r.errors.length) {
+          console.error(`errors:`);
+          for (const e of r.errors) console.error(`  • ${e.name} (${e.phase}): ${e.error}`);
+          process.exit(1);
+        }
+        return;
+      }
+      if (sub === 'stop') {
+        const r = stopFleet(fleet);
+        if (json) { console.log(JSON.stringify(r)); return; }
+        if (r.stopped.length) console.log(`stopped: ${r.stopped.join(', ')}`);
+        if (r.notFound.length) console.log(`not running: ${r.notFound.join(', ')}`);
+        if (r.errors.length) {
+          console.error(`errors:`);
+          for (const e of r.errors) console.error(`  • ${e.name}: ${e.error}`);
+          process.exit(1);
+        }
+        return;
+      }
+      throw new Error(`unknown fleet sub-verb "${sub}". Use: start | stop`);
+    }
+    case 'status': {
+      const result = orch.status(root);
+      if (json) console.log(JSON.stringify(result));
+      else {
+        console.log(`llmux orch status`);
+        console.log(`  path:   ${result.transportRoot}`);
+        console.log(`  channels: ${result.channels.join(', ') || '<none>'}`);
+        console.log(`  live claims: ${result.liveClaims}`);
+      }
+      return;
+    }
+    default:
+      throw new Error(
+        `unknown orch verb "${verb}". Try one of: init | backup | send | inbox | next | reply | release | ack | status | fleet`,
+      );
+  }
+}
+
+function formatTo(to: string | string[]): string {
+  return Array.isArray(to) ? to.join(',') : to;
+}
+
 // ----------------- main -----------------
 
 async function main(): Promise<void> {
@@ -471,6 +804,12 @@ async function main(): Promise<void> {
         return;
       case 'settings':
         await dispatchSettings(verb, remainder);
+        return;
+      case 'orch':
+        await dispatchOrch(verb, remainder);
+        return;
+      case 'auth':
+        await dispatchAuth(verb, remainder, env);
         return;
       // Backward-compat shorthand — some shells will already have `llmuxd serve`
       // wired up. These verbs sit at noun-position so all of rest.slice(1) is

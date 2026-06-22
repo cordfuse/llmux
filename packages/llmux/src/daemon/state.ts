@@ -29,6 +29,14 @@ export interface SessionState {
    * releasing the turn.
    */
   turnqMarker?: string;
+  /**
+   * Orchestration alias — when set, this session is a participant on the
+   * llmux orch bus. llmuxd sets `LLMUX_ORCH_ALIAS=<orchAlias>` in the
+   * agent's process env at spawn, so the agent's `llmux orch ...` calls
+   * default to the right identity without re-specifying `--alias` each time.
+   * Operator-set via `--orch-alias` at spawn, or by editing this state file.
+   */
+  orchAlias?: string;
   createdAt: string;
   parent: string | null;
   restart: 'always' | 'on-failure' | 'never';

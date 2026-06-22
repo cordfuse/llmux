@@ -55,9 +55,20 @@ export function newSession(opts: NewSessionOptions): void {
   }
   const args: string[] = ['new-session', '-d', '-s', opts.name];
   if (opts.cwd) args.push('-c', opts.cwd);
+  // tmux's `-e KEY=VALUE` flag (3.2+) injects env into the SESSION the
+  // server creates. Without this, passing env to spawnSync() only affects
+  // the `tmux` client process; the server's pane-spawn inherits the
+  // server's env instead, dropping LLMUX_SESSION / LLMUX_AGENT /
+  // LLMUX_ORCH_ALIAS / etc. The bug surfaced when MC's coordinator
+  // hit `llmux orch send` from Claude Code's bash tool — the env var
+  // wasn't visible so the CLI demanded an explicit --alias flag.
+  if (opts.env) {
+    for (const [k, v] of Object.entries(opts.env)) {
+      args.push('-e', `${k}=${v}`);
+    }
+  }
   args.push(opts.command);
-  const env = opts.env ? { ...process.env, ...opts.env } : process.env;
-  const r = spawnSync('tmux', args, { stdio: 'pipe', env });
+  const r = spawnSync('tmux', args, { stdio: 'pipe' });
   if (r.status !== 0) {
     throw new Error(`tmux new-session failed: ${r.stderr.toString().trim() || `exit ${r.status}`}`);
   }
@@ -67,6 +78,13 @@ export function newSession(opts: NewSessionOptions): void {
  * Send literal text to a session's active pane, optionally followed by Enter.
  * Uses `-l` for literal (no key-name translation), then a separate Enter to
  * actually submit when requested.
+ *
+ * Paste-mode mitigation: TUIs built on `ink` (Claude Code, OpenCode, agy)
+ * detect fast-arriving input as a paste and treat Enter as "newline inside
+ * the pasted block" rather than "submit". After typing the text we sleep
+ * briefly so the TUI's paste-mode debounce expires, THEN send Enter — at
+ * which point it's interpreted as submit. Without this delay, prompts get
+ * typed into the input box but never submitted, leaving the agent idle.
  */
 export function sendKeys(name: string, text: string, opts: { enter?: boolean } = {}): void {
   if (!hasSession(name)) {
@@ -77,6 +95,16 @@ export function sendKeys(name: string, text: string, opts: { enter?: boolean } =
     throw new Error(`tmux send-keys failed: ${literal.stderr.toString().trim() || `exit ${literal.status}`}`);
   }
   if (opts.enter) {
+    // Sync sleep — fireInitPrompts is already async and tolerates the
+    // 250ms cost; alternatives (separate setTimeout) leak control back to
+    // the event loop and complicate the contract of this function.
+    const sleepMs = 250;
+    const until = Date.now() + sleepMs;
+    spawnSync('sleep', [(sleepMs / 1000).toFixed(3)]);
+    // Defensive: spawnSync('sleep') is the cleanest cross-platform option,
+    // but on edge cases (Bun runtimes, exotic PATHs) it can return early.
+    // Spin until the clock catches up if so.
+    while (Date.now() < until) {/* busy-wait the residual */}
     const enter = spawnSync('tmux', ['send-keys', '-t', name, 'Enter'], { stdio: 'pipe' });
     if (enter.status !== 0) {
       throw new Error(`tmux send-keys Enter failed: ${enter.stderr.toString().trim() || `exit ${enter.status}`}`);

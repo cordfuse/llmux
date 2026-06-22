@@ -5,6 +5,97 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-06-22
+
+Major release — bundles months of branch work (v2 auth + orch bus +
+MC stability) plus today's vocabulary alignment with sibling
+`@cordfuse/crosstalk`. Wholly additive: no breaking changes to the
+existing v1 surface; new capabilities sit alongside.
+
+### Added — v2 auth system
+
+App-level authentication for the daemon, mirroring the pattern that
+shipped today in `@cordfuse/crosstalk`. New install gets a one-time
+web setup wizard at `/setup?token=<minted>` (URL printed at boot)
+that creates the first admin user. Subsequent flows:
+
+- **Web UI** — cookie auth via `/login`; admin pages for user
+  management (`/admin/users` — create / delete / toggle-admin,
+  self-protected) and per-user account (`/account` — sign out + change
+  passphrase).
+- **CLI** — `llmux auth login` stores a bearer token at
+  `~/.config/llmux/credentials.json`; subsequent CLI calls send
+  `Authorization: Bearer <token>` automatically.
+- **Storage** — `FileUserStore` (scrypt N=2^17 passphrase hashes) +
+  `FileTokenStore` (SHA-256 hashed `sas_<id>.<secret>` form). Records
+  live under `<base>/llmux-state/auth/` (mode 0600; never pushed
+  upstream).
+- **System mode** — daemon runs as the `llmux` service user under
+  systemd; privilege-drop on boot. User mode (`LLMUX_USER_MODE=1`)
+  preserves the v1 single-operator flow for solo dev / no service
+  user. Daemon never touches `/home/*` in system mode.
+- **Orch identity binding** — once auth is enabled, the operator's
+  orch alias is the authenticated user; can't impersonate.
+
+The v1 no-auth user-mode path is preserved — fresh installs default
+to system-mode-with-auth, but existing user-mode setups continue to
+work unchanged.
+
+### Added — `llmux orch` bus (multi-agent message bus, transport-backed)
+
+A first-class message bus for coordinating multiple agents:
+
+- **Transport** — local-git transport cherry-picked + trimmed from
+  crosstalk; supports DR-only remote sync.
+- **Actor model** — actors live in the transport (`data/actors/`);
+  `species: machine|human` field; default operator (human) seeded at
+  init.
+- **CLI verbs** — `llmux orch init`, `orch send`, `orch inbox`,
+  `orch next`, `orch reply`, `orch release`, `orch status`,
+  `orch backup`, `llmux fleet` (replaces the prior `examples/
+  monte-carlo/run.sh` script).
+- **REST API + web inbox console** — `/orch` HTML + `/api/orch/*`
+  endpoints; threaded message view, alias chips, replied-set ack to
+  prevent re-surfacing processed messages.
+- **At-least-once cursor on inbox** — borrowed from the crosstalk
+  pattern; `since=<relPath>` query param + `nextCursor` in response.
+
+### Added — Monte Carlo stability + UI follow-ups
+
+Fixes uncovered during repeated MC runs:
+
+- env injection from daemon to pty spawns (so agent CLIs see
+  intended `ANTHROPIC_API_KEY` etc.).
+- Paste-mode submit + source-mode version + `--body` flag for
+  `llmux session send`.
+- Codex preSpawn (preflight check before tmux session creation).
+- Orch threading correctness, channel picker UX, mobile session
+  cards.
+
+### Changed — web nav labels align with `@cordfuse/crosstalk`
+
+- **Sessions** → **Chat**  (the interactive agent attach surface)
+- **Orchestration** → **Channels**  (the message bus surface)
+
+Label-only — CLI subcommands (`llmux session …`) and routes
+(`/session/<name>`, `/orch`) unchanged. Operators of both Cordfuse
+products see the same word for the same concept; scripts + API are
+fully backwards-compatible.
+
+Back-button tooltip on the live terminal page: "Back to sessions" →
+"Back to chat list".
+
+### Migration
+
+- Fresh installs trigger the v2 setup wizard at first daemon boot.
+- Existing v1 user-mode operators upgrading from 0.34.x see no
+  behavior change unless `LLMUX_USER_MODE` is unset (in which case
+  the daemon enters system mode + setup wizard).
+- Pre-0.35.0 CLI scripts continue to work in user mode; in system
+  mode they need `llmux auth login` once per OS user (token at
+  `~/.config/llmux/credentials.json`).
+- v0.34.0 → v0.35.0 is a minor bump — additive, no breaking changes.
+
 ## [0.33.7] — 2026-06-20
 
 ### Fixed — default listen port now actually resolves to 3001

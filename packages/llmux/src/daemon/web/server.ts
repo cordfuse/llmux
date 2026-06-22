@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { tryV2Route, initV2Routes, getV2User } from '../v2-routes.ts';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -15,6 +16,9 @@ import * as tmux from '../tmux.ts';
 import * as authStore from '../auth-store.ts';
 import { getAddresses } from '../net.ts';
 import { loadConfig, loadOverride, overridePath, saveOverride, type LlmuxConfig, type TurnqConfig } from '../config.ts';
+import * as orch from '../../orch/orch.ts';
+import { defaultTransportRoot } from '../../orch/init.ts';
+import { loadActor, listActors, listActorSummaries } from '../../orch/actors.ts';
 
 function readDaemonVersion(): string {
   // Resolve package.json relative to this source file so the version stays
@@ -22,9 +26,10 @@ function readDaemonVersion(): string {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
     for (const candidate of [
-      resolve(here, '../../package.json'),
-      resolve(here, '../package.json'),
-      resolve(here, './package.json'),
+      resolve(here, '../../package.json'),    // built dist/ layout
+      resolve(here, '../package.json'),       // alternative built layout
+      resolve(here, './package.json'),        // single-file build
+      resolve(here, '../../../package.json'), // src/daemon/web/ → packages/llmux/ (tsx-source mode)
     ]){
       try {
         const pkg = JSON.parse(readFileSync(candidate, 'utf8'));
@@ -131,6 +136,47 @@ const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`
 // Chrome bookmark / home-screen shortcut instead. `BRAND_SVG` is still
 // used as the browser-tab favicon.
 
+// ---------- shared drawer ----------
+
+// Single source of truth for the nav-drawer markup, shared between the
+// picker page and the orchestration page. Items with data-page are
+// captured by per-page JS (picker = SPA tab flip; orch = localStorage
+// write + redirect to /). Items with only href are real navigations
+// (Account, Users — they go to dedicated v2 pages).
+function renderNavDrawer(host: string, activeId: string): string {
+  const items = [
+    { id: 'sessions', icon: '▦', label: 'Chat', dataPage: 'sessions' },
+    { id: 'orch',     icon: '⇄', label: 'Channels', href: '/orch' },
+    { id: 'tokens',   icon: '⚿', label: 'Tokens', dataPage: 'tokens' },
+    { id: 'agents',   icon: '⌬', label: 'Agents', dataPage: 'agents' },
+    { id: 'logs',     icon: '▤', label: 'Logs', dataPage: 'logs' },
+    { id: 'settings', icon: '⚙', label: 'Settings', dataPage: 'settings' },
+    { id: 'account',  icon: '◉', label: 'Account', href: '/account' },
+    { id: 'users',    icon: '☷', label: 'Users', href: '/admin/users' },
+    { id: 'about',    icon: 'ⓘ', label: 'About', dataPage: 'about' },
+  ];
+  const links = items.map(it => {
+    const active = it.id === activeId ? ' class="active"' : '';
+    const attrs: string[] = [];
+    if (it.href) attrs.push(`href="${it.href}"`);
+    if (it.dataPage) attrs.push(`data-page="${it.dataPage}"`);
+    return `    <a${attrs.length ? ' ' + attrs.join(' ') : ''}${active}><span class="nav-icon">${it.icon}</span>${it.label}</a>`;
+  }).join('\n');
+  return `<div id="nav-backdrop" aria-hidden="true"></div>
+<aside id="nav-drawer" aria-hidden="true">
+  <div class="nav-header">
+    <span class="nav-brand">LLMUX</span>
+    <span class="nav-host">${escapeHtml(host)}</span>
+  </div>
+  <nav>
+${links}
+  </nav>
+  <div class="nav-footer">
+    <span>v${escapeHtml(DAEMON_VERSION)}</span>
+  </div>
+</aside>`;
+}
+
 // ---------- pages ----------
 
 function pickerPage(): string {
@@ -138,7 +184,7 @@ function pickerPage(): string {
   const host = hostname();
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>llmux on ${escapeHtml(host)} · Sessions</title>
+<title>llmux on ${escapeHtml(host)} · Chat</title>
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <meta name="theme-color" content="#0b0c10">
@@ -265,9 +311,12 @@ function pickerPage(): string {
   #settings-grid .settings-status{font-size:11px;color:#7a7f87;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
   #settings-grid .settings-status.ok{color:#7ee787}
   #settings-grid .settings-status.err{color:#ff7b72}
-  #settings-grid .settings-save{background:#388bfd;color:#fff;border:none;border-radius:4px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer}
-  #settings-grid .settings-save:hover{background:#4895ff}
-  #settings-grid .settings-save:disabled{background:#3a4047;color:#7a7f87;cursor:not-allowed}
+  /* Match the rest of the app's primary-button style (subtle sky-blue text
+     on dark bg with sky-blue border) — was an outlier with solid #388bfd. */
+  #settings-grid .settings-save{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease}
+  #settings-grid .settings-save:hover:not(:disabled){background:#11141a;border-color:#3e6082}
+  #settings-grid .settings-save:active{transform:scale(.96)}
+  #settings-grid .settings-save:disabled{opacity:.4;cursor:not-allowed}
   #settings-grid .overlay-badge{display:inline-block;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#0b0c10;background:#7cc4ff;padding:2px 8px;border-radius:10px;margin-left:8px;vertical-align:middle}
   .agents-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;font-size:12px;color:#9aa0a6;flex-wrap:wrap;gap:10px}
   .agents-bar #agents-summary{color:#c9d1d9}
@@ -513,24 +562,7 @@ function pickerPage(): string {
   }
 </style></head>
 <body>
-<div id="nav-backdrop" aria-hidden="true"></div>
-<aside id="nav-drawer" aria-hidden="true">
-  <div class="nav-header">
-    <span class="nav-brand">LLMUX</span>
-    <span class="nav-host">${escapeHtml(host)}</span>
-  </div>
-  <nav>
-    <a data-page="sessions" class="active"><span class="nav-icon">▦</span>Sessions</a>
-    <a data-page="tokens"><span class="nav-icon">⚿</span>Tokens</a>
-    <a data-page="agents"><span class="nav-icon">⌬</span>Agents</a>
-    <a data-page="logs"><span class="nav-icon">▤</span>Logs</a>
-    <a data-page="settings"><span class="nav-icon">⚙</span>Settings</a>
-    <a data-page="about"><span class="nav-icon">ⓘ</span>About</a>
-  </nav>
-  <div class="nav-footer">
-    <span>v${escapeHtml(DAEMON_VERSION)}</span>
-  </div>
-</aside>
+${renderNavDrawer(host, 'sessions')}
 <header>
   <div class="header-controls">
     <button id="nav-toggle" type="button" aria-label="open navigation" title="open navigation">☰</button>
@@ -541,7 +573,7 @@ function pickerPage(): string {
       <span>v${escapeHtml(DAEMON_VERSION)}</span>
     </div>
   </div>
-  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · <span id="page-title">Sessions</span></h1>
+  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · <span id="page-title">Chat</span></h1>
 </header>
 <div id="page-sessions" class="page active">
 <div id="new-form" aria-hidden="true">
@@ -818,7 +850,7 @@ function pickerPage(): string {
   // Last-viewed page persists in localStorage so a hard reload keeps the
   // operator on the same screen.
   const ROUTES = ['sessions', 'tokens', 'agents', 'logs', 'settings', 'about'];
-  const PAGE_TITLES = { sessions: 'Sessions', tokens: 'Tokens', agents: 'Agents', logs: 'Logs', settings: 'Settings', about: 'About' };
+  const PAGE_TITLES = { sessions: 'Chat', tokens: 'Tokens', agents: 'Agents', logs: 'Logs', settings: 'Settings', about: 'About' };
   const navToggle = document.getElementById('nav-toggle');
   const navDrawer = document.getElementById('nav-drawer');
   const navBackdrop = document.getElementById('nav-backdrop');
@@ -2547,7 +2579,7 @@ function sessionPage(name: string): string {
 </style></head>
 <body>
 <div id="topbar">
-  <button id="back" title="Back to sessions">⌂</button>
+  <button id="back" title="Back to chat list">⌂</button>
   <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span></span>
   <button id="copy-buf" title="Copy visible terminal text" aria-label="copy visible">Copy</button>
   <button id="copy-all" title="Copy full scrollback" aria-label="copy all">All</button>
@@ -3350,8 +3382,635 @@ async function readJsonBody(req: IncomingMessage, limit = 64 * 1024): Promise<un
 
 // ---------- helpers ----------
 
+// ── Orchestration API + page ─────────────────────────────────────────
+//
+// Read endpoints: GET, query-string params.
+// Write endpoints: POST, JSON body.
+// All operate against the default orch transport path (no per-request
+// override yet — orchestrations are 1-per-host in v1.0).
+
+interface OrchResponse { body: unknown; status: number }
+
+async function handleOrchApi(url: URL, method: string, req: IncomingMessage, lockedAlias?: string): Promise<OrchResponse | null> {
+  const root = defaultTransportRoot();
+  const path = url.pathname;
+  const qs = url.searchParams;
+
+  try {
+    if (path === '/api/orch/status' && method === 'GET') {
+      return { body: orch.status(root), status: 200 };
+    }
+    if (path === '/api/orch/inbox' && method === 'GET') {
+      const alias = qs.get('alias');
+      if (!alias) return { body: { ok: false, error: '`alias` query param required' }, status: 400 };
+      const channel = qs.get('channel') ?? 'main';
+      const limit = qs.get('limit') ? parseInt(qs.get('limit')!, 10) : 50;
+      const includeClaimed = qs.get('include_claimed') === 'true';
+      const since = qs.get('since');
+      const inboxOpts: orch.InboxOptions = { channel, limit, includeClaimedByOthers: includeClaimed };
+      if (since !== null && since !== '') inboxOpts.since = since;
+      // When `since` is present, return the cursor-aware shape
+      // { messages, nextCursor } so scripted pollers can advance their
+      // cursor cheaply. Without `since`, preserve the v1 bare-array
+      // response shape so existing /orch web-page polls keep working.
+      if (since !== null && since !== '') {
+        return { body: orch.inboxWithCursor(root, alias, inboxOpts), status: 200 };
+      }
+      const messages = orch.inbox(root, alias, inboxOpts);
+      return { body: messages, status: 200 };
+    }
+    // Global bus view — every message in the channel regardless of addressing
+    // / activation / claim. Newest first. The /orch page uses this for its
+    // default 'situational awareness' view; per-alias inbox stays available
+    // for the alias-specific perspective.
+    if (path === '/api/orch/messages' && method === 'GET') {
+      const channel = qs.get('channel') ?? 'main';
+      const limit = qs.get('limit') ? parseInt(qs.get('limit')!, 10) : 100;
+      const messages = orch.allMessages(root, channel, limit);
+      return { body: messages, status: 200 };
+    }
+    if (path === '/api/orch/actors' && method === 'GET') {
+      // Returns [{alias, species, name?}] — richer than the old bare
+      // string list. UI uses species to colour chips, future filtering
+      // hooks in here too. Old shape was string[] (alias names only).
+      return { body: listActorSummaries(root), status: 200 };
+    }
+    if (path.startsWith('/api/orch/actor/') && method === 'GET') {
+      const alias = decodeURIComponent(path.slice('/api/orch/actor/'.length));
+      try {
+        const actor = loadActor(root, alias);
+        return { body: actor, status: 200 };
+      } catch (err) {
+        return { body: { ok: false, error: err instanceof Error ? err.message : 'load failed' }, status: 404 };
+      }
+    }
+    if (path === '/api/orch/send' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const from = lockedAlias ?? String(body['from'] ?? '');
+      const to = body['to'];
+      const text = String(body['body'] ?? '');
+      if (!from || !to || !text) return { body: { ok: false, error: 'from, to, body required' }, status: 400 };
+      const input: orch.SendInput = { from, to: to as string | string[], body: text };
+      if (typeof body['channel'] === 'string') input.channel = body['channel'] as string;
+      if (body['re'] !== undefined) input.re = body['re'] as string | string[];
+      return { body: orch.send(root, input), status: 200 };
+    }
+    if (path === '/api/orch/next' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const alias = lockedAlias ?? String(body['alias'] ?? '');
+      if (!alias) return { body: { ok: false, error: 'alias required' }, status: 400 };
+      const channel = typeof body['channel'] === 'string' ? body['channel'] as string : 'main';
+      const m = orch.claimNext(root, alias, { channel });
+      return { body: m ?? null, status: 200 };
+    }
+    if (path === '/api/orch/reply' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const msgId = String(body['msgId'] ?? '');
+      const alias = lockedAlias ?? String(body['alias'] ?? '');
+      const text = String(body['body'] ?? '');
+      if (!msgId || !alias || !text) return { body: { ok: false, error: 'msgId, alias, body required' }, status: 400 };
+      const channel = typeof body['channel'] === 'string' ? body['channel'] as string : 'main';
+      return { body: orch.reply(root, msgId, alias, text, channel), status: 200 };
+    }
+    if (path === '/api/orch/release' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const msgId = String(body['msgId'] ?? '');
+      const alias = lockedAlias ?? String(body['alias'] ?? '');
+      if (!msgId || !alias) return { body: { ok: false, error: 'msgId, alias required' }, status: 400 };
+      orch.release(root, msgId, alias);
+      return { body: { ok: true }, status: 200 };
+    }
+    if (path === '/api/orch/ack' && method === 'POST') {
+      const body = await readJsonBody(req) as Record<string, unknown>;
+      const msgId = String(body['msgId'] ?? '');
+      const alias = lockedAlias ?? String(body['alias'] ?? '');
+      if (!msgId || !alias) return { body: { ok: false, error: 'msgId, alias required' }, status: 400 };
+      orch.ack(root, msgId, alias);
+      return { body: { ok: true }, status: 200 };
+    }
+    return null; // fall through to 404
+  } catch (err) {
+    return { body: { ok: false, error: err instanceof Error ? err.message : 'server error' }, status: 500 };
+  }
+}
+
+function orchPage(authedUsername: string): string {
+  // Operator console for the orch bus. Visually consistent with pickerPage:
+  // same dark monospace palette, same hamburger nav drawer (with the same
+  // items so navigation cross-page feels uniform). Polls /api/orch/inbox
+  // for a chosen alias, lets the operator send / claim / reply / ack /
+  // release. Drawer items for non-orch sections set localStorage.llmux.page
+  // and navigate to /, so the picker opens to the right section.
+  const host = hostname();
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>llmux on ${escapeHtml(host)} · Channels</title>
+<link rel="icon" href="${FAVICON_DATA_URL}">
+<link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
+<meta name="theme-color" content="#0b0c10">
+<style>
+  :root{color-scheme:dark}
+  html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px;overflow-x:hidden}
+  body{padding:18px 16px 80px;max-width:980px;margin:0 auto;box-sizing:border-box}
+  header{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-bottom:14px}
+  header .header-controls{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  h1{font-size:18px;margin:0}
+  h1 .brand{color:#7cc4ff;letter-spacing:.08em;font-weight:600}
+  h1 .host{color:#a371f7;font-weight:500}
+  #nav-toggle{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;font-size:18px;line-height:1;margin-right:10px;flex:0 0 auto;transition:background 150ms ease,border-color 150ms ease}
+  #nav-toggle:hover{background:#252b34;border-color:#3a414b}
+  #nav-toggle:active{transform:scale(.94)}
+  #nav-drawer{position:fixed;top:0;left:-300px;width:280px;height:100dvh;background:#0e1116;border-right:1px solid #1f2329;transition:left 220ms ease;z-index:55;padding:18px 0;box-sizing:border-box;display:flex;flex-direction:column}
+  #nav-drawer.open{left:0}
+  #nav-backdrop{position:fixed;inset:0;background:rgba(11,12,16,.55);z-index:54;opacity:0;visibility:hidden;transition:opacity 180ms ease,visibility 0s 180ms}
+  #nav-backdrop.show{opacity:1;visibility:visible;transition:opacity 180ms ease}
+  #nav-drawer .nav-header{padding:0 20px 16px;border-bottom:1px solid #1f2329;display:flex;flex-direction:column;gap:4px}
+  #nav-drawer .nav-brand{color:#7cc4ff;font-weight:600;letter-spacing:.08em;font-size:15px}
+  #nav-drawer .nav-host{color:#a371f7;font-size:12px}
+  #nav-drawer nav{flex:1;display:flex;flex-direction:column;padding:8px 0;overflow-y:auto}
+  #nav-drawer a{display:flex;align-items:center;gap:10px;padding:12px 20px;color:#c9d1d9;text-decoration:none;font-size:14px;border-left:3px solid transparent;cursor:pointer}
+  #nav-drawer a:hover{background:#11141a}
+  #nav-drawer a.active{border-left-color:#7cc4ff;color:#7cc4ff;background:#11141a}
+  #nav-drawer a .nav-icon{font-size:16px;width:20px;text-align:center;color:inherit}
+  #nav-drawer .nav-footer{padding:10px 20px 0;border-top:1px solid #1f2329;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;align-items:center}
+  #meta{color:#7a7f87;font-size:11px}
+  .channel-row{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+  .channel-label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em}
+  /* Custom dropdown — compact regardless of channel count. Native <select>
+     has flaky mobile UX (no "+ new" affordance), so this is a small
+     custom widget with the same shape as the rest of the app's controls. */
+  .channel-picker{position:relative;align-self:flex-start;min-width:180px}
+  .channel-trigger{display:flex;align-items:center;justify-content:space-between;width:100%;background:#0b0c10;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 12px;font:13px ui-monospace,monospace;cursor:pointer;font-weight:600}
+  .channel-trigger:hover{background:#11192b}
+  .channel-chevron{color:#7a7f87;margin-left:10px;font-size:10px}
+  .channel-popup{display:none;position:absolute;top:calc(100% + 4px);left:0;min-width:100%;max-width:min(320px,90vw);max-height:280px;overflow-y:auto;background:#0e1116;border:1px solid #262c34;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.5);z-index:30;padding:4px 0}
+  .channel-popup.open{display:block}
+  .channel-option{display:block;width:100%;text-align:left;background:transparent;color:#c9d1d9;border:none;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  .channel-option:hover{background:#11192b}
+  .channel-option.active{color:#7cc4ff;font-weight:600;background:#11192b}
+  .channel-option.add{color:#7cc4ff;border-top:1px solid #262c34;margin-top:4px;padding-top:10px}
+  .channel-option.add:hover{background:#11192b}
+  .toolbar{display:flex;gap:8px;margin-bottom:14px;align-items:end;flex-wrap:nowrap}
+  .toolbar label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em;display:flex;flex-direction:column;gap:3px;flex:1 1 80px;min-width:0}
+  .toolbar input{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none;width:100%;box-sizing:border-box;min-width:0}
+  .toolbar input:focus{border-color:#2d4a66}
+  .toolbar button{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 12px;font:13px ui-monospace,monospace;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+  @media (max-width:600px){
+    .toolbar{gap:6px}
+    .toolbar button{padding:7px 9px;font-size:12px}
+  }
+  .toolbar button.muted{color:#e6e8eb;border-color:#262c34}
+  .toolbar button:hover{background:#252b34}
+  .toolbar button.on{background:#11281b;color:#7ee787;border-color:#1f4528}
+  .stats{margin-bottom:14px;color:#7a7f87;font-size:11px;font-family:ui-monospace,monospace}
+  .empty{padding:30px;text-align:center;color:#7a7f87;font-size:13px;background:#11141a;border:1px solid #1f2329;border-radius:8px}
+  details{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:14px;margin-bottom:14px}
+  details summary{cursor:pointer;color:#7cc4ff;font-size:13px;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+  details .send-row{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+  details .send-row input{width:100%;box-sizing:border-box;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none}
+  details .send-row input:focus{border-color:#2d4a66}
+  details textarea{width:100%;min-height:90px;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:10px;font:13px ui-monospace,monospace;margin-top:8px;box-sizing:border-box;outline:none;resize:vertical}
+  details textarea:focus{border-color:#2d4a66}
+  details .send-actions{display:flex;justify-content:flex-end;margin-top:10px}
+  details .send-actions button{background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  details .send-actions button:hover{background:#252b34}
+  /* Thread = one dispatch + its replies. Wrap in a subtle outer border
+     so the grouping is unmistakable; root sits flush, replies indent
+     with a clear chunk and get a lighter background to read as "nested". */
+  /* Stronger thread border + accent color so each thread reads as a single
+     grouped unit, not a loose pile of cards. */
+  .thread{margin-bottom:18px;border:1px solid #262c34;border-left:4px solid #2d4a66;border-radius:8px;padding:12px;background:#0d0f14}
+  .thread .msg{margin-bottom:8px}
+  .thread .msg:last-of-type{margin-bottom:0}
+  .thread-summary{font-size:10px;color:#7cc4ff;text-transform:uppercase;letter-spacing:.08em;padding:0 0 8px 4px;font-weight:600}
+  .msg{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:12px 14px;margin-bottom:10px}
+  /* Replies indent visibly under their dispatch with a sky-blue rail
+     and a lighter card bg so the parent/child relationship reads at a
+     glance. Depth caps at 4 to prevent runaway nesting. */
+  .msg.reply{margin-left:36px;background:#161a22;border-left:3px solid #2d4a66;position:relative}
+  /* Connecting elbow from rail to parent's bottom-left corner. */
+  .msg.reply::before{content:"";position:absolute;left:-22px;top:18px;width:18px;height:2px;background:#2d4a66}
+  .msg.reply.depth-2{margin-left:64px}
+  .msg.reply.depth-3{margin-left:92px}
+  .msg.reply.depth-4{margin-left:120px}
+  @media (max-width:600px){
+    .thread{padding:8px}
+    .msg.reply{margin-left:20px}
+    .msg.reply::before{left:-14px;width:12px}
+    .msg.reply.depth-2{margin-left:36px}
+    .msg.reply.depth-3{margin-left:52px}
+    .msg.reply.depth-4{margin-left:68px}
+  }
+  .msg-head{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:#9aa0a6;margin-bottom:8px;align-items:baseline;flex-wrap:wrap}
+  .msg-route{display:inline-flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+  .msg-from{color:#7cc4ff;font-weight:600}
+  .msg-arrow{color:#7a7f87}
+  .msg-to{color:#7ee787}
+  .msg-re{color:#f0883e;font-size:11px;margin-left:6px}
+  .msg-id{font-family:ui-monospace,monospace;font-size:11px;color:#7a7f87}
+  .msg-body{white-space:pre-wrap;font:12px ui-monospace,monospace;background:#0b0c10;padding:10px 12px;border-radius:6px;color:#e6e8eb;max-height:400px;overflow:auto;border:1px solid #1f2329}
+  .msg-actions{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  .msg-actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:5px 10px;font:11px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease}
+  .msg-actions button:hover{background:#252b34;border-color:#3a414b}
+  .msg-actions button.primary{color:#7cc4ff;border-color:#2d4a66}
+  .msg-actions button.primary:hover{background:#11192b}
+  .claim-badge{background:#11281b;color:#7ee787;border:1px solid #1f4528;border-radius:3px;padding:1px 7px;font-size:11px;font-weight:600;margin-left:6px}
+  .toast{position:fixed;bottom:20px;right:20px;background:#1c2128;color:#7cc4ff;border:1px solid #2d4a66;padding:10px 14px;border-radius:6px;font:12px ui-monospace,monospace;box-shadow:0 4px 16px rgba(0,0,0,.5);opacity:0;transform:translateY(8px);transition:opacity 180ms ease,transform 180ms ease;pointer-events:none;z-index:70}
+  .toast.show{opacity:1;transform:translateY(0)}
+  .toast.err{color:#f85149;border-color:#4a2329;background:#1f1416}
+  .alias-chip{background:#1c2128;color:#c9d1d9;border:1px solid #262c34;border-radius:14px;padding:5px 10px 5px 8px;font:12px ui-monospace,monospace;cursor:pointer;transition:background 150ms ease,border-color 150ms ease,color 150ms ease;display:inline-flex;align-items:center;gap:6px}
+  .alias-chip:hover{background:#252b34;border-color:#3a414b}
+  .alias-chip.active{background:#11192b;color:#7cc4ff;border-color:#2d4a66}
+  .alias-chip .species-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+  .alias-chip .species-dot.machine{background:#7cc4ff}
+  .alias-chip .species-dot.human{background:#7ee787}
+  .alias-chip.human{border-color:#1f4528;background:#0d1a13}
+  .alias-chip.human:hover{background:#11281b;border-color:#1f4528}
+  .alias-chip.human.active{background:#11281b;color:#7ee787;border-color:#1f4528}
+  .identity-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#11141a;border:1px solid #1f2329;border-radius:8px;margin-bottom:8px;flex-wrap:wrap}
+  .identity-label{color:#9aa0a6;font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .identity-row input{flex:1 1 200px;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none;min-width:160px}
+  .identity-row input:focus{border-color:#2d4a66}
+  .identity-locked{flex:1 1 200px;background:#0b0c10;color:#7cc4ff;border:1px solid #2d4a66;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;font-weight:600;min-width:160px}
+  .identity-hint{flex:0 1 100%;font-size:11px;color:#7a7f87;font-style:italic;margin-top:2px}
+  @media (min-width:601px){ .identity-hint{flex:0 1 auto;margin-top:0} }
+  .alias-chips-row{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+</style>
+</head><body>
+${renderNavDrawer(host, 'orch')}
+<header>
+  <div class="header-controls">
+    <button id="nav-toggle" type="button" aria-label="open navigation" title="open navigation">☰</button>
+    <div id="meta">
+      <span id="auto-state">live · 5s</span>
+      <span> · </span>
+      <span>v${escapeHtml(DAEMON_VERSION)}</span>
+    </div>
+  </div>
+  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · Channels</h1>
+</header>
+
+<div class="channel-row">
+  <span class="channel-label">channel</span>
+  <div class="channel-picker" id="channel-picker">
+    <button type="button" class="channel-trigger" id="channel-trigger" aria-haspopup="listbox" aria-expanded="false">
+      <span id="channel-current">main</span>
+      <span class="channel-chevron">▾</span>
+    </button>
+    <div class="channel-popup" id="channel-popup" role="listbox"></div>
+  </div>
+  <!-- Hidden input — existing getChannel()/setChannel() (localStorage
+       persistence, refresh wiring) stays the source of truth; the picker
+       drives this value. -->
+  <input type="hidden" id="channel" value="main" />
+</div>
+<div class="toolbar">
+  <button id="claim-next" type="button" title="claim the next unclaimed message addressed to you">claim next</button>
+  <button id="refresh" class="muted" type="button">refresh</button>
+  <button id="auto" class="on" type="button">auto-poll · 5s</button>
+</div>
+<div class="stats" id="stats" style="display:none"></div>
+
+<div class="identity-row">
+  <span class="identity-label">sending as:</span>
+  <span id="alias-display" class="identity-locked">${escapeHtml(authedUsername)}</span>
+  <span class="identity-hint">your authenticated identity — server-enforced, no spoofing</span>
+</div>
+
+<details>
+  <summary>＋ send a message (as <span id="from-label">${escapeHtml(authedUsername)}</span>)</summary>
+  <div class="send-row">
+    <input id="send-to" placeholder="to: alias OR all (broadcast)" />
+    <input id="send-re" placeholder="re: parent-msg-id (optional)" />
+  </div>
+  <textarea id="send-body" placeholder="message body…"></textarea>
+  <div class="send-actions"><button id="send-btn" type="button">send</button></div>
+</details>
+
+<div id="messages"></div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let autoPoll = true;
+let pollTimer = null;
+
+// Identity is server-enforced — baked into the page from the v2-authed
+// session. No browser-side override, no localStorage, no spoofing.
+const AUTHED_ALIAS = ${JSON.stringify(authedUsername)};
+function getAlias(){ return AUTHED_ALIAS; }
+function setChannel(v){
+  localStorage.setItem('orchChannel', v);
+  $('channel').value = v;
+  const cur = $('channel-current');
+  if (cur) cur.textContent = v;
+}
+function closeChannelPopup(){
+  const p = $('channel-popup');
+  const t = $('channel-trigger');
+  if (p) p.classList.remove('open');
+  if (t) t.setAttribute('aria-expanded', 'false');
+}
+function openChannelPopup(){
+  const p = $('channel-popup');
+  const t = $('channel-trigger');
+  if (p) p.classList.add('open');
+  if (t) t.setAttribute('aria-expanded', 'true');
+}
+function renderChannelPicker(known){
+  const popup = $('channel-popup');
+  if (!popup) return;
+  const current = getChannel();
+  const set = new Set(known);
+  set.add(current);
+  const list = Array.from(set);
+  list.sort();
+  popup.innerHTML = list.map(function(c){
+    const active = c === current ? ' active' : '';
+    return '<button type="button" class="channel-option' + active + '" data-ch="' + escapeHtml(c) + '">' + escapeHtml(c) + '</button>';
+  }).join('') + '<button type="button" class="channel-option add" id="channel-add">+ new channel…</button>';
+  popup.querySelectorAll('.channel-option[data-ch]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      const v = btn.dataset.ch;
+      closeChannelPopup();
+      if (v && v !== getChannel()) { setChannel(v); refresh(); }
+    });
+  });
+  const addBtn = $('channel-add');
+  if (addBtn) addBtn.addEventListener('click', function(){
+    const name = prompt('New channel name:');
+    closeChannelPopup();
+    if (!name) return;
+    const clean = name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+    if (!clean) return;
+    setChannel(clean);
+    renderChannelPicker(list);
+    refresh();
+  });
+}
+function getChannel(){ return $('channel').value.trim() || 'main'; }
+
+function toast(msg, isErr){
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isErr ? ' err' : '');
+  setTimeout(function(){ t.className = 'toast'; }, 2500);
+}
+
+async function apiGet(path){
+  const r = await fetch(path, { cache:'no-store' });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function apiPost(path, body){
+  const r = await fetch(path, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, function(c){ return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]; });
+}
+function fmtTo(to){ return Array.isArray(to) ? to.join(',') : to; }
+function fmtRe(re){ if (!re) return ''; return Array.isArray(re) ? re.join(',') : re; }
+
+async function refresh(){
+  // Always refresh status so the bus stats render even when nothing else is set.
+  try {
+    const status = await apiGet('/api/orch/status');
+    $('stats').textContent = 'transport ' + status.transportRoot + '   ·   channels [' + status.channels.join(',') + ']   ·   live claims ' + status.liveClaims;
+    $('stats').style.display = '';
+    // Render the channel dropdown options. The picker stays compact (single
+    // trigger button) regardless of how many channels exist. Channels
+    // materialize on first send, so brand-new names from "+ new" are fine.
+    renderChannelPicker(Array.isArray(status.channels) ? status.channels : ['main']);
+  } catch(_){}
+
+  // Global bus view by default — every message in the channel, threaded.
+  // Roots (messages with no \`re:\`) are sorted newest-first; replies sit
+  // chronologically under their root. Multi-parent \`re:\` arrays nest
+  // under the first parent. Replies whose parent isn't in the current
+  // view (cropped by limit) are rendered as their own root.
+  try {
+    const messages = await apiGet('/api/orch/messages?channel=' + encodeURIComponent(getChannel()));
+    if (!messages.length){
+      $('messages').innerHTML = '<div class="empty">no messages on the bus in channel <strong>' + escapeHtml(getChannel()) + '</strong> yet</div>';
+      return;
+    }
+    $('messages').innerHTML = renderThreaded(messages);
+  } catch (err){
+    toast('refresh failed: ' + err.message, true);
+  }
+}
+
+function renderMsg(m, depth){
+  const claim = m.claimed ? '<span class="claim-badge">claimed: ' + escapeHtml(m.claimed.alias) + '</span>' : '';
+  const re = m.re ? '<span class="msg-re">re: ' + escapeHtml(fmtRe(m.re)) + '</span>' : '';
+  const depthClass = depth > 0 ? ' reply depth-' + Math.min(depth, 4) : '';
+
+  // Per-v2 identity lock: only render actions the operator can actually
+  // perform on this message. The server enforces alias=AUTHED_ALIAS on
+  // every reply/ack/release POST; rendering ungated buttons would produce
+  // 403s on click. Better: hide what's not actionable.
+  const toList = Array.isArray(m.to) ? m.to : [m.to];
+  const addressedToMe = toList.indexOf(AUTHED_ALIAS) >= 0 || toList.indexOf('all') >= 0;
+  const claimedByMe = !!(m.claimed && m.claimed.alias === AUTHED_ALIAS);
+  const buttons = [];
+  if (addressedToMe) buttons.push('<button class="primary" onclick="doReply(\\''+ m.id +'\\')">reply</button>');
+  if (addressedToMe && !claimedByMe) buttons.push('<button onclick="doAck(\\''+ m.id +'\\')">ack</button>');
+  if (claimedByMe) buttons.push('<button onclick="doRelease(\\''+ m.id +'\\')">release</button>');
+  const actions = buttons.length > 0
+    ? '<div class="msg-actions">' + buttons.join('') + '</div>'
+    : '';
+
+  return [
+    '<div class="msg' + depthClass + '">',
+    '  <div class="msg-head">',
+    '    <span class="msg-route"><span class="msg-from">', escapeHtml(m.from), '</span><span class="msg-arrow">→</span><span class="msg-to">', escapeHtml(fmtTo(m.to)), '</span>', re, claim, '</span>',
+    '    <span class="msg-id">', escapeHtml(m.id), '</span>',
+    '  </div>',
+    '  <div class="msg-body">', escapeHtml(m.body), '</div>',
+    actions,
+    '</div>',
+  ].join('');
+}
+
+function renderThreaded(messages){
+  // 1. Index by id for parent lookup.
+  const byId = new Map();
+  for (const m of messages) byId.set(m.id, m);
+
+  // 2. For each msg, find its root (walk up the re-chain). Roots are
+  //    messages with no re, or whose parent isn't in the view.
+  function rootOf(m){
+    let cur = m;
+    const seen = new Set();
+    while (cur.re){
+      if (seen.has(cur.id)) return cur.id; // cycle safety
+      seen.add(cur.id);
+      const pid = Array.isArray(cur.re) ? cur.re[0] : cur.re;
+      const parent = byId.get(pid);
+      if (!parent) return cur.id; // parent cropped — be your own root
+      cur = parent;
+    }
+    return cur.id;
+  }
+
+  // 3. Compute depth for indent (root = 0, direct reply = 1, etc.)
+  function depthOf(m){
+    let d = 0;
+    let cur = m;
+    const seen = new Set();
+    while (cur.re && d < 8){
+      if (seen.has(cur.id)) break;
+      seen.add(cur.id);
+      const pid = Array.isArray(cur.re) ? cur.re[0] : cur.re;
+      const parent = byId.get(pid);
+      if (!parent) break;
+      d++;
+      cur = parent;
+    }
+    return d;
+  }
+
+  // 4. Group by root id.
+  const byRoot = new Map(); // rootId -> [msg, ...]
+  for (const m of messages){
+    const rid = rootOf(m);
+    if (!byRoot.has(rid)) byRoot.set(rid, []);
+    byRoot.get(rid).push(m);
+  }
+
+  // 5. Sort roots by their timestamp DESC; within each thread, ASC
+  //    (oldest dispatch at top, replies underneath chronologically).
+  //    The API returns messages with a timestamp field (not createdAt) —
+  //    earlier draft used the wrong key and the sort was a silent no-op
+  //    that left replies above their parent in the visual.
+  const roots = Array.from(byRoot.entries()).sort(function(a, b){
+    const ra = byId.get(a[0]);
+    const rb = byId.get(b[0]);
+    const ta = ra ? ra.timestamp : a[1][0].timestamp;
+    const tb = rb ? rb.timestamp : b[1][0].timestamp;
+    return (tb || '').localeCompare(ta || '');
+  });
+
+  return roots.map(function(entry){
+    const items = entry[1].slice().sort(function(a, b){ return (a.timestamp || '').localeCompare(b.timestamp || ''); });
+    const cards = items.map(function(m){ return renderMsg(m, depthOf(m)); }).join('');
+    const replyCount = items.length - 1;
+    // Summary at TOP of thread (above root) — operator scans top-down,
+    // wants to know "is there a reply here?" before reading the dispatch.
+    const summary = replyCount > 0
+      ? '<div class="thread-summary">↳ ' + replyCount + ' repl' + (replyCount === 1 ? 'y' : 'ies') + '</div>'
+      : '';
+    return '<div class="thread">' + summary + cards + '</div>';
+  }).join('');
+}
+
+function requireYou(){
+  const alias = getAlias();
+  if (!alias){ toast('pick "you:" first — that identifies who acts', true); return null; }
+  return alias;
+}
+async function doClaim(_id){
+  const alias = requireYou(); if (!alias) return;
+  try { await apiPost('/api/orch/next', { alias: alias, channel: getChannel() }); toast('claimed next'); refresh(); }
+  catch (err){ toast('claim failed: ' + err.message, true); }
+}
+async function doReply(id){
+  const alias = requireYou(); if (!alias) return;
+  const body = prompt('Reply body:');
+  if (!body) return;
+  try { await apiPost('/api/orch/reply', { msgId: id, alias: alias, body: body, channel: getChannel() }); toast('replied'); refresh(); }
+  catch (err){ toast('reply failed: ' + err.message, true); }
+}
+async function doAck(id){
+  const alias = requireYou(); if (!alias) return;
+  try { await apiPost('/api/orch/ack', { msgId: id, alias: alias }); toast('acked'); refresh(); }
+  catch (err){ toast('ack failed: ' + err.message, true); }
+}
+async function doRelease(id){
+  const alias = requireYou(); if (!alias) return;
+  try { await apiPost('/api/orch/release', { msgId: id, alias: alias }); toast('released'); refresh(); }
+  catch (err){ toast('release failed: ' + err.message, true); }
+}
+
+$('send-btn').addEventListener('click', async function(){
+  const alias = requireYou(); if (!alias) return;
+  const to = $('send-to').value.trim();
+  const body = $('send-body').value.trim();
+  const re = $('send-re').value.trim();
+  if (!to || !body) return toast('to + body required', true);
+  try {
+    const payload = { from: alias, to: to, body: body, channel: getChannel() };
+    if (re) payload.re = re;
+    await apiPost('/api/orch/send', payload);
+    $('send-body').value = '';
+    $('send-to').value = '';
+    $('send-re').value = '';
+    toast('sent');
+    refresh();
+  } catch (err){ toast('send failed: ' + err.message, true); }
+});
+
+$('refresh').addEventListener('click', refresh);
+$('claim-next').addEventListener('click', function(){ doClaim(null); });
+
+// Channel picker open/close
+$('channel-trigger').addEventListener('click', function(e){
+  e.stopPropagation();
+  const popup = $('channel-popup');
+  if (popup && popup.classList.contains('open')) closeChannelPopup();
+  else openChannelPopup();
+});
+document.addEventListener('click', function(e){
+  const picker = $('channel-picker');
+  if (picker && !picker.contains(e.target)) closeChannelPopup();
+});
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeChannelPopup(); });
+
+$('auto').addEventListener('click', function(){
+  autoPoll = !autoPoll;
+  $('auto').textContent = autoPoll ? 'auto-poll · 5s' : 'auto-poll · off';
+  $('auto').className = autoPoll ? 'on' : 'muted';
+  $('auto-state').textContent = autoPoll ? 'live · 5s' : 'manual';
+  if (autoPoll){ pollTimer = setInterval(refresh, 5000); } else { clearInterval(pollTimer); pollTimer = null; }
+});
+
+// nav drawer — open/close + cross-page navigation
+const navToggle = $('nav-toggle');
+const navDrawer = $('nav-drawer');
+const navBackdrop = $('nav-backdrop');
+function openDrawer(){ navDrawer.classList.add('open'); navBackdrop.classList.add('show'); }
+function closeDrawer(){ navDrawer.classList.remove('open'); navBackdrop.classList.remove('show'); }
+navToggle.addEventListener('click', openDrawer);
+navBackdrop.addEventListener('click', closeDrawer);
+navDrawer.querySelectorAll('a[data-page]').forEach(function(a){
+  a.addEventListener('click', function(e){
+    e.preventDefault();
+    try { localStorage.setItem('llmux.page', a.dataset.page); } catch(_){}
+    location.href = '/';
+  });
+});
+
+// boot — drop any stale localStorage.orchAlias from pre-v2 sessions
+try { localStorage.removeItem('orchAlias'); } catch (_) {}
+setChannel(localStorage.getItem('orchChannel') || 'main');
+refresh();
+pollTimer = setInterval(refresh, 5000);
+</script>
+</body></html>`;
+}
+
 function sendHtml(res: ServerResponse, body: string, status = 200): void {
-  res.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
+  res.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8',
+    // Force browsers to re-check on every load. The HTML embeds page-bound
+    // JS that ships in each commit; without this header the operator can
+    // be silently stuck on a stale build until they hard-refresh.
+    'cache-control': 'no-cache, no-store, must-revalidate',
+  });
   res.end(body);
 }
 
@@ -3459,7 +4118,7 @@ export function mergeSpawnEnv(agent: AgentDefinition, sessionEnv: Record<string,
 
 const SESSION_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 
-function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string; env?: string; resumeFrom?: string; initPrompts?: string[] }):
+function createSession(input: { agent: string; name?: string; cwd?: string; flags?: string; env?: string; resumeFrom?: string; initPrompts?: string[]; orchAlias?: string }):
   | { ok: true; session: SessionView }
   | { ok: false; error: string } {
   if (!input.agent) return { ok: false, error: 'agent is required' };
@@ -3493,12 +4152,15 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
   // history adapter; otherwise we silently drop it (don't fail).
   const resumeFrom = input.resumeFrom && agentDef.history ? input.resumeFrom : undefined;
 
+  const llmuxEnv: Record<string, string> = { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key };
+  if (input.orchAlias) llmuxEnv['LLMUX_ORCH_ALIAS'] = input.orchAlias;
+  agentDef.preSpawn?.({ cwd });
   try {
     tmux.newSession({
       name,
       command: buildAgentCommand(agentDef, flagsOverride, resumeFrom),
       cwd,
-      env: mergeSpawnEnv(agentDef, envOverride, { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key }),
+      env: mergeSpawnEnv(agentDef, envOverride, llmuxEnv),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -3512,6 +4174,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
     ...(envOverride !== undefined ? { env: envOverride } : {}),
     ...(resumeFrom !== undefined ? { resumeFrom } : {}),
     ...(input.initPrompts && input.initPrompts.length > 0 ? { initPrompts: input.initPrompts } : {}),
+    ...(input.orchAlias ? { orchAlias: input.orchAlias } : {}),
     createdAt: new Date().toISOString(),
     parent: null,
     restart: 'on-failure',
@@ -3537,11 +4200,16 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
     }
   }
   try {
+    agent.preSpawn?.({ cwd: session.cwd });
     tmux.newSession({
       name: session.name,
       command: buildAgentCommand(agent, session.flags, session.resumeFrom),
       cwd: session.cwd,
-      env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent }),
+      env: mergeSpawnEnv(agent, session.env, {
+        LLMUX_SESSION: session.name,
+        LLMUX_AGENT: session.agent,
+        ...(session.orchAlias ? { LLMUX_ORCH_ALIAS: session.orchAlias } : {}),
+      }),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -3574,11 +4242,16 @@ function resumeConversation(
   }
 
   try {
+    agent.preSpawn?.({ cwd: session.cwd });
     tmux.newSession({
       name: session.name,
       command: buildAgentCommand(agent, session.flags, conversationId),
       cwd: session.cwd,
-      env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent }),
+      env: mergeSpawnEnv(agent, session.env, {
+        LLMUX_SESSION: session.name,
+        LLMUX_AGENT: session.agent,
+        ...(session.orchAlias ? { LLMUX_ORCH_ALIAS: session.orchAlias } : {}),
+      }),
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -3686,11 +4359,16 @@ export function editSession(
     if (agent && isAgentInstalled(agent)) {
       try {
         tmux.killSession(updated.name);
+        agent.preSpawn?.({ cwd: updated.cwd });
         tmux.newSession({
           name: updated.name,
           command: buildAgentCommand(agent, updated.flags, updated.resumeFrom),
           cwd: updated.cwd,
-          env: mergeSpawnEnv(agent, updated.env, { LLMUX_SESSION: updated.name, LLMUX_AGENT: updated.agent }),
+          env: mergeSpawnEnv(agent, updated.env, {
+            LLMUX_SESSION: updated.name,
+            LLMUX_AGENT: updated.agent,
+            ...(updated.orchAlias ? { LLMUX_ORCH_ALIAS: updated.orchAlias } : {}),
+          }),
         });
         // Refresh createdAt so the picker's "started Xm ago" reflects the
         // actual moment the agent process began running with the new cwd.
@@ -3765,6 +4443,12 @@ export function startServer(opts: ServeOptions): ServerHandle {
   const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const method = req.method ?? 'GET';
+
+    // ---- v2 auth routes (independent of v1 SAS auth) ----
+    // Setup wizard, login, account, admin/users — all use llmux_session
+    // cookie + identity-bound tokens. The v1 SAS cookie (llmuxd_token)
+    // doesn't bleed into these and vice versa.
+    if (await tryV2Route(req, res)) return;
 
     // ---- Deep-link auth: ?token=<sas> on any path (LEGACY) ----
     // v0.22.0 moved first-tap pairing to a URL fragment (#token=) so the
@@ -3843,7 +4527,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
     }
 
     // ---- Token management (CRUD) ----
-    // List: never includes the token VALUE — only id / name / timestamps.
+    // List: never includes the token VALUE — only id / name / createdAts.
     // Create: returns the value ONCE. After the response is sent, the
     //   plaintext is unreachable from the daemon's REST surface again.
     //   Mirrors the CLI's "show once" semantics.
@@ -3866,7 +4550,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
         const expiresAt = typeof body.expiresAt === 'string' && body.expiresAt.length > 0 ? body.expiresAt : undefined;
         const pairingOrigin = typeof body.pairingOrigin === 'string' && body.pairingOrigin.length > 0 ? body.pairingOrigin : undefined;
         if (expiresAt && isNaN(new Date(expiresAt).getTime())) {
-          return sendJson(res, { ok: false, error: 'expiresAt must be an ISO-8601 timestamp' }, 400);
+          return sendJson(res, { ok: false, error: 'expiresAt must be an ISO-8601 createdAt' }, 400);
         }
         const rec = authStore.createAuthToken({
           ...(name !== undefined ? { name } : {}),
@@ -4249,9 +4933,38 @@ export function startServer(opts: ServeOptions): ServerHandle {
       }
     }
 
+    // ---- Orchestration API ----
+    // All endpoints under /api/orch/* talk to the on-disk transport
+    // directly (default path: $XDG_DATA_HOME/llmux/orchestration). The
+    // daemon does NOT need to hold the transport open — orch.* functions
+    // are stateless per call (file-system read/write each time). Operators
+    // can hit these endpoints alongside CLI usage; the source of truth is
+    // the git repo, not the daemon's in-memory state.
+    if (url.pathname.startsWith('/api/orch/')) {
+      // v2 alias enforcement: if a v2 session is present, the caller's
+      // identity is server-authoritative. Override any client-supplied
+      // `from` / `alias` field on POST endpoints to match the v2 user.
+      // Defense-in-depth — the browser UI is already locked to the
+      // authed username, but this stops a v1-SAS-authed curl from
+      // posting with a fake from.
+      const v2User = await getV2User(req);
+      const orchResp = await handleOrchApi(url, method, req, v2User?.username);
+      if (orchResp) {
+        return sendJson(res, orchResp.body, orchResp.status);
+      }
+    }
+
     // ---- Pages ----
     if (url.pathname === '/') {
       return sendHtml(res, pickerPage());
+    }
+    if (url.pathname === '/orch') {
+      const v2User = await getV2User(req);
+      if (!v2User) {
+        res.writeHead(302, { location: '/login?returnTo=%2Forch' });
+        return res.end();
+      }
+      return sendHtml(res, orchPage(v2User.username));
     }
     if (url.pathname.startsWith('/session/')) {
       const name = decodeURIComponent(url.pathname.slice('/session/'.length));
@@ -4295,6 +5008,13 @@ export function startServer(opts: ServeOptions): ServerHandle {
   });
 
   http.listen(opts.port, opts.host);
+
+  // Initialise the v2 auth subsystem after the http server is bound so
+  // the setup-token URL printed in the banner uses the correct port.
+  // Failure here is non-fatal — v1 picker keeps working without v2.
+  void initV2Routes(opts.port).catch((err) => {
+    console.error('[v2] init failed (v1 picker unaffected):', err);
+  });
 
   return {
     port: opts.port,
