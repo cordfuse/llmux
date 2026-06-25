@@ -2546,18 +2546,6 @@ function sessionPage(name: string): string {
      touchstart's preventDefault can fire, which kills the pinch-to-zoom
      font scaling. xterm still receives wheel/keyboard input as normal. */
   #term{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:var(--bar-h);touch-action:none}
-  /* xterm.js v5 injects a hidden helper-textarea inside #term for IME +
-     keyboard input. xterm.css positions it offscreen (left:-9999em) but
-     JS dynamically repositions it to the cursor for IME compatibility,
-     so on long-press it sits under the operator's finger and Android
-     intercepts the touch as an editable-element interaction — surfacing
-     a single-button "Paste" popup instead of the native text-selection
-     action mode (Cut/Copy/Paste/Select all + drag handles). pointer-
-     events:none lets the touch pass through to the rendered row spans
-     where the native selection model can do its job. xterm focuses the
-     textarea programmatically via JS for keyboard input, so disabling
-     its touch capture doesn't break typing. */
-  #term .xterm-helper-textarea{pointer-events:none!important}
   body.allkeys-open #term{bottom:calc(var(--bar-h) + var(--allkeys-h))}
   #overlay{position:fixed;inset:0;background:rgba(11,12,16,.92);display:none;align-items:center;justify-content:center;z-index:30;padding:20px}
   #overlay.show{display:flex}
