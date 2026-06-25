@@ -5048,32 +5048,17 @@ function attachSession(ws: WebSocket, sessionName: string): void {
     return;
   }
 
-  // turnq marker strip: if this session has a turnqMarker, hide any line
-  // containing `<<LLMUX_DONE_xxxxxxxx>>` from the WS stream so the agent's
-  // turn-completion signal doesn't clutter the operator's xterm view. CLI
-  // tmux-attach still sees it (would require modifying tmux output). Cheap
-  // string scan — only fires when turnqMarker is set on the session.
-  const sessionRecord = state.get(sessionName);
-  const markerNeedle = sessionRecord?.turnqMarker ? `<<${sessionRecord.turnqMarker}>>` : null;
-  let pending = '';
+  // Stream pty output straight to the WS. The prior implementation
+  // line-buffered the stream when the session had a turnqMarker, in order
+  // to strip `<<LLMUX_DONE_xxxx>>` lines from the operator's view. But TUI
+  // agents (agy/gemini/codex/opencode) emit keystroke renders as `\n`-less
+  // cursor-move sequences — those sat in the buffer until a newline-bearing
+  // chunk flushed them, making the web terminal look frozen for every agent
+  // except Claude (which streams text constantly). The marker line is
+  // cosmetic noise at worst; CLI tmux-attach always saw it anyway.
   term.onData((d) => {
     try {
-      if (!markerNeedle) {
-        ws.send(d);
-        return;
-      }
-      // Buffer until we have at least one complete line ending — we can't
-      // strip a partial marker spread across two chunks.
-      pending += d;
-      const lastNewline = pending.lastIndexOf('\n');
-      if (lastNewline < 0) return;
-      const complete = pending.slice(0, lastNewline + 1);
-      pending = pending.slice(lastNewline + 1);
-      const filtered = complete
-        .split('\n')
-        .filter((line) => !line.includes(markerNeedle))
-        .join('\n');
-      if (filtered.length > 0) ws.send(filtered);
+      ws.send(d);
     } catch {
       term?.kill();
     }
