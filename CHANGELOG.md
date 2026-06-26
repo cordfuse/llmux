@@ -5,6 +5,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-06-26
+
 ### Changed — tokens are now user-owned (v1 SAS tokens become read-only legacy)
 
 The Tokens page in the web UI used to mint anonymous v1 SAS tokens
