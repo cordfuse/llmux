@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { tryV2Route, initV2Routes, getV2User } from '../v2-routes.ts';
+import { tryV2Route, initV2Routes, getV2User, getV2Stores } from '../v2-routes.ts';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -641,6 +641,10 @@ ${renderNavDrawer(host, 'sessions')}
   <div id="token-create-form">
     <h3>new token</h3>
     <form id="token-create-form-el">
+      <div class="field">
+        <label for="token-create-owner">owner</label>
+        <select id="token-create-owner" disabled><option>loading…</option></select>
+      </div>
       <div class="field">
         <label for="token-create-name">name (optional)</label>
         <input id="token-create-name" type="text" placeholder="phone-mac, ci, etc." autocomplete="off">
@@ -1589,6 +1593,7 @@ ${renderNavDrawer(host, 'sessions')}
     }
     return '<tr data-id="' + escapeHtml(t.id) + '">' +
       '<td class="token-id">' + escapeHtml(t.id) + '</td>' +
+      '<td><span style="color:#a371f7">' + escapeHtml(t.username || '—') + '</span></td>' +
       '<td>' + name + '</td>' +
       '<td class="token-when">' + escapeHtml(created) + '</td>' +
       '<td>' + expires + '</td>' +
@@ -1599,17 +1604,41 @@ ${renderNavDrawer(host, 'sessions')}
       '</tr>';
   }
 
+  // Caches the most recent /api/tokens response so the create-form owner
+  // picker can re-populate without a second fetch. me + users are
+  // server-authoritative — admin sees the full user list; non-admin sees
+  // only itself.
+  let tokensCache = { me: null, users: null };
+  function populateOwnerPicker(){
+    const picker = document.getElementById('token-create-owner');
+    if (!picker || !tokensCache.me) return;
+    picker.innerHTML = '';
+    const optionsFor = tokensCache.me.admin && tokensCache.users
+      ? tokensCache.users
+      : [tokensCache.me];
+    for (const u of optionsFor){
+      const opt = document.createElement('option');
+      opt.value = u.username;
+      opt.textContent = u.username + (u.admin ? ' (admin)' : '');
+      if (u.username === tokensCache.me.username) opt.selected = true;
+      picker.appendChild(opt);
+    }
+    picker.disabled = !tokensCache.me.admin; // non-admin: locked to self
+  }
   async function refreshTokens(){
     try {
       const r = await fetch('/api/tokens', { cache: 'no-store' });
       if (!r.ok) throw new Error('http ' + r.status);
-      const list = await r.json();
+      const data = await r.json();
+      tokensCache = { me: data.me || null, users: data.users || null };
+      populateOwnerPicker();
+      const list = data.tokens || [];
       if (!Array.isArray(list) || list.length === 0){
-        tokensListContainer.innerHTML = '<div class="empty">no tokens — auth is disabled. Mint one with <strong>+ new token</strong>.</div>';
+        tokensListContainer.innerHTML = '<div class="empty">no tokens yet. Mint one with <strong>+ new token</strong>.</div>';
         return;
       }
       const rows = list.map(tokenRowHtml).join('');
-      tokensListContainer.innerHTML = '<table><thead><tr><th>id</th><th>name</th><th>created</th><th>expires</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+      tokensListContainer.innerHTML = '<table><thead><tr><th>id</th><th>owner</th><th>name</th><th>created</th><th>expires</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
     } catch(e){
       tokensListContainer.innerHTML = '<div class="empty">failed to load tokens: ' + escapeHtml(e.message || String(e)) + '</div>';
     }
@@ -1630,6 +1659,8 @@ ${renderNavDrawer(host, 'sessions')}
     submitBtn.disabled = true;
     try {
       const body = { pairingOrigin: location.origin };
+      const ownerPicker = document.getElementById('token-create-owner');
+      if (ownerPicker && ownerPicker.value) body.username = ownerPicker.value;
       if (tokenCreateName.value.trim()) body.name = tokenCreateName.value.trim();
       // datetime-local emits "YYYY-MM-DDTHH:MM" in the user's local time.
       // Convert to a full UTC ISO string so the server stores it as a stable
@@ -3226,16 +3257,21 @@ function extractWsToken(req: IncomingMessage, urlSearch: URLSearchParams): strin
   return extractToken(req);
 }
 
-function isAuthorized(req: IncomingMessage): boolean {
+// Auth surface unification: a request is authorized if it's localhost, OR
+// presents a valid v1 SAS token (legacy, read-only sunset path), OR is a
+// v2 authenticated session. The v1 "no tokens means auth disabled" escape
+// hatch is gone — after the v2 unification, v2 users are the auth source
+// of truth, and a fresh install with a v2 admin must present a session.
+async function isAuthorized(req: IncomingMessage): Promise<boolean> {
   if (isLocalhost(req)) return true;
-  if (!authStore.authEnabled()) return true;
-  return authStore.validateAuthToken(extractToken(req));
+  if (authStore.authEnabled() && authStore.validateAuthToken(extractToken(req))) return true;
+  return (await getV2User(req)) !== undefined;
 }
 
-function isWsAuthorized(req: IncomingMessage, urlSearch: URLSearchParams): boolean {
+async function isWsAuthorized(req: IncomingMessage, urlSearch: URLSearchParams): Promise<boolean> {
   if (isLocalhost(req)) return true;
-  if (!authStore.authEnabled()) return true;
-  return authStore.validateAuthToken(extractWsToken(req, urlSearch));
+  if (authStore.authEnabled() && authStore.validateAuthToken(extractWsToken(req, urlSearch))) return true;
+  return (await getV2User(req)) !== undefined;
 }
 
 function gatePage(reason: 'missing' | 'invalid'): string {
@@ -3897,7 +3933,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
     }
 
     // ---- Auth check for everything else ----
-    if (!isAuthorized(req)) {
+    if (!(await isAuthorized(req))) {
       // HTML routes get the gate page; API routes get 401 JSON.
       const isApi = url.pathname.startsWith('/api/');
       if (isApi) {
@@ -3920,34 +3956,73 @@ export function startServer(opts: ServeOptions): ServerHandle {
     // Patch: rename only (mutate the .name field; empty string clears).
     // Delete by id: revoke a single token.
     // Delete (no id): revoke all tokens.
+    // /api/tokens — v2 user-owned identity tokens. Every token has an
+    // owning username. Non-admins see/manage only their own tokens; admins
+    // can see/manage all (use --filter-user query param to scope).
+    //
+    // POST body shape:
+    //   { name, expiresAt?, pairingOrigin?, username? }
+    // username defaults to the v2-authed caller. Non-admins can't override
+    // it (defense-in-depth — server rewrites to caller's identity).
+    //
+    // Legacy v1 SAS tokens in auth.json continue to validate (so existing
+    // clients keep working), but no NEW v1 tokens can be minted. See
+    // CHANGELOG for the sunset path.
+    const v2Stores = getV2Stores();
     if (url.pathname === '/api/tokens' && method === 'GET') {
-      const list = authStore.listAuthTokens().map((t) => ({
-        id: t.id,
-        ...(t.name !== undefined ? { name: t.name } : {}),
-        createdAt: t.createdAt,
-        ...(t.expiresAt !== undefined ? { expiresAt: t.expiresAt } : {}),
-      }));
-      return sendJson(res, list);
+      if (!v2Stores) return sendJson(res, { ok: false, error: 'v2 auth not initialised — run setup wizard' }, 503);
+      const me = await getV2User(req);
+      if (!me) return sendJson(res, { ok: false, error: 'authentication required' }, 401);
+      // Admins see every token by default; the `all=false` query param scopes
+      // back to own tokens. Non-admins always scoped to own tokens.
+      const scopeAll = url.searchParams.get('all') !== 'false';
+      const scope = me.admin && scopeAll ? undefined : me.username;
+      const tokens = await v2Stores.tokens.list(scope);
+      const usersList = me.admin
+        ? (await v2Stores.users.listUsers()).map((u) => ({ username: u.username, admin: u.admin }))
+        : undefined;
+      return sendJson(res, {
+        me: { username: me.username, admin: me.admin },
+        tokens: tokens.map((t) => ({
+          id: t.tokenId,
+          username: t.username,
+          name: t.name,
+          createdAt: t.createdAt,
+          ...(t.expiresAt !== undefined ? { expiresAt: t.expiresAt } : {}),
+          ...(t.lastUsedAt !== undefined ? { lastUsedAt: t.lastUsedAt } : {}),
+        })),
+        ...(usersList !== undefined ? { users: usersList } : {}),
+      });
     }
     if (url.pathname === '/api/tokens' && method === 'POST') {
+      if (!v2Stores) return sendJson(res, { ok: false, error: 'v2 auth not initialised — run setup wizard' }, 503);
+      const me = await getV2User(req);
+      if (!me) return sendJson(res, { ok: false, error: 'authentication required' }, 401);
       try {
-        const body = (await readJsonBody(req)) as { name?: unknown; expiresAt?: unknown; pairingOrigin?: unknown };
-        const name = typeof body.name === 'string' && body.name.length > 0 ? body.name : undefined;
+        const body = (await readJsonBody(req)) as { name?: unknown; expiresAt?: unknown; pairingOrigin?: unknown; username?: unknown };
+        const name = typeof body.name === 'string' && body.name.length > 0 ? body.name : `${me.username}-${new Date().toISOString().slice(0, 10)}`;
         const expiresAt = typeof body.expiresAt === 'string' && body.expiresAt.length > 0 ? body.expiresAt : undefined;
         const pairingOrigin = typeof body.pairingOrigin === 'string' && body.pairingOrigin.length > 0 ? body.pairingOrigin : undefined;
         if (expiresAt && isNaN(new Date(expiresAt).getTime())) {
-          return sendJson(res, { ok: false, error: 'expiresAt must be an ISO-8601 createdAt' }, 400);
+          return sendJson(res, { ok: false, error: 'expiresAt must be ISO-8601' }, 400);
         }
-        const rec = authStore.createAuthToken({
-          ...(name !== undefined ? { name } : {}),
+        // Owner resolution: admins can mint for any user; non-admins are
+        // pinned to themselves (request username field is ignored). The
+        // server rewrites server-side rather than rejecting, so a stale
+        // browser tab with a cached form doesn't 403.
+        let ownerUsername = me.username;
+        if (me.admin && typeof body.username === 'string' && body.username.length > 0) {
+          const target = await v2Stores.users.getUser(body.username);
+          if (!target) return sendJson(res, { ok: false, error: `user "${body.username}" not found` }, 404);
+          ownerUsername = target.username;
+        }
+        const result = await v2Stores.tokens.mint({
+          username: ownerUsername,
+          name,
           ...(expiresAt !== undefined ? { expiresAt } : {}),
         });
-        // Build the pairing URL using the same hash-form the printQr CLI
-        // emits. Client passes its own location.origin so the QR points at
-        // the URL the operator is actually using (tailscale-https most often,
-        // not localhost). Defensive fall-back: just the token value.
         const pairingUrl = pairingOrigin
-          ? `${pairingOrigin.replace(/\/$/, '')}/#token=${encodeURIComponent(rec.token)}`
+          ? `${pairingOrigin.replace(/\/$/, '')}/#token=${encodeURIComponent(result.plaintextSecret)}`
           : undefined;
         let qrSvg: string | undefined;
         if (pairingUrl) {
@@ -3959,53 +4034,71 @@ export function startServer(opts: ServeOptions): ServerHandle {
               width: 240,
               color: { dark: '#e6e8eb', light: '#0b0c1000' },
             });
-          } catch {
-            // QR render failure is non-fatal; the client still has the URL.
-          }
+          } catch { /* QR render failure non-fatal */ }
         }
-        return sendJson(
-          res,
-          {
-            ok: true,
-            value: rec.token,
-            token: {
-              id: rec.id,
-              ...(rec.name !== undefined ? { name: rec.name } : {}),
-              createdAt: rec.createdAt,
-              ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}),
-            },
-            ...(pairingUrl !== undefined ? { pairingUrl } : {}),
-            ...(qrSvg !== undefined ? { qrSvg } : {}),
+        return sendJson(res, {
+          ok: true,
+          value: result.plaintextSecret,
+          token: {
+            id: result.token.tokenId,
+            username: result.token.username,
+            name: result.token.name,
+            createdAt: result.token.createdAt,
+            ...(result.token.expiresAt !== undefined ? { expiresAt: result.token.expiresAt } : {}),
           },
-          201,
-        );
+          ...(pairingUrl !== undefined ? { pairingUrl } : {}),
+          ...(qrSvg !== undefined ? { qrSvg } : {}),
+        }, 201);
       } catch (err) {
         return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'bad request' }, 400);
       }
     }
     if (url.pathname === '/api/tokens' && method === 'DELETE') {
-      const before = authStore.listAuthTokens().length;
-      const removed = authStore.revokeAllAuthTokens();
-      return sendJson(res, { ok: true, removed, before });
+      if (!v2Stores) return sendJson(res, { ok: false, error: 'v2 auth not initialised — run setup wizard' }, 503);
+      const me = await getV2User(req);
+      if (!me) return sendJson(res, { ok: false, error: 'authentication required' }, 401);
+      if (!me.admin) {
+        // Non-admin: revoke only own tokens.
+        const removed = await v2Stores.tokens.revokeAllForUser(me.username);
+        return sendJson(res, { ok: true, removed });
+      }
+      // Admin: revoke all. Includes other users' tokens — destructive.
+      const all = await v2Stores.tokens.list();
+      let removed = 0;
+      for (const t of all) {
+        await v2Stores.tokens.revoke(t.tokenId);
+        removed++;
+      }
+      return sendJson(res, { ok: true, removed, before: all.length });
     }
     const tokenIdMatch = url.pathname.match(/^\/api\/tokens\/([^/]+)$/);
     if (tokenIdMatch) {
+      if (!v2Stores) return sendJson(res, { ok: false, error: 'v2 auth not initialised — run setup wizard' }, 503);
+      const me = await getV2User(req);
+      if (!me) return sendJson(res, { ok: false, error: 'authentication required' }, 401);
       const id = decodeURIComponent(tokenIdMatch[1]!);
+      const existing = await v2Stores.tokens.get(id);
+      if (!existing) return sendJson(res, { ok: false, error: `no token with id "${id}"` }, 404);
+      // Ownership: non-admin can only touch own tokens.
+      if (!me.admin && existing.username !== me.username) {
+        return sendJson(res, { ok: false, error: 'forbidden' }, 403);
+      }
       if (method === 'PATCH') {
         try {
           const body = (await readJsonBody(req)) as { name?: unknown };
           if (typeof body.name !== 'string') {
             return sendJson(res, { ok: false, error: 'name must be a string (pass "" to clear)' }, 400);
           }
-          const rec = authStore.renameAuthToken(id, body.name);
-          if (!rec) return sendJson(res, { ok: false, error: `no token with id "${id}"` }, 404);
+          const updated = await v2Stores.tokens.rename(id, body.name);
+          if (!updated) return sendJson(res, { ok: false, error: `no token with id "${id}"` }, 404);
           return sendJson(res, {
             ok: true,
             token: {
-              id: rec.id,
-              ...(rec.name !== undefined ? { name: rec.name } : {}),
-              createdAt: rec.createdAt,
-              ...(rec.expiresAt !== undefined ? { expiresAt: rec.expiresAt } : {}),
+              id: updated.tokenId,
+              username: updated.username,
+              name: updated.name,
+              createdAt: updated.createdAt,
+              ...(updated.expiresAt !== undefined ? { expiresAt: updated.expiresAt } : {}),
             },
           });
         } catch (err) {
@@ -4013,8 +4106,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
         }
       }
       if (method === 'DELETE') {
-        const ok = authStore.revokeAuthToken(id);
-        if (!ok) return sendJson(res, { ok: false, error: `no token with id "${id}"` }, 404);
+        await v2Stores.tokens.revoke(id);
         return sendJson(res, { ok: true });
       }
     }
@@ -4340,28 +4432,30 @@ export function startServer(opts: ServeOptions): ServerHandle {
   const wss = new WebSocketServer({ noServer: true });
 
   http.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    if (!url.pathname.startsWith('/ws/')) {
-      socket.destroy();
-      return;
-    }
-    if (!isWsAuthorized(req, url.searchParams)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-    const name = decodeURIComponent(url.pathname.slice('/ws/'.length));
-    if (!state.get(name)) {
-      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-    if (!tmux.hasSession(name)) {
-      socket.write('HTTP/1.1 409 Conflict\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => attachSession(ws, name));
+    void (async () => {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      if (!url.pathname.startsWith('/ws/')) {
+        socket.destroy();
+        return;
+      }
+      if (!(await isWsAuthorized(req, url.searchParams))) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      const name = decodeURIComponent(url.pathname.slice('/ws/'.length));
+      if (!state.get(name)) {
+        socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      if (!tmux.hasSession(name)) {
+        socket.write('HTTP/1.1 409 Conflict\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => attachSession(ws, name));
+    })();
   });
 
   http.listen(opts.port, opts.host);

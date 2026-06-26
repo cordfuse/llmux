@@ -384,22 +384,37 @@ llmux session start opencode --resume-from ses_<id>  # spawn pre-bound
 
 ## Auth
 
-`llmux server start` runs without auth until you create a token:
+Auth is built around **users**. A fresh `llmux server start` prints a
+setup-wizard URL (`/setup?token=…`) you visit once to create the first
+admin user with a passphrase. Subsequent logins go through `/login` (web)
+or `llmux auth login` (CLI), both of which mint **identity tokens** that
+are bound to the authenticated user.
+
+Tokens are owned. The Tokens page in the web UI (drawer → Tokens) shows
+every token's owner, and admins can mint a token for any user; non-admins
+can only mint their own. From the CLI:
 
 ```bash
-llmux token create --name phone
+llmux token create --username alice --name phone-mac
 # prints sas_…<43-char-base64url> once; copy it.
 # pass --qr-endpoint tailscale-https for a QR-code deep-link that logs you
 # in on first scan from a phone.
 
-llmux token list
-llmux token revoke <8-char-id>
+llmux token list                       # every token (with owner column)
+llmux token list --user alice          # filter to one user
+llmux token revoke <id>
+llmux token revoke --all --user alice  # nuke every token alice owns
 ```
 
-After the first token exists, all non-localhost HTTP/WS requests require
-either `Authorization: Bearer <sas>` (CLI / curl) or the `llmuxd_token`
-cookie set by the browser gate. Localhost stays open so local CLI use needs
+After the first user exists, all non-localhost HTTP/WS requests require
+either `Authorization: Bearer <sas>` (CLI / curl) or the `llmux_session`
+cookie set by browser login. Localhost stays open so local CLI use needs
 no token.
+
+> v1 SAS tokens (the `sas_<id>` format without an owning user, from
+> pre-v0.37 releases) are read-only. Existing v1 tokens keep validating
+> until manually revoked, but no new ones can be minted. Rotate to
+> user-owned tokens when convenient.
 
 ## Tailscale serve fronting
 

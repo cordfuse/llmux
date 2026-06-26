@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import qrcodeTerminal from 'qrcode-terminal';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from './agents.ts';
@@ -8,11 +9,32 @@ import * as logBuffer from './log-buffer.ts';
 import * as state from './state.ts';
 import * as tmux from './tmux.ts';
 import * as authStore from './auth-store.ts';
+import { FileUserStore } from '../v2/auth/users.ts';
+import { FileTokenStore } from '../v2/auth/tokens.ts';
 import { startServer, printBanner, buildAgentCommand, parseEnvText, mergeSpawnEnv, editSession } from './web/server.ts';
 import * as turnqIntegration from './turnq-integration.ts';
 import { hostname } from 'node:os';
 import { getAddresses } from './net.ts';
 import type { ParsedArgs } from '../cli.ts';
+
+// ---------- v2 token store (CLI-local access) ----------
+// CLI handlers talk directly to the v2 store on disk. There's no
+// per-process identity in CLI context — the CLI is admin-level because
+// it has filesystem access to the store. Mirrors `v2-routes.ts:v2Paths()`.
+function v2StorePaths(): { dataDir: string; usersPath: string; tokensPath: string } {
+  const base = process.env['XDG_DATA_HOME'] ?? join(homedir(), '.local', 'share');
+  const dataDir = join(base, 'llmux', 'v2');
+  return {
+    dataDir,
+    usersPath: join(dataDir, 'users.json'),
+    tokensPath: join(dataDir, 'tokens.json'),
+  };
+}
+function cliTokenStores(): { users: FileUserStore; tokens: FileTokenStore } {
+  const p = v2StorePaths();
+  if (!existsSync(p.dataDir)) mkdirSync(p.dataDir, { recursive: true });
+  return { users: new FileUserStore(p.usersPath), tokens: new FileTokenStore(p.tokensPath) };
+}
 
 // ---------- helpers ----------
 
@@ -399,20 +421,43 @@ async function printServerStartQr(port: number, args: ParsedArgs): Promise<void>
   const endpointFlag = args.flags['qr-endpoint'] as string | undefined;
   const nameFlag = args.flags['qr-name'] as string | undefined;
   const expiryFlag = args.flags['qr-expiry'] as string | undefined;
+  const ownerFlag = args.flags['qr-owner'] as string | undefined;
   if (expiryFlag && isNaN(new Date(expiryFlag).getTime())) {
     throw new Error(`--qr-expiry must be an ISO-8601 timestamp (got "${expiryFlag}")`);
+  }
+  // Token owner resolution: --qr-owner > first admin in user store > skip QR.
+  const stores = cliTokenStores();
+  const users = await stores.users.listUsers();
+  let owner: string | undefined;
+  if (ownerFlag) {
+    const target = await stores.users.getUser(ownerFlag);
+    if (!target) throw new Error(`--qr-owner "${ownerFlag}" not found in user store`);
+    owner = target.username;
+  } else {
+    const firstAdmin = users.find((u) => u.admin);
+    if (!firstAdmin) {
+      // Fresh install — no users yet. The v2 setup wizard URL is printed by
+      // initV2Routes; skip the pairing QR entirely. Operator completes setup
+      // first, then can mint pairing tokens via the Tokens page or
+      // `llmux token create --username <name>`.
+      console.log('');
+      console.log('  ⏭  Skipping pairing QR — no admin user yet. Complete the /setup wizard above first.');
+      return;
+    }
+    owner = firstAdmin.username;
   }
   const endpoint = endpointFlag
     ? resolveQrEndpoint(endpointFlag, port)
     : autoPickQrEndpoint(port);
   const defaultName = `server-start-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-  const rec = authStore.createAuthToken({
+  const result = await stores.tokens.mint({
+    username: owner,
     name: nameFlag ?? defaultName,
     ...(expiryFlag !== undefined ? { expiresAt: expiryFlag } : {}),
   });
   console.log('');
-  console.log(`  ✓ created pairing token (id: ${rec.id}, name: "${rec.name}")`);
-  printQr(endpoint.url, rec.token, endpoint.label);
+  console.log(`  ✓ created pairing token (id: ${result.token.tokenId}, name: "${result.token.name}", owner: ${owner})`);
+  printQr(endpoint.url, result.plaintextSecret, endpoint.label);
 }
 
 /**
@@ -510,18 +555,25 @@ function printQr(url: string, token: string, label: string): void {
 }
 
 export async function handleTokenCreate(args: ParsedArgs): Promise<void> {
+  const username = args.flags.username as string | undefined;
   const name = args.flags.name as string | undefined;
   const expiry = args.flags.expiry as string | undefined;
   const qrFlag = Boolean(args.flags.qr);
   const qrEndpoint = args.flags['qr-endpoint'] as string | undefined;
   const portFlag = args.flags.port as string | undefined;
+  if (!username) {
+    throw new Error('token create requires --username <name> — tokens are owned by a v2 user. Create one via the web setup wizard or `/admin/users` first.');
+  }
   if (expiry && isNaN(new Date(expiry).getTime())) {
     throw new Error(`--expiry must be an ISO-8601 timestamp (got "${expiry}")`);
   }
+  const stores = cliTokenStores();
+  const user = await stores.users.getUser(username);
+  if (!user) {
+    throw new Error(`user "${username}" not found — create via setup wizard or POST /api/admin/users`);
+  }
   const wantsQr = qrFlag || qrEndpoint !== undefined;
-
-  // Resolve the QR endpoint BEFORE creating the token so a bad selector
-  // doesn't leave an orphan token in auth.json.
+  // Resolve QR endpoint before mint so a bad selector doesn't leave an orphan token.
   let endpoint: { label: string; url: string } | undefined;
   if (wantsQr) {
     const port = endpointPort(portFlag);
@@ -529,50 +581,52 @@ export async function handleTokenCreate(args: ParsedArgs): Promise<void> {
       ? resolveQrEndpoint(qrEndpoint, port)
       : await pickEndpointInteractively(port);
   }
-
-  const wasEnabled = authStore.authEnabled();
-  const rec = authStore.createAuthToken({
-    ...(name !== undefined ? { name } : {}),
+  const result = await stores.tokens.mint({
+    username,
+    name: name ?? `${username}-${new Date().toISOString().slice(0, 10)}`,
     ...(expiry !== undefined ? { expiresAt: expiry } : {}),
   });
-  console.log(`token created (id: ${rec.id})${rec.name ? ` "${rec.name}"` : ''}`);
+  console.log(`token created (id: ${result.token.tokenId}) "${result.token.name}" for ${username}`);
   console.log('');
-  console.log(`  ${rec.token}`);
+  console.log(`  ${result.plaintextSecret}`);
   console.log('');
   console.log('Save this token now — it is shown once. Use in the LLMUX_TOKEN env var, the');
-  console.log('`Authorization: Bearer <token>` header, or paste it into the web gate page.');
-  if (!wasEnabled) {
-    console.log('');
-    console.log('Auth is now enabled. All non-localhost requests require this (or another) token.');
-  }
+  console.log('`Authorization: Bearer <token>` header, or paste it into the web login page.');
   if (endpoint) {
-    printQr(endpoint.url, rec.token, endpoint.label);
+    printQr(endpoint.url, result.plaintextSecret, endpoint.label);
   }
 }
 
-export function handleTokenShow(args: ParsedArgs): void {
-  const tokens = authStore.listAuthTokens();
+export async function handleTokenShow(args: ParsedArgs): Promise<void> {
+  const stores = cliTokenStores();
+  const filterUser = args.flags.user as string | undefined;
+  const tokens = await stores.tokens.list(filterUser);
   if (args.flags.json) {
-    const out = tokens.map((t) => ({ id: t.id, name: t.name, createdAt: t.createdAt, expiresAt: t.expiresAt }));
+    const out = tokens.map((t) => ({
+      id: t.tokenId, username: t.username, name: t.name,
+      createdAt: t.createdAt, expiresAt: t.expiresAt, lastUsedAt: t.lastUsedAt,
+    }));
     console.log(JSON.stringify(out, null, 2));
     return;
   }
   if (tokens.length === 0) {
-    console.log('no tokens — auth is disabled. Create one with `llmux token create`.');
+    console.log(filterUser ? `no tokens for user "${filterUser}"` : 'no tokens. Create one with `llmux token create --username <name>`.');
     return;
   }
-  const headers = ['ID', 'NAME', 'CREATED', 'EXPIRES'];
-  const rows = tokens.map((t) => [t.id, t.name ?? '-', t.createdAt, t.expiresAt ?? '-']);
+  const headers = ['ID', 'USER', 'NAME', 'CREATED', 'EXPIRES'];
+  const rows = tokens.map((t) => [t.tokenId, t.username, t.name, t.createdAt, t.expiresAt ?? '-']);
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)));
   console.log(headers.map((h, i) => h.padEnd(widths[i]!)).join('  '));
   for (const r of rows) console.log(r.map((c, i) => c.padEnd(widths[i]!)).join('  '));
 }
 
 export async function handleTokenRevoke(args: ParsedArgs): Promise<void> {
+  const stores = cliTokenStores();
   if (args.flags.all) {
-    const tokens = authStore.listAuthTokens();
+    const filterUser = args.flags.user as string | undefined;
+    const tokens = await stores.tokens.list(filterUser);
     if (tokens.length === 0) {
-      console.log('no tokens to revoke');
+      console.log(filterUser ? `no tokens to revoke for user "${filterUser}"` : 'no tokens to revoke');
       return;
     }
     const skipConfirm = Boolean(args.flags.yes);
@@ -581,8 +635,9 @@ export async function handleTokenRevoke(args: ParsedArgs): Promise<void> {
         throw new Error('--all without --yes requires an interactive terminal');
       }
       const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const scope = filterUser ? ` for user "${filterUser}"` : '';
       const answer = await new Promise<string>((resolve) =>
-        rl.question(`Revoke ALL ${tokens.length} token${tokens.length === 1 ? '' : 's'}? [y/N] `, (a) => resolve(a)),
+        rl.question(`Revoke ALL ${tokens.length} token${tokens.length === 1 ? '' : 's'}${scope}? [y/N] `, (a) => resolve(a)),
       );
       rl.close();
       if (!/^y(es)?$/i.test(answer.trim())) {
@@ -590,31 +645,36 @@ export async function handleTokenRevoke(args: ParsedArgs): Promise<void> {
         return;
       }
     }
-    const removed = authStore.revokeAllAuthTokens();
+    let removed = 0;
+    if (filterUser) {
+      removed = await stores.tokens.revokeAllForUser(filterUser);
+    } else {
+      for (const t of tokens) {
+        await stores.tokens.revoke(t.tokenId);
+        removed++;
+      }
+    }
     console.log(`revoked ${removed} token${removed === 1 ? '' : 's'}`);
-    console.log('No tokens remain — auth is now disabled.');
     return;
   }
-  // Accept the id at positional[0] (new flat dispatcher) OR positional[1] (legacy
-  // `llmuxd token revoke <id>` form where positional[0] was "revoke").
+  // Accept the id at positional[0] (new flat dispatcher) OR positional[1] (legacy form).
   const idPrefix = args.positional[0] === 'revoke' ? args.positional[1] : args.positional[0];
-  if (!idPrefix) throw new Error('token revoke requires an <id> (the 8-char prefix shown by `token list`), or --all to revoke every token');
-  const ok = authStore.revokeAuthToken(idPrefix);
-  if (!ok) throw new Error(`no token with id "${idPrefix}"`);
-  console.log(`revoked ${idPrefix}`);
-  if (!authStore.authEnabled()) {
-    console.log('No tokens remain — auth is now disabled.');
-  }
+  if (!idPrefix) throw new Error('token revoke requires an <id> (the token id shown by `token list`), or --all to revoke every token');
+  const existing = await stores.tokens.get(idPrefix);
+  if (!existing) throw new Error(`no token with id "${idPrefix}"`);
+  await stores.tokens.revoke(idPrefix);
+  console.log(`revoked ${idPrefix} (was owned by ${existing.username})`);
 }
 
-export function handleTokenRename(args: ParsedArgs): void {
+export async function handleTokenRename(args: ParsedArgs): Promise<void> {
+  const stores = cliTokenStores();
   const idPrefix = args.positional[0] === 'rename' ? args.positional[1] : args.positional[0];
-  if (!idPrefix) throw new Error('token rename requires an <id> (the 8-char prefix shown by `token list`)');
+  if (!idPrefix) throw new Error('token rename requires an <id> (the token id shown by `token list`)');
   const newName = args.flags.name as string | undefined;
   if (newName === undefined) throw new Error('token rename requires --name <label> (pass --name "" to clear)');
-  const rec = authStore.renameAuthToken(idPrefix, newName);
-  if (!rec) throw new Error(`no token with id "${idPrefix}"`);
-  console.log(`renamed ${rec.id} → "${rec.name ?? ''}"`);
+  const updated = await stores.tokens.rename(idPrefix, newName);
+  if (!updated) throw new Error(`no token with id "${idPrefix}"`);
+  console.log(`renamed ${updated.tokenId} → "${updated.name}"`);
 }
 
 async function respawnOne(target: string, opts: { skipInit?: boolean } = {}): Promise<void> {
