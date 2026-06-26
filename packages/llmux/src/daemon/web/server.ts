@@ -2903,10 +2903,12 @@ function sessionPage(name: string): string {
       try { fit.fit(); } catch(e){}
       // After fit.fit() evicts bottom rows into scrollback (mobile keyboard
       // appear/disappear, address-bar collapse, rotation), wipe scrollback
-      // so tmux's status bar doesn't accumulate as ghost copies. \x1b[3J =
-      // ED 3, "Erase Scrollback" — leaves the visible area alone; tmux
-      // refills it from its own redraw on the pty SIGWINCH below.
-      try { term.write('\x1b[3J'); } catch(_){}
+      // AND the visible area so the daemon-side SIGWINCH + forced TUI
+      // redraw (C-l from server.ts pty handler) paints onto a blank canvas
+      // instead of leaving pre-resize rows visible next to post-resize ones.
+      // \x1b[3J = ED 3 "Erase Scrollback"; \x1b[2J\x1b[H = clear viewport +
+      // home cursor.
+      try { term.write('\x1b[3J\x1b[2J\x1b[H'); } catch(_){}
       safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
     }, 60);
   }
@@ -5090,6 +5092,16 @@ function attachSession(ws: WebSocket, sessionName: string): void {
         const parsed = JSON.parse(text) as { type?: string; cols?: number; rows?: number };
         if (parsed.type === 'resize' && typeof parsed.cols === 'number' && typeof parsed.rows === 'number') {
           term.resize(parsed.cols, parsed.rows);
+          // Force the inner TUI to redraw after SIGWINCH propagates through
+          // tmux. Partial-redraw TUIs (most chat-prompt agents — claude,
+          // codex, gemini, agy, qwen, opencode — and shells at a prompt)
+          // only re-emit cells they think changed, so post-resize rows sit
+          // next to pre-resize stale rows until the next render tick. C-l
+          // is the unix convention for "redraw screen" and every supported
+          // agent honors it. ~100ms delay gives tmux time to deliver
+          // SIGWINCH first so the TUI redraws into the new geometry.
+          const t = term;
+          setTimeout(() => { try { t.write('\x0c'); } catch { /* pty gone */ } }, 100);
           return;
         }
       } catch {

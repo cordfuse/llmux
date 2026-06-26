@@ -5,6 +5,25 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed — web terminal artifacts after viewport resize / phone rotation
+
+The previous resize handler (v0.36.4) erased scrollback but left the
+visible area alone, banking on tmux's SIGWINCH-triggered redraw to
+repaint. Partial-redraw TUIs (claude / codex / gemini / agy / qwen /
+opencode and shells at a prompt) only re-emit cells they think changed,
+so pre-resize rows persisted next to post-resize content — visible on
+the phone's chat page after rotation. Two coordinated changes:
+
+- **Web client** — on resize, also write `\x1b[2J\x1b[H` (clear viewport
+  + home cursor) alongside the existing `\x1b[3J` scrollback erase, so
+  the daemon's forced redraw paints onto a blank canvas.
+- **Daemon WS handler** — after `term.resize(cols, rows)`, schedule a
+  100ms-deferred `\x0c` (Ctrl-L) into the pty so the inner TUI redraws
+  into the new geometry. 100ms lets tmux deliver SIGWINCH first.
+
+Self-heals on next keypress without the fix — purely cosmetic — but
+the rotation case was bad enough on phone.
+
 ## [0.35.0] — 2026-06-22
 
 Major release — bundles months of branch work (v2 auth + orch bus +
