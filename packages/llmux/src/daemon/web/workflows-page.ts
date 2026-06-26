@@ -223,6 +223,26 @@ function renderSummary(plan){
 
 const compileBtn = document.getElementById('cw-compile');
 let compileInFlight = false;
+// Two-phase compose: POST creates a job, returns jobId; we then poll
+// GET /api/workflows/compose/<jobId> every 2s. The synchronous flow
+// used to hit Tailscale serve's ~60s idle proxy timeout (claude takes
+// 100s+ to return a plan), giving "Failed to fetch" in the browser.
+async function pollCompose(jobId, elapsedSec){
+  const r = await fetch('/api/workflows/compose/' + encodeURIComponent(jobId));
+  const job = await r.json().catch(() => ({}));
+  if (!r.ok){
+    throw new Error(job.error || ('poll failed: ' + r.status));
+  }
+  if (job.status === 'pending'){
+    setStatus('compiling — ' + Math.round(elapsedSec) + 's elapsed, claude usually returns in 60-120s…');
+    return null;
+  }
+  if (job.status === 'failed'){
+    if (job.rawOutput) console.log('compiler raw output:', job.rawOutput);
+    throw new Error(job.error || 'compile failed');
+  }
+  return job; // done
+}
 if (compileBtn) {
   compileBtn.addEventListener('click', async () => {
     if (compileInFlight) return;
@@ -236,24 +256,42 @@ if (compileBtn) {
     compileBtn.disabled = true;
     const originalLabel = compileBtn.textContent;
     compileBtn.textContent = 'Compiling…';
-    setStatus('compiling — this may take a moment…');
+    setStatus('starting compile job…');
     try {
       const r = await fetch('/api/workflows/compose', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, compilerAgent: compiler }),
       });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok){
-        setStatus(body.error || 'compile failed', true);
-        if (body.rawOutput) console.log('compiler raw output:', body.rawOutput);
+      const initBody = await r.json().catch(() => ({}));
+      if (r.status !== 202){
+        setStatus(initBody.error || ('compile failed to start: ' + r.status), true);
         return;
       }
-      yamlInput.value = body.yaml;
+      const jobId = initBody.jobId;
+      const startedAt = Date.now();
+      // Poll every 2s. Cap at 10 minutes (claude rarely exceeds 3 in practice).
+      const MAX_MS = 10 * 60 * 1000;
+      let done = null;
+      while (Date.now() - startedAt < MAX_MS){
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+          done = await pollCompose(jobId, (Date.now() - startedAt) / 1000);
+          if (done) break;
+        } catch (e){
+          setStatus(e.message, true);
+          return;
+        }
+      }
+      if (!done){
+        setStatus('timed out after 10 minutes — give up', true);
+        return;
+      }
+      yamlInput.value = done.yaml;
       document.getElementById('cw-prompt-readback').value = lastPrompt;
-      renderSummary(body.plan);
+      renderSummary(done.plan);
       promptStep.style.display = 'none';
       previewStep.style.display = 'block';
-      setStatus('compiled by ' + body.compiler + ' — review and edit before submitting');
+      setStatus('compiled by ' + done.compiler + ' — review and edit before submitting');
     } catch (e){ setStatus('error: ' + e.message, true); }
     finally {
       compileInFlight = false;

@@ -24,8 +24,28 @@ import { validatePlan, type WorkflowPlan } from '../../orch/workflow.ts';
 import { serializeFrontmatter } from '../../orch/frontmatter.ts';
 import { now as nowTimestamp, messageFilename } from '../../orch/filenames.ts';
 import { workflowsPage } from './workflows-page.ts';
-import { workflowTick, COMPILE_PROMPT, extractPlanFromOutput } from '../../orch/workflow.ts';
+import { workflowTick, COMPILE_PROMPT, extractPlanFromOutput, type WorkflowPlan as WorkflowPlanType } from '../../orch/workflow.ts';
 import { loadRegistry, type ModelEntry } from '../../orch/models.ts';
+
+// In-memory compose job tracker. Keyed by jobId (uuid). Survives only as
+// long as the daemon — restart drops in-flight jobs (client will see 404
+// on poll, which the frontend treats as a retry-able state). Old entries
+// are GC'd lazily on each insert: anything older than COMPOSE_JOB_TTL_MS
+// gets evicted to keep the map bounded under heavy compose traffic.
+type ComposeJob =
+  | { status: 'pending'; startedAt: number }
+  | { status: 'done'; startedAt: number; plan: WorkflowPlanType; yaml: string; compiler: string }
+  | { status: 'failed'; startedAt: number; error: string; rawOutput?: string };
+const composeJobs = new Map<string, ComposeJob>();
+const COMPOSE_JOB_TTL_MS = 60 * 60 * 1000; // 1 hour
+const _originalSet = composeJobs.set.bind(composeJobs);
+composeJobs.set = (k: string, v: ComposeJob) => {
+  const cutoff = Date.now() - COMPOSE_JOB_TTL_MS;
+  for (const [id, j] of composeJobs) {
+    if (j.startedAt < cutoff) composeJobs.delete(id);
+  }
+  return _originalSet(k, v);
+};
 import { invokeModelCli } from '../../orch/invoke.ts';
 import { writeRegistryEntry, removeRegistryEntry } from '../../orch/dispatchers.ts';
 import { discoverChannels } from '../../orch/transport.ts';
@@ -4996,6 +5016,10 @@ export function startServer(opts: ServeOptions): ServerHandle {
       });
     }
     if (url.pathname === '/api/workflows/compose' && method === 'POST') {
+      // Two-phase: kick off the compile in the background, return a
+      // jobId immediately. Client polls /api/workflows/compose/<jobId>.
+      // Synchronous compose used to hit Tailscale serve's ~60s proxy
+      // timeout because claude takes 100s+ to return a plan.
       const root = defaultTransportRoot();
       const body = (await readJsonBody(req)) as { prompt?: string; compilerAgent?: string };
       if (typeof body.prompt !== 'string' || body.prompt.trim().length === 0) {
@@ -5013,24 +5037,59 @@ export function startServer(opts: ServeOptions): ServerHandle {
       if (!compiler) {
         return sendJson(res, { ok: false, error: 'no claimed model available to compile — populate data/crosstalk.yaml and restart' }, 409);
       }
-      const result = await invokeModelCli(compiler, COMPILE_PROMPT, body.prompt, {});
-      if (result.status !== 0) {
-        return sendJson(res, {
-          ok: false,
-          error: `compiler exit ${result.status}: ${result.stderr.slice(0, 500)}`,
-          stdout: result.stdout.slice(0, 800),
-        }, 502);
+      const jobId = randomUUID();
+      composeJobs.set(jobId, { status: 'pending', startedAt: Date.now() });
+      // Fire-and-forget background compile. Captures `compiler` ref so the
+      // outer registry can churn without affecting in-flight jobs.
+      const compilerSnapshot = compiler;
+      void (async () => {
+        try {
+          const result = await invokeModelCli(compilerSnapshot, COMPILE_PROMPT, body.prompt!, {});
+          if (result.status !== 0) {
+            composeJobs.set(jobId, {
+              status: 'failed',
+              startedAt: composeJobs.get(jobId)!.startedAt,
+              error: `compiler exit ${result.status}: ${result.stderr.slice(0, 500)}`,
+              rawOutput: result.stdout.slice(0, 800),
+            });
+            return;
+          }
+          const plan = extractPlanFromOutput(result.stdout);
+          if (!plan) {
+            composeJobs.set(jobId, {
+              status: 'failed',
+              startedAt: composeJobs.get(jobId)!.startedAt,
+              error: 'compiler output did not parse as a workflow plan',
+              rawOutput: result.stdout.slice(0, 1500),
+            });
+            return;
+          }
+          const yaml = yamlStringify(plan, { indent: 2 });
+          composeJobs.set(jobId, {
+            status: 'done',
+            startedAt: composeJobs.get(jobId)!.startedAt,
+            plan,
+            yaml,
+            compiler: compilerSnapshot.qualified,
+          });
+        } catch (err) {
+          composeJobs.set(jobId, {
+            status: 'failed',
+            startedAt: composeJobs.get(jobId)!.startedAt,
+            error: (err as Error).message,
+          });
+        }
+      })();
+      return sendJson(res, { jobId }, 202);
+    }
+    {
+      const m = url.pathname.match(/^\/api\/workflows\/compose\/([^/]+)$/);
+      if (m && method === 'GET') {
+        const jobId = m[1]!;
+        const job = composeJobs.get(jobId);
+        if (!job) return sendJson(res, { ok: false, error: 'job not found (may have expired)' }, 404);
+        return sendJson(res, job);
       }
-      const plan = extractPlanFromOutput(result.stdout);
-      if (!plan) {
-        return sendJson(res, {
-          ok: false,
-          error: 'compiler output did not parse as a workflow plan',
-          rawOutput: result.stdout.slice(0, 1500),
-        }, 422);
-      }
-      const yaml = yamlStringify(plan, { indent: 2 });
-      return sendJson(res, { plan, yaml, compiler: compiler.qualified });
     }
     if (url.pathname === '/api/workflows/submit' && method === 'POST') {
       const root = defaultTransportRoot();
