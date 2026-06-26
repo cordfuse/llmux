@@ -1,9 +1,13 @@
-// /w — Workflows page. Read-only list of open + completed workflows
-// inferred from the orch transport. v1 ships without a detail page or
-// in-browser compose form — operators submit via `llmux workflow run
-// <file>` (CLI) or POST /api/workflows/submit (HTTP).
+// /w — Workflows page. Lists open + recent workflows and offers a
+// compose form that talks to /api/workflows/compose + /submit.
+//
+// Workflow state is reconstructed each request by walking channel
+// messages for `type: workflow` markers + inspecting the child channel's
+// PLAN.json + COMPLETE files (see workflow-summary.ts).
 
-import { collectWorkflowSummaries, type WorkflowSummary } from '../../orch/workflow-summary.ts';
+import { collectWorkflowSummaries, readChannelMeta, type WorkflowSummary } from '../../orch/workflow-summary.ts';
+import { discoverChannels } from '../../orch/transport.ts';
+import { loadRegistry } from '../../orch/models.ts';
 
 function escapeHtml(s: string): string {
   return String(s).replace(/[&<>"']/g, (c) =>
@@ -48,7 +52,73 @@ export function workflowsPage(
   const open = summaries.filter((w) => w.phase !== 'complete' && w.phase !== 'failed');
   const closed = summaries.filter((w) => w.phase === 'complete' || w.phase === 'failed');
 
-  const body = `
+  // Compose-form supporting data: claimed models + existing channels.
+  // Either source missing → warnings render + compose button disabled.
+  let claimedModels: string[] = [];
+  try { claimedModels = [...loadRegistry(transportRoot).claimed.keys()]; } catch { /* no models.yaml */ }
+  const channels = discoverChannels(transportRoot).map((u) => {
+    const meta = readChannelMeta(transportRoot, u);
+    return { uuid: u, name: meta.name };
+  });
+  const channelOptions = channels.length === 0
+    ? '<option value="" disabled>(no channels — create one via Channels first)</option>'
+    : channels.map((c) => {
+        const label = c.name ?? c.uuid.slice(0, 8) + '…';
+        return `<option value="${escapeHtml(c.name ?? c.uuid)}">${escapeHtml(label)}</option>`;
+      }).join('');
+  const compilerOptions = claimedModels.length === 0
+    ? '<option value="" disabled>(no claimed models — populate data/crosstalk.yaml + restart)</option>'
+    : claimedModels.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('');
+  const canCompose = claimedModels.length > 0 && channels.length > 0;
+  const warnings: string[] = [];
+  if (claimedModels.length === 0) warnings.push('No claimed models — the compiler can\'t run. Populate <code>data/crosstalk.yaml</code> under the transport root with at least one provider+model whose CLI is on PATH, then restart the daemon.');
+  if (channels.length === 0) warnings.push('No channels exist yet — create one via the <a href="/orch" style="color:#7cc4ff">Channels</a> page first.');
+  const warningBlock = warnings.length === 0 ? '' : warnings.map((w) =>
+    `<p style="background:#3c2a10;color:#d29922;border:1px solid #574122;border-radius:6px;padding:8px 10px;margin:0 0 12px;font-size:11px">⚠ ${w}</p>`,
+  ).join('');
+
+  const composeCard = `
+<section class="card" id="compose-card">
+  <h3>Compose new workflow</h3>
+  <p class="sub">Describe what you want in plain English; the compiler agent turns it into a fanout/synthesize plan you can review and edit before submitting. The dispatcher then runs the plan deterministically.</p>
+  ${warningBlock}
+  <div id="compose-step-prompt">
+    <div class="field">
+      <label for="cw-prompt">prompt</label>
+      <textarea id="cw-prompt" rows="4" placeholder="e.g. compare how claude, codex, and gemini would refactor src/auth/users.ts to use bun's built-in crypto instead of node:crypto"></textarea>
+    </div>
+    <div class="field">
+      <label for="cw-compiler">compiler agent</label>
+      <select id="cw-compiler"${claimedModels.length === 0 ? ' disabled' : ''}>${compilerOptions}</select>
+    </div>
+    <div class="field">
+      <label for="cw-channel">target channel</label>
+      <select id="cw-channel"${channels.length === 0 ? ' disabled' : ''}>${channelOptions}</select>
+    </div>
+    <div class="actions">
+      <button type="button" class="primary" id="cw-compile"${!canCompose ? ' disabled title="resolve the warnings above first"' : ''}>Compile preview</button>
+    </div>
+  </div>
+  <div id="compose-step-preview" style="display:none">
+    <p class="sub">Review the compiled plan. Edit the YAML if anything looks off — common fixes: the <code>to:</code> model identity, the <code>count:</code> integer, or the <code>body:</code> instructions. On submit, the engine writes <code>PLAN.json</code> verbatim and dispatches without re-compiling.</p>
+    <div id="cw-summary" style="background:#0b0c10;border:1px solid #1f2329;border-radius:6px;padding:10px;margin-bottom:10px;font-size:12px"></div>
+    <div class="field">
+      <label for="cw-prompt-readback">your prompt (committed as the workflow marker body)</label>
+      <textarea id="cw-prompt-readback" rows="3" readonly style="font:12px ui-monospace,monospace;background:#0b0c10;color:#c9d1d9;opacity:.85;cursor:default"></textarea>
+    </div>
+    <div class="field">
+      <label for="cw-yaml">plan (yaml)</label>
+      <textarea id="cw-yaml" rows="12" spellcheck="false" style="font:12px ui-monospace,monospace"></textarea>
+    </div>
+    <div class="actions" style="justify-content:space-between">
+      <button type="button" id="cw-cancel">← Cancel</button>
+      <button type="button" class="primary" id="cw-submit">Submit workflow →</button>
+    </div>
+  </div>
+  <div id="compose-status" style="margin-top:10px;font-size:12px;color:#7a7f87;min-height:18px"></div>
+</section>`;
+
+  const body = `${composeCard}
 <section class="card">
   <h3>Open workflows (${open.length})</h3>
   <p class="sub">Compile → fanout → synthesize is in flight. The runtime advances these deterministically per dispatcher tick (no LLM orchestrator).</p>
@@ -59,13 +129,6 @@ export function workflowsPage(
   <h3>Recent (${closed.length})</h3>
   <p class="sub">Completed (synthesis replied successfully) or failed (compile error, dispatcher crash, etc.).</p>
   ${closed.length === 0 ? '<p class="empty">No completed workflows yet.</p>' : closed.slice(0, 20).map(renderRow).join('')}
-</section>
-
-<section class="card">
-  <h3>Submit a workflow</h3>
-  <p class="sub">v1 ships read-only in the browser. Submit a pre-authored workflow YAML via:</p>
-  <pre style="background:#0b0c10;border:1px solid #1f2329;border-radius:6px;padding:10px;font-size:12px;color:#c9d1d9;overflow-x:auto">llmux workflow run path/to/plan.yaml --channel main</pre>
-  <p class="sub">Or POST the YAML body to <code>/api/workflows/submit</code> as <code>{"yaml":"…","channel":"main"}</code>.</p>
 </section>
 `;
 
@@ -102,6 +165,17 @@ export function workflowsPage(
   .card .sub{margin:0 0 10px;font-size:11px;color:#7a7f87;line-height:1.5}
   .card .empty{margin:0;font-size:12px;color:#7a7f87;font-style:italic}
   code{font-family:ui-monospace,monospace;color:#c9d1d9;background:#0b0c10;border:1px solid #1f2329;padding:1px 5px;border-radius:3px;font-size:12px}
+  .field{margin-bottom:10px;display:flex;flex-direction:column;gap:4px}
+  .field label{font-size:11px;color:#9aa0a6;text-transform:uppercase;letter-spacing:.05em}
+  .field input,.field textarea,.field select{background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 10px;font:13px ui-monospace,monospace;outline:none;width:100%;box-sizing:border-box;resize:vertical}
+  .field input:focus,.field textarea:focus,.field select:focus{border-color:#2d4a66}
+  .field select:disabled,.field textarea:disabled,.field input:disabled{opacity:.5;cursor:not-allowed}
+  .actions{display:flex;gap:10px;align-items:center;margin-top:6px}
+  .actions button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 14px;font:13px ui-monospace,monospace;cursor:pointer}
+  .actions button:hover:not(:disabled){background:#252b34;border-color:#3a414b}
+  .actions button.primary{background:#11192b;color:#7cc4ff;border-color:#2d4a66;font-weight:600}
+  .actions button.primary:hover:not(:disabled){background:#1a2842}
+  .actions button:disabled{opacity:.5;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -119,7 +193,6 @@ function openNav(){ navDrawer.classList.add('open'); navBackdrop.classList.add('
 function closeNav(){ navDrawer.classList.remove('open'); navBackdrop.classList.remove('show'); }
 navToggle.addEventListener('click', openNav);
 navBackdrop.addEventListener('click', closeNav);
-// Drawer items with data-page navigate via picker; href items navigate normally.
 document.querySelectorAll('#nav-drawer a[data-page]').forEach(a => {
   a.addEventListener('click', (e) => {
     e.preventDefault();
@@ -127,8 +200,129 @@ document.querySelectorAll('#nav-drawer a[data-page]').forEach(a => {
     location.href = '/';
   });
 });
-// Auto-refresh every 5s while open workflows exist (cheap; same pattern as orch).
-${open.length > 0 ? 'setTimeout(() => location.reload(), 5000);' : ''}
+
+// ---- Compose flow ----
+const promptStep = document.getElementById('compose-step-prompt');
+const previewStep = document.getElementById('compose-step-preview');
+const statusEl = document.getElementById('compose-status');
+const yamlInput = document.getElementById('cw-yaml');
+const summaryEl = document.getElementById('cw-summary');
+let lastPrompt = '';
+let lastChannel = '';
+
+function setStatus(msg, isErr){
+  statusEl.textContent = msg || '';
+  statusEl.style.color = isErr ? '#f85149' : '#7a7f87';
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function renderSummary(plan){
+  summaryEl.innerHTML =
+    '<div><span style="color:#9aa0a6">fanout:</span> <span style="color:#7cc4ff">' + esc(plan.fanout.to) + '</span> &times; <strong>' + plan.fanout.count + '</strong></div>' +
+    '<div style="margin-top:4px"><span style="color:#9aa0a6">synthesize:</span> <span style="color:#a371f7">' + esc(plan.synthesize.to) + '</span></div>';
+}
+
+const compileBtn = document.getElementById('cw-compile');
+let compileInFlight = false;
+if (compileBtn) {
+  compileBtn.addEventListener('click', async () => {
+    if (compileInFlight) return;
+    const prompt = document.getElementById('cw-prompt').value.trim();
+    const compiler = document.getElementById('cw-compiler').value;
+    const channel = document.getElementById('cw-channel').value;
+    if (!prompt){ setStatus('prompt required', true); return; }
+    lastPrompt = prompt;
+    lastChannel = channel;
+    compileInFlight = true;
+    compileBtn.disabled = true;
+    const originalLabel = compileBtn.textContent;
+    compileBtn.textContent = 'Compiling…';
+    setStatus('compiling — this may take a moment…');
+    try {
+      const r = await fetch('/api/workflows/compose', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, compilerAgent: compiler }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok){
+        setStatus(body.error || 'compile failed', true);
+        if (body.rawOutput) console.log('compiler raw output:', body.rawOutput);
+        return;
+      }
+      yamlInput.value = body.yaml;
+      document.getElementById('cw-prompt-readback').value = lastPrompt;
+      renderSummary(body.plan);
+      promptStep.style.display = 'none';
+      previewStep.style.display = 'block';
+      setStatus('compiled by ' + body.compiler + ' — review and edit before submitting');
+    } catch (e){ setStatus('error: ' + e.message, true); }
+    finally {
+      compileInFlight = false;
+      compileBtn.disabled = false;
+      compileBtn.textContent = originalLabel;
+    }
+  });
+}
+
+const cancelBtn = document.getElementById('cw-cancel');
+if (cancelBtn) {
+  cancelBtn.addEventListener('click', () => {
+    previewStep.style.display = 'none';
+    promptStep.style.display = 'block';
+    setStatus('');
+  });
+}
+
+const submitBtn = document.getElementById('cw-submit');
+let submitInFlight = false;
+if (submitBtn) {
+  submitBtn.addEventListener('click', async () => {
+    if (submitInFlight) return;
+    const yaml = yamlInput.value;
+    if (!yaml.trim()){ setStatus('yaml is empty', true); return; }
+    submitInFlight = true;
+    submitBtn.disabled = true;
+    cancelBtn.disabled = true;
+    yamlInput.readOnly = true;
+    const originalLabel = submitBtn.textContent;
+    submitBtn.textContent = 'Submitting…';
+    setStatus('submitting — committing workflow marker + PLAN.json…');
+    try {
+      const r = await fetch('/api/workflows/submit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ yaml, channel: lastChannel, prompt: lastPrompt }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok){
+        setStatus(body.error || 'submit failed', true);
+        submitInFlight = false;
+        submitBtn.disabled = false;
+        cancelBtn.disabled = false;
+        yamlInput.readOnly = false;
+        submitBtn.textContent = originalLabel;
+        return;
+      }
+      // Success — reload to show the new workflow in the Open list.
+      setStatus('submitted — reloading…');
+      setTimeout(() => location.reload(), 500);
+    } catch (e){
+      setStatus('error: ' + e.message, true);
+      submitInFlight = false;
+      submitBtn.disabled = false;
+      cancelBtn.disabled = false;
+      yamlInput.readOnly = false;
+      submitBtn.textContent = originalLabel;
+    }
+  });
+}
+
+// Auto-refresh every 5s while open workflows exist (so phase transitions
+// surface without a manual reload). Skip if compose is in progress to
+// avoid clobbering operator input.
+${open.length > 0 ? `setTimeout(() => {
+  if (compileInFlight || submitInFlight) return;
+  if (previewStep.style.display !== 'none') return;
+  location.reload();
+}, 5000);` : ''}
 </script>
 </body></html>`;
 }

@@ -24,13 +24,14 @@ import { validatePlan, type WorkflowPlan } from '../../orch/workflow.ts';
 import { serializeFrontmatter } from '../../orch/frontmatter.ts';
 import { now as nowTimestamp, messageFilename } from '../../orch/filenames.ts';
 import { workflowsPage } from './workflows-page.ts';
-import { workflowTick } from '../../orch/workflow.ts';
-import { loadRegistry } from '../../orch/models.ts';
+import { workflowTick, COMPILE_PROMPT, extractPlanFromOutput } from '../../orch/workflow.ts';
+import { loadRegistry, type ModelEntry } from '../../orch/models.ts';
+import { invokeModelCli } from '../../orch/invoke.ts';
 import { writeRegistryEntry, removeRegistryEntry } from '../../orch/dispatchers.ts';
 import { discoverChannels } from '../../orch/transport.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { parse as yamlParse } from 'yaml';
+import { parse as yamlParse, stringify as yamlStringify } from 'yaml';
 import { hostname as osHostname } from 'node:os';
 
 function readDaemonVersion(): string {
@@ -4979,7 +4980,57 @@ export function startServer(opts: ServeOptions): ServerHandle {
     }
     // ---- Workflows API ----
     if (url.pathname === '/api/workflows' && method === 'GET') {
-      return sendJson(res, { workflows: collectWorkflowSummaries(defaultTransportRoot()) });
+      const root = defaultTransportRoot();
+      let claimedModels: string[] = [];
+      try {
+        claimedModels = [...loadRegistry(root).claimed.keys()];
+      } catch { /* no models.yaml */ }
+      const channels = discoverChannels(root).map((u) => {
+        const meta = readChannelMeta(root, u);
+        return { uuid: u, name: meta.name };
+      });
+      return sendJson(res, {
+        workflows: collectWorkflowSummaries(root),
+        claimedModels,
+        channels,
+      });
+    }
+    if (url.pathname === '/api/workflows/compose' && method === 'POST') {
+      const root = defaultTransportRoot();
+      const body = (await readJsonBody(req)) as { prompt?: string; compilerAgent?: string };
+      if (typeof body.prompt !== 'string' || body.prompt.trim().length === 0) {
+        return sendJson(res, { ok: false, error: 'prompt required' }, 400);
+      }
+      let registry;
+      try { registry = loadRegistry(root); }
+      catch (err) { return sendJson(res, { ok: false, error: `registry not loadable: ${(err as Error).message}` }, 409); }
+      let compiler: ModelEntry | undefined;
+      if (body.compilerAgent && registry.claimed.has(body.compilerAgent)) {
+        compiler = registry.claimed.get(body.compilerAgent);
+      } else {
+        compiler = registry.claimed.values().next().value as ModelEntry | undefined;
+      }
+      if (!compiler) {
+        return sendJson(res, { ok: false, error: 'no claimed model available to compile — populate data/crosstalk.yaml and restart' }, 409);
+      }
+      const result = await invokeModelCli(compiler, COMPILE_PROMPT, body.prompt, {});
+      if (result.status !== 0) {
+        return sendJson(res, {
+          ok: false,
+          error: `compiler exit ${result.status}: ${result.stderr.slice(0, 500)}`,
+          stdout: result.stdout.slice(0, 800),
+        }, 502);
+      }
+      const plan = extractPlanFromOutput(result.stdout);
+      if (!plan) {
+        return sendJson(res, {
+          ok: false,
+          error: 'compiler output did not parse as a workflow plan',
+          rawOutput: result.stdout.slice(0, 1500),
+        }, 422);
+      }
+      const yaml = yamlStringify(plan, { indent: 2 });
+      return sendJson(res, { plan, yaml, compiler: compiler.qualified });
     }
     if (url.pathname === '/api/workflows/submit' && method === 'POST') {
       const root = defaultTransportRoot();
