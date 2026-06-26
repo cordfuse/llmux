@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { tryV2Route, initV2Routes, getV2User } from '../v2-routes.ts';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
 import { hostname } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
@@ -19,6 +19,19 @@ import { loadConfig, loadOverride, overridePath, saveOverride, type LlmuxConfig,
 import * as orch from '../../orch/orch.ts';
 import { defaultTransportRoot } from '../../orch/init.ts';
 import { loadActor, listActors, listActorSummaries } from '../../orch/actors.ts';
+import { collectWorkflowSummaries, readChannelMeta } from '../../orch/workflow-summary.ts';
+import { validatePlan, type WorkflowPlan } from '../../orch/workflow.ts';
+import { serializeFrontmatter } from '../../orch/frontmatter.ts';
+import { now as nowTimestamp, messageFilename } from '../../orch/filenames.ts';
+import { workflowsPage } from './workflows-page.ts';
+import { workflowTick } from '../../orch/workflow.ts';
+import { loadRegistry } from '../../orch/models.ts';
+import { writeRegistryEntry, removeRegistryEntry } from '../../orch/dispatchers.ts';
+import { discoverChannels } from '../../orch/transport.ts';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { parse as yamlParse } from 'yaml';
+import { hostname as osHostname } from 'node:os';
 
 function readDaemonVersion(): string {
   // Resolve package.json relative to this source file so the version stays
@@ -145,9 +158,10 @@ const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`
 // (Account, Users — they go to dedicated v2 pages).
 function renderNavDrawer(host: string, activeId: string): string {
   const items = [
-    { id: 'sessions', icon: '▦', label: 'Chat', dataPage: 'sessions' },
-    { id: 'orch',     icon: '⇄', label: 'Channels', href: '/orch' },
-    { id: 'tokens',   icon: '⚿', label: 'Tokens', dataPage: 'tokens' },
+    { id: 'sessions',  icon: '▦', label: 'Chat',      dataPage: 'sessions' },
+    { id: 'orch',      icon: '⇄', label: 'Channels',  href: '/orch' },
+    { id: 'workflows', icon: '⎇', label: 'Workflows', href: '/w' },
+    { id: 'tokens',    icon: '⚿', label: 'Tokens',    dataPage: 'tokens' },
     { id: 'agents',   icon: '⌬', label: 'Agents', dataPage: 'agents' },
     { id: 'logs',     icon: '▤', label: 'Logs', dataPage: 'logs' },
     { id: 'settings', icon: '⚙', label: 'Settings', dataPage: 'settings' },
@@ -4963,6 +4977,62 @@ export function startServer(opts: ServeOptions): ServerHandle {
         return sendJson(res, orchResp.body, orchResp.status);
       }
     }
+    // ---- Workflows API ----
+    if (url.pathname === '/api/workflows' && method === 'GET') {
+      return sendJson(res, { workflows: collectWorkflowSummaries(defaultTransportRoot()) });
+    }
+    if (url.pathname === '/api/workflows/submit' && method === 'POST') {
+      const root = defaultTransportRoot();
+      const body = (await readJsonBody(req)) as { yaml?: string; channel?: string; prompt?: string };
+      if (typeof body.yaml !== 'string' || body.yaml.length === 0) {
+        return sendJson(res, { ok: false, error: 'yaml required' }, 400);
+      }
+      let parsed: unknown;
+      try { parsed = yamlParse(body.yaml); }
+      catch (err) { return sendJson(res, { ok: false, error: `yaml parse error: ${(err as Error).message}` }, 400); }
+      if (!validatePlan(parsed)) {
+        return sendJson(res, { ok: false, error: 'yaml does not match workflow plan schema (fanout.to/count/body + synthesize.to/body)' }, 400);
+      }
+      const plan = parsed as WorkflowPlan;
+      // Resolve parent channel: name or uuid in body.channel; default to first existing channel.
+      const channelName = typeof body.channel === 'string' && body.channel.length > 0 ? body.channel : 'main';
+      // Discover or no-op create — for v1, require the channel to exist already.
+      const { discoverChannels: discover } = await import('../../orch/transport.ts');
+      const channels = discover(root);
+      let parentUuid: string | undefined;
+      for (const u of channels) {
+        const meta = readChannelMeta(root, u);
+        if (meta.name === channelName || u === channelName) { parentUuid = u; break; }
+      }
+      if (!parentUuid) {
+        return sendJson(res, { ok: false, error: `channel "${channelName}" not found — create it via orch first` }, 404);
+      }
+      // Create child channel + pre-write PLAN.json so the dispatcher skips its own compile.
+      const childUuid = randomUUID();
+      const childDir = join(root, 'data', 'channels', childUuid);
+      mkdirSync(childDir, { recursive: true });
+      writeFileSync(join(childDir, 'CHANNEL.md'),
+        serializeFrontmatter({ name: `workflow-${Date.now()}`, parent: parentUuid }, ''));
+      writeFileSync(join(childDir, 'PLAN.json'), JSON.stringify(plan, null, 2) + '\n');
+      // Write the workflow trigger message into the parent channel.
+      const ts = nowTimestamp();
+      const v2User = await getV2User(req);
+      const fromAlias = v2User?.username ?? (typeof body.prompt === 'string' ? 'workflow' : 'workflow');
+      const markerBody = typeof body.prompt === 'string' && body.prompt.length > 0 ? body.prompt : '(submitted via /api/workflows/submit)';
+      const filename = messageFilename(ts);
+      const parentDir = join(root, 'data', 'channels', parentUuid, ts.pathDate);
+      mkdirSync(parentDir, { recursive: true });
+      const frontmatter: Record<string, unknown> = {
+        from: fromAlias,
+        to: 'workflow',
+        timestamp: ts.iso,
+        type: 'workflow',
+        child_channel: childUuid,
+      };
+      const fullPath = join(parentDir, filename);
+      writeFileSync(fullPath, serializeFrontmatter(frontmatter, markerBody));
+      return sendJson(res, { ok: true, childChannelUuid: childUuid, parentChannelUuid: parentUuid }, 201);
+    }
 
     // ---- Pages ----
     if (url.pathname === '/') {
@@ -4975,6 +5045,14 @@ export function startServer(opts: ServeOptions): ServerHandle {
         return res.end();
       }
       return sendHtml(res, orchPage(v2User.username));
+    }
+    if (url.pathname === '/w') {
+      const v2User = await getV2User(req);
+      if (!v2User) {
+        res.writeHead(302, { location: '/login?returnTo=%2Fw' });
+        return res.end();
+      }
+      return sendHtml(res, workflowsPage(hostname(), FAVICON_DATA_URL, renderNavDrawer, defaultTransportRoot()));
     }
     if (url.pathname.startsWith('/session/')) {
       const name = decodeURIComponent(url.pathname.slice('/session/'.length));
@@ -5026,10 +5104,44 @@ export function startServer(opts: ServeOptions): ServerHandle {
     console.error('[v2] init failed (v1 picker unaffected):', err);
   });
 
+  // Workflow runtime — tick the workflow dispatcher every 3s if a model
+  // registry is configured. No registry = no workflows (operator hasn't
+  // set up data/crosstalk.yaml in the transport); the daemon still runs.
+  // Dispatcher registry write/remove is the discovery surface so workflows
+  // can route fanout to specific dispatchers (single-host case here, but
+  // the same machinery would scale to many).
+  let workflowInterval: ReturnType<typeof setInterval> | null = null;
+  const dispatcherAlias = osHostname().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  try {
+    const transportRoot = defaultTransportRoot();
+    const registry = loadRegistry(transportRoot);
+    if (registry.claimed.size > 0) {
+      writeRegistryEntry(transportRoot, dispatcherAlias, [...registry.claimed.keys()], DAEMON_VERSION);
+      workflowInterval = setInterval(() => {
+        void workflowTick({
+          transportRoot,
+          alias: dispatcherAlias,
+          registry,
+          claimed: registry.claimed,
+          log: (event, fields) => console.log(`[workflow] ${event}`, fields ?? ''),
+        }, discoverChannels(transportRoot)).catch((err) => {
+          console.error('[workflow] tick failed:', err);
+        });
+      }, 3000);
+      console.log(`[workflow] dispatcher "${dispatcherAlias}" registered with ${registry.claimed.size} model(s); tick every 3s`);
+    } else {
+      console.log('[workflow] no claimed models in data/crosstalk.yaml — workflow runtime idle (orch bus still works)');
+    }
+  } catch (err) {
+    console.log(`[workflow] runtime not started: ${(err as Error).message}`);
+  }
+
   return {
     port: opts.port,
     stop: () =>
       new Promise<void>((resolve) => {
+        if (workflowInterval) clearInterval(workflowInterval);
+        try { removeRegistryEntry(defaultTransportRoot(), dispatcherAlias); } catch { /* best-effort */ }
         wss.close(() => http.close(() => resolve()));
       }),
   };

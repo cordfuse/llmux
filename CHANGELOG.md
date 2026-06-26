@@ -5,6 +5,53 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — workflow runtime (ported from `@cordfuse/crosstalk`)
+
+Cherry-picks the compile → fanout → synthesize workflow engine from
+crosstalk v7's `src/workflow.ts` family into llmux. Workflows now have
+a first-class home in llmux: a `Workflows` nav drawer item alongside
+`Chat` and `Channels`, a read-only `/w` page that lists open and recent
+workflows by phase, a REST API to inspect and submit, and a CLI to drive
+from headless scripts.
+
+The trigger was visible UI asymmetry — crosstalk shipped `Workflows`
+in its nav but llmux didn't, even though both expose the same orch
+primitive ("Channels"). Operators learning the Cordfuse product family
+saw the gap. The port keeps the engine shape verbatim so a workflow
+plan composed against crosstalk runs identically here.
+
+**Ported into `src/orch/`:**
+- `workflow.ts` — state machine, plan parsing, phase advancement, `workflowTick`
+- `invoke.ts` — model CLI invocation (child-process spawn, env layering)
+- `resolve.ts` — model ref resolution
+- `models.ts` — model registry parsing, claim loading from `data/crosstalk.yaml`
+- `dispatchers.ts` — dispatcher registry
+- `workflow-summary.ts` (new, llmux-specific) — reconstructs state from disk
+
+**New surface:**
+- Nav drawer item `⎇ Workflows` between `Channels` and `Tokens`
+- `/w` page — open workflows + recent (auto-refreshes every 5s while open)
+- `GET /api/workflows` — list summaries
+- `POST /api/workflows/submit` — submit pre-authored workflow YAML
+- `llmux workflow run <file> [--channel <name>]` — CLI equivalent
+- `llmux workflow status [--id <child-uuid>] [--json]`
+
+**Daemon lifecycle:**
+- On `server start`, attempts `loadRegistry(transportRoot)`. With claimed
+  models, registers dispatcher under lowercased hostname and starts a 3s
+  `workflowTick` loop. Without models, logs `runtime idle (orch bus still
+  works)` and runs normally — workflows stay inert.
+- On `stop`, clears tick + removes dispatcher registry entry.
+
+**Deferred to follow-up PRs** (v1 scope cut):
+- Workflow detail page (`/w/<childUuid>`)
+- Web compose form + `POST /api/workflows/compose`
+- `llmux workflow compose <prompt>` CLI verb
+
+The engine matches crosstalk's storage layout 1:1 (`data/channels/<uuid>/
+PLAN.json` + `COMPLETE`), so workflows authored against either runtime
+read identically on the other.
+
 ## [0.36.5] — 2026-06-25
 
 ### Fixed — web terminal artifacts after viewport resize / phone rotation

@@ -18,6 +18,15 @@ import { init as orchInit, defaultTransportRoot } from './orch/init.ts';
 import { syncBackupPush } from './orch/transport.ts';
 import * as orch from './orch/orch.ts';
 import { loadFleet, startFleet, stopFleet } from './orch/fleet.ts';
+import { collectWorkflowSummaries, readChannelMeta } from './orch/workflow-summary.ts';
+import { validatePlan, type WorkflowPlan } from './orch/workflow.ts';
+import { serializeFrontmatter } from './orch/frontmatter.ts';
+import { now as nowTimestamp, messageFilename } from './orch/filenames.ts';
+import { discoverChannels } from './orch/transport.ts';
+import { readFileSync as fsReadFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join as pjoin } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { parse as yamlParse } from 'yaml';
 import { login as authLogin, logout as authLogout, whoami as authWhoami } from './v2/auth/login.ts';
 import { loadCredentials, setActiveProfile } from './v2/auth/credentials.ts';
 import { readPassphrase } from './v2/auth/prompt.ts';
@@ -767,6 +776,87 @@ function formatTo(to: string | string[]): string {
   return Array.isArray(to) ? to.join(',') : to;
 }
 
+async function dispatchWorkflow(verb: string | undefined, args: string[]): Promise<void> {
+  if (!verb) {
+    printVerbHelp('workflow', verb);
+    return;
+  }
+  const parsed = parseArgs(args, {
+    channel: { kind: 'string', description: 'Parent channel name or uuid (default: main)' },
+    id: { kind: 'string', description: 'Workflow child channel uuid — status only' },
+    json: { kind: 'boolean', description: 'emit JSON' },
+  });
+  const root = defaultTransportRoot();
+  const json = !!parsed.flags['json'];
+
+  switch (verb) {
+    case 'run': {
+      const filePath = parsed.positional[0];
+      if (!filePath) throw new Error('`llmux workflow run` needs <file> as the first positional arg');
+      const yamlText = fsReadFileSync(filePath, 'utf-8');
+      let plan: unknown;
+      try { plan = yamlParse(yamlText); }
+      catch (err) { throw new Error(`yaml parse error: ${(err as Error).message}`); }
+      if (!validatePlan(plan)) {
+        throw new Error('yaml does not match workflow plan schema (fanout.to/count/body + synthesize.to/body)');
+      }
+      const channelName = typeof parsed.flags['channel'] === 'string' ? parsed.flags['channel'] as string : 'main';
+      // Resolve parent channel
+      const channels = discoverChannels(root);
+      let parentUuid: string | undefined;
+      for (const u of channels) {
+        const meta = readChannelMeta(root, u);
+        if (meta.name === channelName || u === channelName) { parentUuid = u; break; }
+      }
+      if (!parentUuid) throw new Error(`channel "${channelName}" not found — create it via \`llmux orch send\` or initialise the transport first`);
+      const childUuid = randomUUID();
+      const childDir = pjoin(root, 'data', 'channels', childUuid);
+      mkdirSync(childDir, { recursive: true });
+      writeFileSync(pjoin(childDir, 'CHANNEL.md'),
+        serializeFrontmatter({ name: `workflow-${Date.now()}`, parent: parentUuid }, ''));
+      writeFileSync(pjoin(childDir, 'PLAN.json'), JSON.stringify(plan as WorkflowPlan, null, 2) + '\n');
+      const ts = nowTimestamp();
+      const filename = messageFilename(ts);
+      const parentDir = pjoin(root, 'data', 'channels', parentUuid, ts.pathDate);
+      mkdirSync(parentDir, { recursive: true });
+      const alias = process.env['LLMUX_ORCH_ALIAS'] ?? 'workflow';
+      const frontmatter: Record<string, unknown> = {
+        from: alias,
+        to: 'workflow',
+        timestamp: ts.iso,
+        type: 'workflow',
+        child_channel: childUuid,
+      };
+      writeFileSync(pjoin(parentDir, filename),
+        serializeFrontmatter(frontmatter, '(submitted via llmux workflow run)'));
+      if (json) console.log(JSON.stringify({ ok: true, childChannelUuid: childUuid, parentChannelUuid: parentUuid }));
+      else console.log(`workflow submitted: ${childUuid} (parent channel: ${channelName})`);
+      return;
+    }
+    case 'status': {
+      const summaries = collectWorkflowSummaries(root);
+      const id = typeof parsed.flags['id'] === 'string' ? parsed.flags['id'] as string : undefined;
+      const filtered = id ? summaries.filter((w) => w.childChannelUuid === id) : summaries;
+      if (json) {
+        console.log(JSON.stringify(filtered));
+        return;
+      }
+      if (filtered.length === 0) {
+        console.log(id ? `no workflow with id ${id}` : 'no workflows yet');
+        return;
+      }
+      for (const w of filtered) {
+        const fanout = w.phase === 'pending_compile' ? '—' : `${w.fanoutReplied}/${w.fanoutTotal}`;
+        const parent = w.parentChannelName ?? w.parentChannelUuid.slice(0, 8) + '…';
+        console.log(`${w.childChannelUuid.slice(0, 8)}…  ${w.phase.padEnd(16)}  from=${w.markerFrom}  channel=${parent}  fanout=${fanout}`);
+      }
+      return;
+    }
+    default:
+      throw new Error(`unknown workflow verb "${verb}". Try one of: run | status`);
+  }
+}
+
 // ----------------- main -----------------
 
 async function main(): Promise<void> {
@@ -807,6 +897,9 @@ async function main(): Promise<void> {
         return;
       case 'orch':
         await dispatchOrch(verb, remainder);
+        return;
+      case 'workflow':
+        await dispatchWorkflow(verb, remainder);
         return;
       case 'auth':
         await dispatchAuth(verb, remainder, env);
