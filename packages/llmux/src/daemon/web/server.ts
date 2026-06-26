@@ -2901,6 +2901,12 @@ function sessionPage(name: string): string {
     resizeTimer = setTimeout(function(){
       applyLayout();
       try { fit.fit(); } catch(e){}
+      // After fit.fit() evicts bottom rows into scrollback (mobile keyboard
+      // appear/disappear, address-bar collapse, rotation), wipe scrollback
+      // so tmux's status bar doesn't accumulate as ghost copies. \x1b[3J =
+      // ED 3, "Erase Scrollback" — leaves the visible area alone; tmux
+      // refills it from its own redraw on the pty SIGWINCH below.
+      try { term.write('\x1b[3J'); } catch(_){}
       safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
     }, 60);
   }
@@ -2957,6 +2963,7 @@ function sessionPage(name: string): string {
       pinchState.lastApplied = clamped;
       term.options.fontSize = clamped;
       try { fit.fit(); } catch(_){}
+      try { term.write('\x1b[3J'); } catch(_){}
       try { term.refresh(0, term.rows - 1); } catch(_){}
       safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
     });
@@ -2994,6 +3001,7 @@ function sessionPage(name: string): string {
       if (target === current) return;
       term.options.fontSize = target;
       try { fit.fit(); } catch(_){}
+      try { term.write('\x1b[3J'); } catch(_){}
       try { term.refresh(0, term.rows - 1); } catch(_){}
       safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
       try { localStorage.setItem(FONT_KEY, String(target)); } catch(_){}

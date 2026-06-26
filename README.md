@@ -270,6 +270,13 @@ single-host, user-mode variant. Same on-disk message format, so a
 crosstalk transport could be read by llmux orch tooling and vice versa
 if you ever want to bridge.
 
+**Worked example — Monte Carlo fanout.** Step-by-step guide to setting
+up the canonical orch pattern (one coordinator dispatches the same
+task to N workers in parallel, waits for all replies, synthesizes):
+[MONTECARLO.md](MONTECARLO.md). Covers prerequisites, the fleet config,
+actor/skill layout, what each phase looks like on disk and over the
+bus, and how to adapt the pattern to your own fanout task.
+
 ## Install
 
 ### Prerequisites (daemon host)
