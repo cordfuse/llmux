@@ -129,12 +129,42 @@ const BRAND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"
 const FAVICON_SVG = BRAND_SVG;
 const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(FAVICON_SVG)}`;
 
-// PWA support was removed in v0.16.3 — Chrome on Android bundles each
-// installed PWA into a WebAPK whose package name is derived from the
-// hostname only (port is ignored). Multiple Cordfuse PWAs on the same
-// tailnet host can't coexist as installs. Operators add the URL as a
-// Chrome bookmark / home-screen shortcut instead. `BRAND_SVG` is still
-// used as the browser-tab favicon.
+// PWA: minimal scaffold re-introduced to TEST the v0.16.3 concern.
+// Prior comment claimed Chrome's WebAPK packaging derives
+// from hostname only (ignoring port), which would have made coexisting
+// Cordfuse PWA installs on the same tailnet host impossible. That claim
+// is not corroborated by current Chromium public docs (origin spec
+// includes port; manifest_id is per-origin since Chrome 2022+).
+//
+// Test plan: install llmux PWA on Android Chrome, then install a
+// second Cordfuse PWA (vyzr — once it has one) at the same hostname
+// different port. If both coexist, the v0.16.3 concern was stale/wrong.
+// If the second overwrites the first, the comment was right and we
+// rip this back out (or move to subdomain-per-app).
+//
+// Manifest sets explicit `id: "/"` so it resolves per-origin (scheme +
+// host + port), giving Chrome the strongest possible signal that this
+// is a distinct PWA from anything on a different port.
+const PWA_MANIFEST_JSON = JSON.stringify({
+  name: 'llmux',
+  short_name: 'llmux',
+  id: '/',
+  start_url: '/',
+  scope: '/',
+  display: 'standalone',
+  orientation: 'any',
+  background_color: '#0b0c10',
+  theme_color: '#0b0c10',
+  description: 'Multi-agent CLI dispatcher',
+  icons: [
+    { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+    { src: '/icon.svg', sizes: '192x192 512x512', type: 'image/svg+xml', purpose: 'any' },
+  ],
+});
+const PWA_HEAD_TAGS = `<link rel="manifest" href="/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="llmux">`;
 
 // ---------- shared drawer ----------
 
@@ -188,6 +218,7 @@ function pickerPage(): string {
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <meta name="theme-color" content="#0b0c10">
+${PWA_HEAD_TAGS}
 <style>
   :root{color-scheme:dark}
   html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px;overflow-x:hidden}
@@ -2502,6 +2533,8 @@ function sessionPage(name: string): string {
 <title>${escapedName} — llmux</title>
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
+<meta name="theme-color" content="#0b0c10">
+${PWA_HEAD_TAGS}
 <link rel="stylesheet" href="${XTERM_CSS}">
 <style>
   :root{--topbar-h:38px;--bar-h:92px;--allkeys-h:0px;color-scheme:dark}
@@ -3518,6 +3551,7 @@ function orchPage(authedUsername: string): string {
 <link rel="icon" href="${FAVICON_DATA_URL}">
 <link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
 <meta name="theme-color" content="#0b0c10">
+${PWA_HEAD_TAGS}
 <style>
   :root{color-scheme:dark}
   html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px;overflow-x:hidden}
@@ -4490,6 +4524,20 @@ export function startServer(opts: ServeOptions): ServerHandle {
     }
 
     // ---- Always-open endpoints (no auth required) ----
+    if (url.pathname === '/manifest.webmanifest') {
+      res.writeHead(200, {
+        'content-type': 'application/manifest+json',
+        'cache-control': 'public, max-age=300',
+      });
+      return res.end(PWA_MANIFEST_JSON);
+    }
+    if (url.pathname === '/icon.svg') {
+      res.writeHead(200, {
+        'content-type': 'image/svg+xml',
+        'cache-control': 'public, max-age=86400',
+      });
+      return res.end(BRAND_SVG);
+    }
     if (url.pathname === '/health') {
       return sendJson(res, {
         ok: true,

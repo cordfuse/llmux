@@ -5,6 +5,35 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — PWA install scaffold (test, see notes)
+
+Re-introduces a minimal PWA manifest + iOS install meta tags as an
+empirical test of the v0.16.3 concern that Chrome's WebAPK packaging
+ignores port (and thus can't coexist with sibling Cordfuse PWAs on the
+same tailnet host). The prior claim isn't corroborated by current
+Chromium public docs — origin spec includes port, and `manifest_id`
+has been per-origin since Chrome 2022+. We're testing the actual
+behavior, not the comment.
+
+- New routes: `/manifest.webmanifest` (`application/manifest+json`) and
+  `/icon.svg` (`image/svg+xml`). Both always-open (no auth).
+- New head tags injected into picker / terminal / channels pages:
+  `<link rel="manifest">` + the three `apple-mobile-web-app-*` meta
+  tags. Auth gate and exit pages skipped (not install targets).
+- Manifest sets explicit `id: "/"` so Chrome resolves identity per full
+  origin (scheme + host + port), the strongest signal that
+  `host:3443` and `host:3444` are distinct apps.
+- Icon reuses the existing `BRAND_SVG` (`{Lm}` monogram) — no new
+  assets shipped.
+
+**Phase 2 test (multi-port coexistence) is blocked** until a second
+Cordfuse app (vyzr, etc.) also ships a manifest. For now, only the
+single-install path is testable: install on Android Chrome from the
+three-dot menu and confirm a working WebAPK on the home screen.
+
+If multi-app coexistence turns out broken, this scaffold gets ripped
+out again and the move is subdomain-per-app instead.
+
 ## [0.36.5] — 2026-06-25
 
 ### Fixed — web terminal artifacts after viewport resize / phone rotation
