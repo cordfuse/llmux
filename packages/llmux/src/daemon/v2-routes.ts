@@ -89,6 +89,16 @@ export async function getV2User(req: IncomingMessage): Promise<User | undefined>
   return auth.ok ? auth.user : undefined;
 }
 
+/**
+ * Expose the singleton v2 stores so /api/tokens (in server.ts) can mint +
+ * list + revoke identity tokens against the same userStore + tokenStore
+ * that v2 login uses. Returns undefined before initV2Routes() has run.
+ */
+export function getV2Stores(): { users: FileUserStore; tokens: FileTokenStore } | undefined {
+  if (!v2) return undefined;
+  return { users: v2.users, tokens: v2.tokens };
+}
+
 export async function initV2Routes(port: number): Promise<void> {
   const p = v2Paths();
   if (!existsSync(p.dataDir)) mkdirSync(p.dataDir, { recursive: true });

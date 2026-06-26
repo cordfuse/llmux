@@ -63,6 +63,8 @@ export interface TokenStore {
   revoke(tokenId: string): Promise<void>;
   /** Revoke all tokens owned by a user. Used on user deletion. */
   revokeAllForUser(username: string): Promise<number>;
+  /** Rename a token. Pass empty string to clear. Returns the updated row or undefined if not found. */
+  rename(tokenId: string, name: string): Promise<IdentityToken | undefined>;
   /** Validate a presented wire secret. On success, touches lastUsedAt. */
   validate(presentedSecret: string): Promise<TokenValidation>;
 }
@@ -194,6 +196,19 @@ export class FileTokenStore implements TokenStore {
       if (remaining.length === before) return 0;
       this.save(remaining);
       return before - remaining.length;
+    });
+  }
+
+  async rename(tokenId: string, name: string): Promise<IdentityToken | undefined> {
+    return this.withLock(async () => {
+      const tokens = this.load();
+      const idx = tokens.findIndex(t => t.tokenId === tokenId);
+      if (idx < 0) return undefined;
+      const trimmed = name.trim();
+      const updated: IdentityToken = { ...tokens[idx]!, name: trimmed };
+      tokens[idx] = updated;
+      this.save(tokens);
+      return updated;
     });
   }
 
