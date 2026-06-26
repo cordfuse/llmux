@@ -5,6 +5,8 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.36.5] — 2026-06-25
+
 ### Fixed — web terminal artifacts after viewport resize / phone rotation
 
 The previous resize handler (v0.36.4) erased scrollback but left the
