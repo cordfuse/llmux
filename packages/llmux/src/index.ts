@@ -321,6 +321,7 @@ async function dispatchServer(verb: string | undefined, args: string[]): Promise
     'qr-endpoint': { kind: 'string', description: 'endpoint label for the pairing QR (e.g. tailscale-https)' },
     'qr-name': { kind: 'string', description: 'pairing-token name (default: server-start-<ISO date>)' },
     'qr-expiry': { kind: 'string', description: 'ISO-8601 expiry for the pairing token' },
+    'qr-owner': { kind: 'string', description: 'pairing-token owner (default: first admin user)' },
   });
   switch (verb) {
     case 'start':
@@ -338,6 +339,8 @@ async function dispatchToken(verb: string | undefined, args: string[]): Promise<
     return;
   }
   const parsed = parseArgs(args, {
+    username: { kind: 'string', description: 'token owner (required for `create`)' },
+    user: { kind: 'string', description: 'filter `list`/`revoke --all` to one owner' },
     name: { kind: 'string', description: 'token label' },
     expiry: { kind: 'string', description: 'ISO-8601 expiry' },
     qr: { kind: 'boolean', description: 'render QR for first-tap login' },
@@ -353,13 +356,13 @@ async function dispatchToken(verb: string | undefined, args: string[]): Promise<
       return;
     case 'list':
     case 'show':
-      h.handleTokenShow(parsed);
+      await h.handleTokenShow(parsed);
       return;
     case 'revoke':
       await h.handleTokenRevoke(parsed);
       return;
     case 'rename':
-      h.handleTokenRename(parsed);
+      await h.handleTokenRename(parsed);
       return;
     default:
       throw new Error(`unknown token verb "${verb}"`);

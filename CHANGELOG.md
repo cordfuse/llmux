@@ -5,6 +5,56 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed — tokens are now user-owned (v1 SAS tokens become read-only legacy)
+
+The Tokens page in the web UI used to mint anonymous v1 SAS tokens
+(`{ id, hash, name?, createdAt, expiresAt? }`) — anyone holding the
+token got bearer-equivalent daemon access with no user attribution.
+The Users page (added in v0.35.0 for v2 auth) managed a parallel
+identity-bound system that the Tokens page didn't touch.
+
+Two doors with mismatched audit characteristics. Collapsed into one:
+
+- **Every token now has an owning `username`.** Mints route through
+  the v2 `FileTokenStore`. The on-disk shape is `IdentityToken`
+  (already shipped — see `v2/auth/tokens.ts`); only the call sites
+  changed.
+- **Web UI: Tokens page gains an Owner column and an Owner picker on
+  create.** Admins see every token + can mint for any user; non-admins
+  see only their own + are pinned to themselves (server rewrites the
+  payload defense-in-depth, so a stale browser tab can't 403). The
+  page now requires v2 login.
+- **CLI: `llmux token create --username <name>` is required.** No
+  default — token ownership is explicit. New `--user <name>` flag on
+  `list` and `revoke --all` filters to one owner. `token rename` and
+  `token revoke <id>` are unchanged at the call site (the CLI runs
+  with disk access; ownership is enforced server-side, not CLI-side).
+- **Boot QR pairing: now mints a v2 token for the first admin user.**
+  New `--qr-owner <username>` flag overrides. If no admin exists yet
+  (fresh install), the QR is skipped and the `/setup?token=…` URL
+  printed by `initV2Routes` becomes the operator's only entry point.
+- **`isAuthorized` (HTTP and WS) now accepts either a valid v1 SAS
+  token OR a valid v2 session/identity token.** The old "no v1
+  tokens = auth disabled" escape hatch is gone; after this release,
+  v2 users are the canonical auth source.
+
+### Backwards compatibility
+
+- **Existing v1 SAS tokens continue to validate.** `validateAuthToken`
+  still reads `auth.json`. Operators don't need to rotate tokens to
+  keep their phones / CI / scripts working.
+- **No new v1 SAS tokens can be minted.** `authStore.createAuthToken`
+  has zero call sites in the codebase post-PR. The next release after
+  this one will likely delete the v1 store entirely.
+- **`/api/tokens` response shape changed.** GET now returns
+  `{ me, tokens, users? }` (was a bare `[Token, ...]` array). POST
+  accepts a new optional `username` field. Token rows include
+  `username` and `lastUsedAt`.
+- **`llmux token create` without `--username` now errors.** Scripts
+  that minted nameless v1 tokens need the flag added; usually
+  `--username <whoever-the-bot-is>` against a user you've created
+  via the setup wizard or `/admin/users`.
+
 ### Removed — orch bus + Channels nav (refocus on tmux sessions)
 
 The `llmux orch` bus, `llmux fleet` declarations, the `/orch` web page
