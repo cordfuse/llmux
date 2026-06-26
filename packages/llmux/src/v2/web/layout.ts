@@ -120,7 +120,6 @@ export interface NavItem {
  */
 export const V2_NAV: NavItem[] = [
   { id: 'sessions', label: 'Sessions', icon: '▦', href: '/' },
-  { id: 'orch',     label: 'Orchestration', icon: '⇄', href: '/orch' },
   { id: 'tokens',   label: 'Tokens', icon: '⚿', href: '/?p=tokens' },
   { id: 'agents',   label: 'Agents', icon: '⌬', href: '/?p=agents' },
   { id: 'logs',     label: 'Logs', icon: '▤', href: '/?p=logs' },

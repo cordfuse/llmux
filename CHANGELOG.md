@@ -5,6 +5,63 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed — orch bus + Channels nav (refocus on tmux sessions)
+
+The `llmux orch` bus, `llmux fleet` declarations, the `/orch` web page
+("Channels" nav), every `/api/orch/*` endpoint, the actor/species
+model, and the entire `packages/llmux/src/orch/` source tree are gone.
+Net: about 2,000 lines removed.
+
+**Why now.** The orch primitive was cherry-picked from
+`@cordfuse/crosstalk`'s v7 transport in v0.35.0 (2026-06-22). A
+follow-on workflow port (opened as PR #71, closed without merge on
+2026-06-26) made it clear that workflows-on-orch use `claude --print`
+style headless subprocess invocations — which bypass every llmux
+USP (named tmux sessions, send-keys, conversation persistence, browser
+attach, mobile UX). Workflows-in-llmux ran crosstalk's model inside
+llmux's daemon. The same architectural mismatch applied to orch
+itself: bus-style multi-agent coordination doesn't compose with a
+substrate built around long-lived attached agents.
+
+Per the "stabilise the flagship before porting to siblings" rule,
+the right home for orch + workflows is `@cordfuse/crosstalk`, which
+already ships them. Llmux returns to its tight original mission:
+agent CLIs in named tmux sessions, addressable from CLI / REST / web
+picker / phone xterm.
+
+**What went:**
+
+- `packages/llmux/src/orch/` — all 11 source files (acks, activation,
+  actors, claims, filenames, fleet, frontmatter, init, orch, state,
+  transport).
+- `daemon/web/server.ts` — `handleOrchApi`, `orchPage`, the
+  `/api/orch/*` dispatch block, the `/orch` route handler, the `orch`
+  nav drawer item, all orch imports.
+- `index.ts` — `dispatchOrch`, the `formatTo` helper, the
+  `case 'orch'` in the noun dispatcher, all orch imports.
+- `v2/web/layout.ts` — `orch` entry in `V2_NAV`.
+- README — the entire "Orch — multi-agent message bus" section and
+  the `orch` row in the noun-prefix surface table.
+
+**What stayed:**
+
+- Sessions / picker / xterm / init prompts / turnq / v2 auth /
+  conversation resume — every USP feature, unchanged.
+- The `auth` CLI surface (login / logout / whoami / list / use) — that
+  came in alongside orch in v0.35.0 but is its own concern.
+- Tailscale-fronting docs, port conventions, `.llmux.yaml`, runtime
+  overlay file.
+
+**Operator impact** (hard cut, no migration shim):
+
+- Anyone using `llmux orch`, `llmux fleet`, the `/orch` page, the
+  `/api/orch/*` endpoints, or the `LLMUX_ORCH_ALIAS` env var should
+  move to `@cordfuse/crosstalk` — same primitive, same on-disk
+  message format, fuller surface.
+- Existing transport repos under `$XDG_DATA_HOME/llmux/orchestration/`
+  are left on disk. Llmux no longer reads them; safe to copy/move into
+  crosstalk's transport location or delete.
+
 ## [0.36.5] — 2026-06-25
 
 ### Fixed — web terminal artifacts after viewport resize / phone rotation

@@ -204,79 +204,6 @@ If `url` is omitted, the integration uses turnq's local `flock(2)`
 mode — no server required. Set `url` to a turnq HTTP server for
 cross-process / cross-host coordination.
 
-## Orch — multi-agent message bus
-
-Sessions are isolated by default — each agent runs in its own tmux
-session with its own conversation history, and there's no first-class
-way for one session to send a durable, addressable message to another
-and wait for a reply. `llmux orch` adds that layer.
-
-It's a git-transport-backed message bus, single-host, in-process inside
-llmuxd. Each agent (or operator) is an **actor** with an alias; messages
-are markdown files committed to a transport repo at
-`$XDG_DATA_HOME/llmux/orchestration/` with frontmatter (`from:`, `to:`,
-`channel:`, optional `re:` for threads). Delivery is at-least-once with a
-claim/release lock to prevent two consumers from double-processing the
-same message. `to: all` broadcasts on a channel.
-
-The CLI verbs:
-
-```bash
-llmux orch init                                  # create the transport repo
-llmux orch send --alias bot-a --to bot-b "ping"  # send a message
-llmux orch inbox --alias bot-b                   # list messages addressed to me
-llmux orch next  --alias bot-b                   # claim + print the oldest unclaimed
-llmux orch reply <msg-id> "pong"                 # reply (threads via re:)
-llmux orch ack    <msg-id> --alias bot-b         # mark processed (filtered from inbox)
-llmux orch release <msg-id> --alias bot-b        # drop a claim without processing
-llmux orch status                                # transport path, channels, live claims
-llmux orch backup                                # one-shot push to DR remote (if init'd with --remote)
-llmux orch fleet start --file fleet.yaml         # spawn a declared set of agents bound to aliases
-```
-
-Alias resolution: `--alias <name>` per call, or set `LLMUX_ORCH_ALIAS`
-in the session env so an agent's spawned bash tool can call `orch send`
-without passing alias every time. Default channel is `main`; override
-with `--channel <name>`.
-
-At-least-once polling for scripted consumers:
-
-```bash
-llmux orch inbox --alias bot-b --since <last-id> --json
-# response: { messages: [...], nextCursor: "<latest-id>" }
-# pass nextCursor back as --since on the next poll — no rescan, no dedupe needed
-```
-
-REST + web UI: the same surface is at `/api/orch/*` and the
-**Channels** page (web nav label; the route is still `/orch`) renders a
-threaded inbox with alias chips and a replied-set ack so processed
-messages don't re-surface.
-
-**Auth binding.** When v2 auth is enabled, the operator's authenticated
-username IS their orch alias — `from:` fields can't be forged on
-authenticated requests. Localhost calls still bypass auth, same as the
-rest of the daemon.
-
-**Optional DR mirror.** `llmux orch init --remote git@host:llmux-orch.git`
-sets up an async one-way backup push (best-effort, never blocks a
-write). The transport is local-authoritative; the remote is restore
-material only — there's no pull-rebase semantics. `llmux orch backup`
-forces a sync push when you want confirmation.
-
-The engine was cherry-picked from `@cordfuse/crosstalk`'s v7 transport.
-Sibling product, same primitives: crosstalk is the cross-machine,
-system-level, multi-user variant; llmux orch is the per-operator,
-single-host, user-mode variant. Same on-disk message format, so a
-crosstalk transport could be read by llmux orch tooling and vice versa
-if you ever want to bridge.
-
-**Worked example — Monte Carlo fanout.** Step-by-step guide to setting
-up the canonical orch pattern (one coordinator dispatches the same
-task to N workers in parallel, waits for all replies, synthesizes):
-[MONTECARLO.md](MONTECARLO.md). Covers prerequisites, the fleet config,
-actor/skill layout, what each phase looks like on disk and over the
-bus, and how to adapt the pattern to your own fanout task.
-
 ## Install
 
 ### Prerequisites (daemon host)
@@ -354,8 +281,6 @@ token     create / list / rename / revoke (single or --all)
 agent     list  [--all] [--installed] [--json]
 logs      list / tail
 settings  show
-orch      init / send / inbox / next / reply / ack / release /
-          status / backup / fleet (start | stop)
 auth      login / logout / whoami / list / use
 ```
 
