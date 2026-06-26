@@ -1,5 +1,14 @@
 # llmux v2 — System-Mode Daemon + Application-Layer Multi-User Auth
 
+> **Note (v0.37.0, 2026-06-26):** orch references in this doc describe
+> the design as originally conceived. The orch bus + `/api/orch/*`
+> surface + `LLMUX_ORCH_ALIAS` env + the `/var/lib/llmux/orchestration/`
+> transport directory were yanked from llmux in v0.37.0; v2 user-account
+> auth (the substantive content of this doc) survives without them. Read
+> the orch passages as historical context for *why* v2 auth was designed
+> with identity binding — the binding still earns its keep against the
+> v2 token store, just no longer for orch message authorship.
+
 > Status: **design draft**, branch `feat/v2`. Target release: **v2** (when the multi-tenant trigger conditions surface — see V1.x vs V2 below).
 >
 > This document describes the v2 architecture: a single-service-user daemon owning all its own state, with multi-user authentication implemented at the application layer. **The daemon never touches any `/home/*` path.**

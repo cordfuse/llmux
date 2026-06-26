@@ -260,7 +260,7 @@ session/agent verb and it routes over HTTP instead of operating locally:
 
 ```bash
 export LLMUX_SERVER=http://192.0.2.10:3001  # or https://<host>.tailnet.ts.net
-export LLMUX_TOKEN=sas_…                    # mint with `llmux token create`
+export LLMUX_TOKEN=sas_…                    # mint with `llmux token create --username <name>`
 
 llmux session list
 llmux session prompt main "tomorrow's plan?"
