@@ -16,6 +16,7 @@ import * as tmux from '../tmux.ts';
 import * as authStore from '../auth-store.ts';
 import { getAddresses } from '../net.ts';
 import { loadConfig, loadOverride, overridePath, saveOverride, type LlmuxConfig, type TurnqConfig } from '../config.ts';
+import { headerCss, drawerCss, renderHeader } from '../../shared/web/header.ts';
 
 function readDaemonVersion(): string {
   // Resolve package.json relative to this source file so the version stays
@@ -188,31 +189,8 @@ function pickerPage(): string {
   :root{color-scheme:dark}
   html,body{margin:0;background:#0b0c10;color:#e6e8eb;font-family:ui-monospace,monospace;font-size:14px;overflow-x:hidden}
   body{padding:18px 16px 80px;max-width:980px;margin:0 auto;box-sizing:border-box}
-  header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
-  h1{font-size:18px;margin:0}
-  h1 .brand{color:#7cc4ff;letter-spacing:.08em;font-weight:600}
-  h1 .host{color:#a371f7;font-weight:500}
-  #nav-toggle{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;font-size:18px;line-height:1;margin-right:10px;flex:0 0 auto;transition:background 150ms ease,border-color 150ms ease}
-  #nav-toggle:hover{background:#252b34;border-color:#3a414b}
-  #nav-toggle:active{transform:scale(.94)}
-  /* Two-row header: controls (hamburger + meta) on row 1, title on row 2.
-     Keeps the h1 from being crushed between the hamburger and the "+ new
-     session" button on portrait phones. */
-  header{flex-direction:column;align-items:stretch;gap:8px}
-  header .header-controls{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-  #nav-drawer{position:fixed;top:0;left:-300px;width:280px;height:100dvh;background:#0e1116;border-right:1px solid #1f2329;transition:left 220ms ease;z-index:55;padding:18px 0;box-sizing:border-box;display:flex;flex-direction:column}
-  #nav-drawer.open{left:0}
-  #nav-backdrop{position:fixed;inset:0;background:rgba(11,12,16,.55);z-index:54;opacity:0;visibility:hidden;transition:opacity 180ms ease,visibility 0s 180ms}
-  #nav-backdrop.show{opacity:1;visibility:visible;transition:opacity 180ms ease}
-  #nav-drawer .nav-header{padding:0 20px 16px;border-bottom:1px solid #1f2329;display:flex;flex-direction:column;gap:4px}
-  #nav-drawer .nav-brand{color:#7cc4ff;font-weight:600;letter-spacing:.08em;font-size:15px}
-  #nav-drawer .nav-host{color:#a371f7;font-size:12px}
-  #nav-drawer nav{flex:1;display:flex;flex-direction:column;padding:8px 0;overflow-y:auto}
-  #nav-drawer a{display:flex;align-items:center;gap:10px;padding:12px 20px;color:#c9d1d9;text-decoration:none;font-size:14px;border-left:3px solid transparent;cursor:pointer}
-  #nav-drawer a:hover{background:#11141a}
-  #nav-drawer a.active{border-left-color:#7cc4ff;color:#7cc4ff;background:#11141a}
-  #nav-drawer a .nav-icon{font-size:16px;width:20px;text-align:center;color:inherit}
-  #nav-drawer .nav-footer{padding:10px 20px 0;border-top:1px solid #1f2329;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;align-items:center}
+  ${headerCss()}
+  ${drawerCss()}
   .page{display:none;padding-bottom:56px}
   .page.active{display:block}
   .tokens-toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
@@ -351,7 +329,7 @@ function pickerPage(): string {
   #logs-view .log-line.error .lvl{color:#f85149}
   #logs-view .log-line.error .txt{color:#ff8a80}
   #logs-view .log-empty{color:#7a7f87;font-style:italic;padding:6px 0}
-  #meta{color:#7a7f87;font-size:11px;display:flex;gap:10px;align-items:center}
+  #meta{color:#7a7f87;font-size:11px;display:flex;gap:8px;align-items:center;flex:0 0 auto}
   #refresh-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ee787;transition:background .25s;box-shadow:0 0 6px #7ee78766}
   #refresh-dot.stale{background:#9aa0a6;box-shadow:none}
   #refresh-dot.error{background:#f85149;box-shadow:0 0 6px #f8514966}
@@ -559,18 +537,15 @@ function pickerPage(): string {
 </style></head>
 <body>
 ${renderNavDrawer(host, 'sessions')}
-<header>
-  <div class="header-controls">
-    <button id="nav-toggle" type="button" aria-label="open navigation" title="open navigation">☰</button>
-    <div id="meta">
-      <span id="refresh-dot" title="updates every 3s"></span>
-      <span id="refresh-label">live</span>
-      <span>·</span>
-      <span>v${escapeHtml(DAEMON_VERSION)}</span>
-    </div>
-  </div>
-  <h1><span class="brand">LLMUX</span> on <span class="host">${escapeHtml(host)}</span> · <span id="page-title">Chat</span></h1>
-</header>
+${renderHeader({
+  brand: 'LLMUX',
+  withNavToggle: true,
+  pageTitleHtml: '<span id="page-title">Chat</span>',
+  // Host + version are dropped from the masthead — both already shown in
+  // the nav drawer (nav-host / nav-footer) — so brand + page-title + the
+  // live/stale/error dot fit on one row without wrapping on narrow phones.
+  metaHtml: '<div id="meta"><span id="refresh-dot" title="updates every 3s"></span><span id="refresh-label">live</span></div>',
+})}
 <div id="page-sessions" class="page active">
 <div id="new-form" aria-hidden="true">
   <h3 id="new-title" class="form-title">new session</h3>

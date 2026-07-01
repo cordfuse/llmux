@@ -4,7 +4,13 @@
 // pickerPage(). This module factors out the head/style/header/nav so the
 // v2 pages (setup, login, account, admin/users) stay byte-for-byte
 // consistent with the existing picker design without re-copying the
-// whole stylesheet.
+// whole stylesheet. The header/toggle/drawer CSS + header markup itself
+// come from ../../shared/web/header.ts, the ONE place both this file and
+// the picker draw from — previously each hand-copied its own, and they'd
+// already drifted (mismatched header vs hamburger background, a border
+// on the hamburger, a header that wraps to multiple rows on phones).
+
+import { headerCss, drawerCss, renderHeader } from '../../shared/web/header.ts';
 
 const BRAND_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="90" ry="90" fill="#0b0c10"/><rect x="1.5" y="1.5" width="509" height="509" rx="89" ry="89" fill="none" stroke="#7cc4ff" stroke-width="1.5" stroke-opacity="0.22"/><text x="256" y="236" text-anchor="middle" dominant-baseline="central" font-family="'Noto Sans Mono', 'Courier New', monospace" font-size="185" font-weight="700" fill="#7cc4ff" letter-spacing="-3">{Lm}</text></svg>`;
 const FAVICON_DATA_URL = `data:image/svg+xml,${encodeURIComponent(BRAND_SVG)}`;
@@ -25,27 +31,8 @@ export function commonStyles(): string {
   body{padding:18px 16px 80px;max-width:980px;margin:0 auto;box-sizing:border-box}
   a{color:#7cc4ff;text-decoration:none}
   a:hover{text-decoration:underline}
-  header{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin-bottom:18px}
-  header .header-controls{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-  h1{font-size:18px;margin:0}
-  h1 .brand{color:#7cc4ff;letter-spacing:.08em;font-weight:600}
-  h1 .host{color:#a371f7;font-weight:500;margin-left:8px}
-  #nav-toggle{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;font-size:18px;line-height:1;margin-right:10px;flex:0 0 auto;transition:background 150ms ease,border-color 150ms ease}
-  #nav-toggle:hover{background:#252b34;border-color:#3a414b}
-  #nav-toggle:active{transform:scale(.94)}
-  #nav-drawer{position:fixed;top:0;left:-300px;width:280px;height:100dvh;background:#0e1116;border-right:1px solid #1f2329;transition:left 220ms ease;z-index:55;padding:18px 0;box-sizing:border-box;display:flex;flex-direction:column}
-  #nav-drawer.open{left:0}
-  #nav-backdrop{position:fixed;inset:0;background:rgba(11,12,16,.55);z-index:54;opacity:0;visibility:hidden;transition:opacity 180ms ease,visibility 0s 180ms}
-  #nav-backdrop.show{opacity:1;visibility:visible;transition:opacity 180ms ease}
-  #nav-drawer .nav-header{padding:0 20px 16px;border-bottom:1px solid #1f2329;display:flex;flex-direction:column;gap:4px}
-  #nav-drawer .nav-brand{color:#7cc4ff;font-weight:600;letter-spacing:.08em;font-size:15px}
-  #nav-drawer .nav-host{color:#a371f7;font-size:12px}
-  #nav-drawer nav{flex:1;display:flex;flex-direction:column;padding:8px 0;overflow-y:auto}
-  #nav-drawer a{display:flex;align-items:center;gap:10px;padding:12px 20px;color:#c9d1d9;text-decoration:none;font-size:14px;border-left:3px solid transparent;cursor:pointer}
-  #nav-drawer a:hover{background:#11141a;text-decoration:none}
-  #nav-drawer a.active{border-left-color:#7cc4ff;color:#7cc4ff;background:#11141a}
-  #nav-drawer a .nav-icon{font-size:16px;width:20px;text-align:center;color:inherit}
-  #nav-drawer .nav-footer{padding:10px 20px 0;border-top:1px solid #1f2329;font-size:11px;color:#7a7f87;display:flex;justify-content:space-between;align-items:center}
+  ${headerCss()}
+  ${drawerCss()}
   .about-card{background:#11141a;border:1px solid #1f2329;border-radius:8px;padding:16px;margin-bottom:14px}
   .about-card h3{margin:0 0 12px;font-size:13px;color:#7cc4ff;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
   .about-card .sub{margin:-6px 0 12px;font-size:11px;color:#9aa0a6;line-height:1.5}
@@ -160,16 +147,14 @@ ${items}
 }
 
 export function brandHeader(opts: { host: string; pageTitle?: string; withNavToggle: boolean }): string {
-  const toggle = opts.withNavToggle
-    ? `<button id="nav-toggle" aria-label="Open menu" type="button">≡</button>`
-    : '';
-  const titleSuffix = opts.pageTitle ? ` <span class="host">· ${escapeHtml(opts.pageTitle)}</span>` : '';
-  return `
-<header>
-  <div class="header-controls">
-    <h1>${toggle}<span class="brand">LLMUX</span> <span class="host">${escapeHtml(opts.host)}</span>${titleSuffix}</h1>
-  </div>
-</header>`;
+  // Host name is dropped from the visible header (it's already in the nav
+  // drawer just above) so brand + page-title can sit on one row without
+  // wrapping on narrow phones — matches the picker's header.
+  return renderHeader({
+    brand: 'LLMUX',
+    withNavToggle: opts.withNavToggle,
+    ...(opts.pageTitle ? { pageTitleHtml: escapeHtml(opts.pageTitle) } : {}),
+  });
 }
 
 export interface PageShellOpts {
