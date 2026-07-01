@@ -176,9 +176,10 @@ ${links}
 
 // ---------- pages ----------
 
-function pickerPage(): string {
+async function pickerPage(): Promise<string> {
   const sessions = listSessionViews();
   const host = hostname();
+  const auth = await authStatus();
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>llmux on ${escapeHtml(host)} · Chat</title>
@@ -788,8 +789,8 @@ ${renderHeader({
 </div>
 <footer>
   <span>llmux v${escapeHtml(DAEMON_VERSION)}</span>
-  ${authStore.authEnabled()
-    ? `<span class="ok">✓ auth required — ${authStore.listAuthTokens().length} active token${authStore.listAuthTokens().length === 1 ? '' : 's'}</span>`
+  ${auth.enabled
+    ? `<span class="ok">✓ auth required — ${auth.v2Count > 0 ? auth.v2Count + ' user' + (auth.v2Count === 1 ? '' : 's') : auth.v1Count + ' active token' + (auth.v1Count === 1 ? '' : 's')}</span>`
     : `<span class="warn">⚠ no auth — anyone on the network can attach</span>`}
 </footer>
 <script>
@@ -3292,6 +3293,19 @@ async function isAuthorized(req: IncomingMessage): Promise<boolean> {
   return (await getV2User(req)) !== undefined;
 }
 
+/** Real auth status across BOTH mechanisms — v1 legacy tokens and v2 users.
+ * `authStore.authEnabled()` alone only reflects v1; a v2-only install (the
+ * now-canonical path) would read as "no auth" even though isAuthorized()
+ * above fully requires a v2 session. Shared by the startup banner, the
+ * picker footer, and /health — all three used to check v1 only. */
+interface AuthStatus { enabled: boolean; v1Count: number; v2Count: number; }
+async function authStatus(): Promise<AuthStatus> {
+  const v1Count = authStore.authEnabled() ? authStore.listAuthTokens().length : 0;
+  const v2Stores = getV2Stores();
+  const v2Count = v2Stores ? (await v2Stores.users.listUsers()).length : 0;
+  return { enabled: v1Count > 0 || v2Count > 0, v1Count, v2Count };
+}
+
 async function isWsAuthorized(req: IncomingMessage, urlSearch: URLSearchParams): Promise<boolean> {
   if (authStore.authEnabled() && authStore.validateAuthToken(extractWsToken(req, urlSearch))) return true;
   return (await getV2User(req)) !== undefined;
@@ -3333,8 +3347,9 @@ function gatePage(reason: 'missing' | 'invalid'): string {
     <div class="msg" id="msg"></div>
   </form>
   <div class="hint">
-    Generate a token on the daemon host: <code>llmux token create</code><br>
-    The token is sent as a cookie after unlock. Localhost bypasses this gate.
+    This form only accepts a legacy access token from before the v2
+    migration — <code>llmux token create</code> no longer mints one.<br>
+    Don't have one? <a href="/login">Sign in</a> instead.
   </div>
 </div>
 <script>
@@ -3926,7 +3941,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
         ok: true,
         version: DAEMON_VERSION,
         sessions: state.list().length,
-        authEnabled: authStore.authEnabled(),
+        authEnabled: (await authStatus()).enabled,
       });
     }
     if (url.pathname === '/api/version' && method === 'GET') {
@@ -4440,7 +4455,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
 
     // ---- Pages ----
     if (url.pathname === '/') {
-      return sendHtml(res, pickerPage());
+      return sendHtml(res, await pickerPage());
     }
     if (url.pathname.startsWith('/session/')) {
       const name = decodeURIComponent(url.pathname.slice('/session/'.length));
@@ -4585,18 +4600,24 @@ function attachSession(ws: WebSocket, sessionName: string): void {
   });
 }
 
-export function printBanner(port: number): void {
+export async function printBanner(port: number): Promise<void> {
   console.log(`llmux v${DAEMON_VERSION}\n`);
   const addrs = getAddresses(port);
   const width = Math.max(10, ...addrs.map((a) => a.label.length + 2));
   for (const addr of addrs) {
     console.log(`  ▸ ${addr.label.padEnd(width)}${addr.url}`);
   }
-  if (authStore.authEnabled()) {
-    const count = authStore.listAuthTokens().length;
-    console.log(`\n  ✓ auth required — ${count} active token${count === 1 ? '' : 's'} (localhost bypasses)\n`);
+  // Previously this claimed "(localhost bypasses)" — true when written,
+  // but that bypass was a real vulnerability (fix/loopback-auth-bypass)
+  // and is gone.
+  const { enabled, v1Count, v2Count } = await authStatus();
+  if (enabled) {
+    const parts: string[] = [];
+    if (v2Count > 0) parts.push(`${v2Count} user${v2Count === 1 ? '' : 's'} (sign in at /login)`);
+    if (v1Count > 0) parts.push(`${v1Count} legacy token${v1Count === 1 ? '' : 's'}`);
+    console.log(`\n  ✓ auth required — ${parts.join(', ')}\n`);
   } else {
     console.log(`\n  ⚠ running without auth — anyone on the network can attach.`);
-    console.log(`    create a token with \`llmux token create\` to enable auth.\n`);
+    console.log(`    visit /setup to create the first v2 user and enable auth.\n`);
   }
 }

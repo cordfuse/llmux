@@ -268,8 +268,12 @@ llmux session attach main                   # raw TTY pass-through over WS
 llmux session resume main --latest          # rebind to the most recent claude convo
 ```
 
-Localhost requests bypass auth; remote requests require a Bearer token.
-`--token <sas>` per-command works too.
+Local CLI usage (no `--server` flag) talks to the daemon in-process — no
+network request, no token needed. Any HTTP/WS request to the daemon — from
+`--server`, a browser, or anything else — requires a real credential: a v2
+session/bearer token, or a legacy v1 token. There is no bypass based on
+where the request appears to come from. `--token <sas>` per-command works
+for remote use.
 
 ## Noun-prefix surface
 
@@ -406,10 +410,12 @@ llmux token revoke <id>
 llmux token revoke --all --user alice  # nuke every token alice owns
 ```
 
-After the first user exists, all non-localhost HTTP/WS requests require
+After the first user exists, every HTTP/WS request to the daemon requires
 either `Authorization: Bearer <sas>` (CLI / curl) or the `llmux_session`
-cookie set by browser login. Localhost stays open so local CLI use needs
-no token.
+cookie set by browser login — regardless of where the request appears to
+come from. Local CLI usage (no `--server` flag) needs no token because it
+never makes an HTTP request at all — it calls the daemon's handlers
+in-process.
 
 > v1 SAS tokens (the `sas_<id>` format without an owning user, from
 > pre-v0.37 releases) are read-only. Existing v1 tokens keep validating
