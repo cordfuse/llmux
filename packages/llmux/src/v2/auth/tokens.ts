@@ -120,15 +120,21 @@ function isExpired(token: IdentityToken, now: Date = new Date()): boolean {
 /**
  * File-backed token store. Reads/writes config.dataDir/tokens.json.
  *
- * Concurrency model matches FileUserStore — single-process daemon, in-
- * process write mutex, in-memory cache.
+ * Concurrency model matches FileUserStore — in-process write mutex, no
+ * in-memory cache. load() re-reads the file on every call: the daemon is
+ * NOT the only process that touches tokens.json — `llmux token create` /
+ * `revoke` run as separate short-lived CLI processes against the same
+ * file while a daemon may already be running. An in-memory cache here
+ * meant a revoke issued via the CLI silently didn't take effect against
+ * an already-running daemon until it was restarted (confirmed live while
+ * verifying fix/loopback-auth-bypass). The file is a handful of tokens —
+ * re-parsing it on every call is cheap next to the rest of a request.
  *
  * lastUsedAt persistence: updated on every successful validate. At the
  * daemon's expected request rate this is fine; if it ever becomes a
  * hotspot we can debounce writes to once-per-N-seconds-per-token.
  */
 export class FileTokenStore implements TokenStore {
-  private cache: IdentityToken[] | undefined;
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(private storePath: string) {}
@@ -247,11 +253,7 @@ export class FileTokenStore implements TokenStore {
   // ── private ─────────────────────────────────────────────────────────────
 
   private load(): IdentityToken[] {
-    if (this.cache) return this.cache;
-    if (!existsSync(this.storePath)) {
-      this.cache = [];
-      return this.cache;
-    }
+    if (!existsSync(this.storePath)) return [];
     const raw = readFileSync(this.storePath, 'utf-8');
     let parsed: unknown;
     try {
@@ -262,8 +264,7 @@ export class FileTokenStore implements TokenStore {
     if (!Array.isArray(parsed)) {
       throw new Error(`tokens.json: expected array at ${this.storePath}`);
     }
-    this.cache = parsed as IdentityToken[];
-    return this.cache;
+    return parsed as IdentityToken[];
   }
 
   private save(tokens: IdentityToken[]): void {
@@ -272,7 +273,6 @@ export class FileTokenStore implements TokenStore {
     writeFileSync(tmp, JSON.stringify(tokens, null, 2) + '\n', { mode: 0o600 });
     renameSync(tmp, this.storePath);
     try { chmodSync(this.storePath, 0o600); } catch { /* best-effort */ }
-    this.cache = tokens;
   }
 
   private withLock<T>(fn: () => Promise<T>): Promise<T> {

@@ -125,11 +125,18 @@ function validatePassphrase(passphrase: string): void {
  * File-backed user store. Reads/writes /var/lib/llmux/users.json (or
  * config.dataDir/users.json).
  *
- * Concurrency model: in-process mutex on writes (the daemon is single-process).
- * Reads load + cache; writes invalidate the cache.
+ * Concurrency model: in-process mutex on writes, no in-memory cache.
+ * load() re-reads the file on every call: the daemon is NOT the only
+ * process that touches users.json — CLI commands (`user reset-passphrase`,
+ * etc.) run as separate short-lived processes against the same file while
+ * a daemon may already be running. A cache here meant a passphrase reset
+ * or demotion issued via the CLI silently didn't take effect against an
+ * already-running daemon until it was restarted (confirmed live while
+ * verifying fix/loopback-auth-bypass, alongside the identical bug in
+ * FileTokenStore). The file is a handful of users — re-parsing it on
+ * every call is cheap next to the rest of a request.
  */
 export class FileUserStore implements UserStore {
-  private cache: User[] | undefined;
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(private storePath: string) {}
@@ -213,11 +220,7 @@ export class FileUserStore implements UserStore {
   // ── private ─────────────────────────────────────────────────────────────
 
   private load(): User[] {
-    if (this.cache) return this.cache;
-    if (!existsSync(this.storePath)) {
-      this.cache = [];
-      return this.cache;
-    }
+    if (!existsSync(this.storePath)) return [];
     const raw = readFileSync(this.storePath, 'utf-8');
     let parsed: unknown;
     try {
@@ -228,8 +231,7 @@ export class FileUserStore implements UserStore {
     if (!Array.isArray(parsed)) {
       throw new Error(`users.json: expected array at ${this.storePath}`);
     }
-    this.cache = parsed as User[];
-    return this.cache;
+    return parsed as User[];
   }
 
   private save(users: User[]): void {
@@ -238,7 +240,6 @@ export class FileUserStore implements UserStore {
     writeFileSync(tmp, JSON.stringify(users, null, 2) + '\n', { mode: 0o600 });
     renameSync(tmp, this.storePath);
     try { chmodSync(this.storePath, 0o600); } catch { /* best-effort */ }
-    this.cache = users;
   }
 
   /**
