@@ -948,7 +948,33 @@ export async function handleSessionEdit(args: ParsedArgs): Promise<void> {
   }
 }
 
-export function handleLogsList(args: ParsedArgs): void {
+// `logs list`/`logs tail` in local mode read THIS process's own in-memory
+// ring buffer (log-buffer.ts) — empty in a fresh CLI invocation whenever
+// the daemon runs as a separate, already-running process (the normal
+// deployment shape). Detect that case with a quick /health probe on the
+// configured port and say so, rather than silently printing nothing.
+async function detectSeparateDaemon(): Promise<{ port: number } | undefined> {
+  try {
+    const cfg = loadConfig();
+    const port = Number(process.env.LLMUXD_PORT ?? cfg.server.port);
+    if (!Number.isFinite(port) || port <= 0) return undefined;
+    const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(500) });
+    if (res.ok) return { port };
+  } catch { /* nothing listening there, or the probe itself failed — either way, no daemon to point at */ }
+  return undefined;
+}
+
+async function printEmptyLogsHint(): Promise<void> {
+  const running = await detectSeparateDaemon();
+  if (running) {
+    console.log(`no entries — this reads the CURRENT PROCESS's log buffer, but a daemon is already running separately on port ${running.port}. Use `
+      + `\`llmux logs list --server http://localhost:${running.port}\` (or \`logs tail\`) to read its logs, or the web UI's Logs tab.`);
+  } else {
+    console.log('no log entries yet.');
+  }
+}
+
+export async function handleLogsList(args: ParsedArgs): Promise<void> {
   const limitFlag = args.flags.limit as string | undefined;
   const limit = limitFlag ? Math.max(1, Number(limitFlag)) : undefined;
   const json = Boolean(args.flags.json);
@@ -956,6 +982,10 @@ export function handleLogsList(args: ParsedArgs): void {
   const slice = limit !== undefined ? entries.slice(-limit) : entries;
   if (json) {
     console.log(JSON.stringify(slice, null, 2));
+    return;
+  }
+  if (slice.length === 0) {
+    await printEmptyLogsHint();
     return;
   }
   for (const e of slice) {
@@ -967,10 +997,23 @@ export async function handleLogsTail(args: ParsedArgs): Promise<void> {
   // Print the initial buffer (so the operator sees recent context), then
   // subscribe to live entries until Ctrl-C. The subscription is in-process,
   // so this verb is local-mode only — remote tailing goes through the SSE
-  // client in client.ts.
+  // client in client.ts (dispatchLogs routes there when --server is set).
   const since = args.flags.since as string | undefined;
   const sinceMs = since ? Date.parse(since) : 0;
   const initial = logBuffer.getBuffer().filter((e) => !since || Date.parse(e.ts) >= sinceMs);
+  if (initial.length === 0) {
+    const running = await detectSeparateDaemon();
+    if (running) {
+      // Live entries would only ever arrive on THIS process's own buffer —
+      // subscribing and waiting here would hang forever, misleadingly
+      // looking like it's working. Point at --server (which does work) and
+      // stop instead.
+      console.log(`this reads the CURRENT PROCESS's log buffer, but a daemon is already running separately on port ${running.port}. `
+        + `Use \`llmux logs tail --server http://localhost:${running.port}\` to tail its logs live.`);
+      return;
+    }
+    console.log('no log entries yet — waiting for new ones (Ctrl-C to stop).');
+  }
   for (const e of initial) {
     console.log(`${e.ts}  ${e.level.toUpperCase().padEnd(5)}  ${e.text}`);
   }
