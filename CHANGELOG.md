@@ -5,12 +5,24 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-07-01
+
 ### Security
 
 - **Removed a loopback-trust auth bypass.** `isAuthorized()`/`isWsAuthorized()` treated any request whose `remoteAddress` looked like `127.0.0.1` as fully authenticated. `tailscale serve` (and any local reverse proxy) connects to the daemon via loopback, so every tailnet visitor's request looked exactly like a trusted local one — confirmed exploitable: unauthenticated `GET /api/sessions`/`/api/settings` returned real data, and session-spawn/WS-attach sat behind the same bypass. Auth is now always a real v1 token or v2 session/bearer, regardless of address. Local CLI usage (no `--server`) is unaffected — it never made an HTTP request in the first place.
 - **`FileTokenStore`/`FileUserStore` no longer cache JSON files in memory.** The cache meant a token minted or revoked via a separate CLI process wasn't recognized by an already-running daemon until restart — the opposite of what revocation is supposed to guarantee. `load()` now always re-reads the file.
 - The browser UI now redirects to `/login` on any `401` instead of showing a silent "offline" status forever (a new, previously-unreachable failure mode created by the fix above).
 - The startup banner, page footer, and `/health`'s `authEnabled` field only checked legacy v1 tokens, so a v2-only install (the current default) could falsely report "running without auth" while every route was actually gated. All three now check both v1 and v2. The banner also no longer claims "(localhost bypasses)" — that bypass is what was just removed.
+
+### Added
+
+- **`llmux user create/list/delete/reset-passphrase`** — the sign-in page has told locked-out operators to run `llmux user reset-passphrase <username>` since v2 auth shipped; the command never existed. There was no CLI recovery path at all for a locked-out sole admin. `delete` refuses to remove the last admin; `reset-passphrase` and `delete` both revoke the target's existing tokens.
+- **`llmux logs list`/`logs tail` now work with `--server <url>`.** Previously both only read the CLI's own (always-empty, in a fresh process) in-memory buffer — silently useless against an already-running daemon, the normal deployment shape. Local mode now also detects a separately-running daemon and points at `--server` instead of printing nothing or hanging.
+
+### Fixed
+
+- README and a couple of in-app hints (the legacy gate page, the sign-in footer, a CLI help string) described the removed loopback bypass, or a `sudo` prefix that would silently point at the wrong `$HOME`, as current/correct behavior. Corrected.
+- `llmux auth login` on a failed attempt printed the raw JSON error body instead of the parsed message.
 
 ## [0.37.0] — 2026-06-26
 
