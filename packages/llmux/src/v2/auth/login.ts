@@ -68,8 +68,16 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   }
 
   if (!resp.ok) {
-    let detail = '';
-    try { detail = await resp.text(); } catch { /* ignore */ }
+    let raw = '';
+    try { raw = await resp.text(); } catch { /* ignore */ }
+    // The daemon's error body is JSON ({"error":"..."}) — parse it out
+    // instead of printing the raw blob (previously: `auth login failed:
+    // {"error":"invalid credentials"} (HTTP 401)`).
+    let detail = raw;
+    try {
+      const parsed = JSON.parse(raw) as { error?: unknown };
+      if (typeof parsed.error === 'string' && parsed.error.length > 0) detail = parsed.error;
+    } catch { /* not JSON — fall back to the raw body below */ }
     return {
       ok: false,
       status: resp.status,

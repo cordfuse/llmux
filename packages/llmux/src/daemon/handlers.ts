@@ -388,7 +388,7 @@ export async function handleServe(args: ParsedArgs): Promise<void> {
   }
   const host = process.env.LLMUXD_HOST ?? '0.0.0.0';
   const handle = startServer({ port, host, config: cfg });
-  printBanner(handle.port);
+  await printBanner(handle.port);
 
   // QR pairing: default on; --no-qr to suppress.
   // Auto-creates a fresh pairing token (named `server-start-<ISO date>` unless

@@ -19,7 +19,7 @@ function help(name: string, summary: string, usage: string): () => string {
       '',
       'Environment:',
       '  LLMUX_SERVER  base URL of the llmux daemon (e.g. http://localhost:3001)',
-      '  LLMUX_TOKEN   auth token (sas_…); not required for localhost',
+      '  LLMUX_TOKEN   auth token (sas_…) — required for any --server call',
       '',
     ].join('\n');
 }
