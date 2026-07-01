@@ -13,8 +13,8 @@
 // node-pty. Intentionally defensive: any failure is swallowed —
 // install must NEVER fail because of a permissions touch-up.
 //
-// Reference: mac-side reproduction logged in the v0.21.3 testing
-// feedback; cross-platform gap because cachy (Linux) never sees it.
+// Reference: reproduced on macOS, logged in the v0.21.3 testing
+// feedback; cross-platform gap — Linux never sees it.
 
 import { createRequire } from 'node:module';
 import { chmodSync, existsSync } from 'node:fs';

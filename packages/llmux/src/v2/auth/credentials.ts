@@ -18,7 +18,7 @@ import { dirname } from 'node:path';
 import { operatorCredentialsPath } from '../system/paths.ts';
 
 export interface ProfileEntry {
-  /** Daemon URL — e.g. http://localhost:3001 or https://cachy.tailnet:3001 */
+  /** Daemon URL — e.g. http://localhost:3001 or https://myhost.tailnet:3001 */
   serverUrl: string;
   /** Application-layer username this profile authenticates as. */
   username: string;
@@ -44,8 +44,8 @@ export class CredentialsError extends Error {
 
 /**
  * Derive a sensible default profile name from a server URL. Used when the
- * operator hasn't specified one explicitly. `https://cachy.tailnet:3001`
- * → `cachy.tailnet-3001`.
+ * operator hasn't specified one explicitly. `https://myhost.tailnet:3001`
+ * → `myhost.tailnet-3001`.
  */
 export function defaultProfileName(serverUrl: string): string {
   let host: string;
