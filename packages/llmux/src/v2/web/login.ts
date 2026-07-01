@@ -38,7 +38,7 @@ export function loginPage(opts: { host: string; returnTo?: string }): string {
       </div>
     </form>
   </div>
-  <p class="footer-note">Forgot your passphrase? Run <code>sudo llmux user reset-passphrase &lt;username&gt;</code> on the daemon host.</p>
+  <p class="footer-note">Forgot your passphrase? Run <code>llmux user reset-passphrase &lt;username&gt;</code> on the daemon host, as the user the daemon runs as (not root/sudo — that would look at the wrong home directory).</p>
 </div>`,
     inlineScript: `${TOAST_HELPER}
 (() => {

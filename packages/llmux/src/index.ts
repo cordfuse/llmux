@@ -139,6 +139,17 @@ Token verbs (always local — managing the daemon-host's auth store):
   token revoke <id>                             revoke a token by id
   token revoke --all [--yes]                    revoke every token (prompts unless --yes)
 
+User verbs (always local — v2 accounts; no caller identity, filesystem
+access to the store IS the trust boundary, e.g. for recovering a locked-
+out sole admin):
+  user create <username> [--name N] [--admin]   create a v2 user (prompts for
+                          [--passphrase P]      passphrase + confirm if not given)
+  user list [--json]                            list v2 users
+  user delete <username> [--yes]                delete a user + revoke their tokens
+                                                 (refuses to delete the last admin)
+  user reset-passphrase <username>              admin-style reset, no old passphrase
+                         [--passphrase P]        needed; revokes their existing tokens
+
 Agent verbs:
   agent list [--all] [--installed] [--json]     list agents (default: installed-only)
 
@@ -369,6 +380,37 @@ async function dispatchToken(verb: string | undefined, args: string[]): Promise<
   }
 }
 
+async function dispatchUser(verb: string | undefined, args: string[]): Promise<void> {
+  if (!verb) {
+    printVerbHelp('user', verb);
+    return;
+  }
+  const parsed = parseArgs(args, {
+    username: { kind: 'string', description: 'username (alternative to the positional form)' },
+    name: { kind: 'string', description: 'display name (defaults to the username)' },
+    passphrase: { kind: 'string', description: 'passphrase (env LLMUX_PASSPHRASE fallback; interactive prompt + confirm if neither)' },
+    admin: { kind: 'boolean', description: 'with `create`: grant admin' },
+    yes: { kind: 'boolean', description: 'with `delete`: skip the interactive confirm prompt' },
+    json: { kind: 'boolean', description: 'emit JSON' },
+  });
+  switch (verb) {
+    case 'create':
+      await h.handleUserCreate(parsed);
+      return;
+    case 'list':
+      await h.handleUserList(parsed);
+      return;
+    case 'delete':
+      await h.handleUserDelete(parsed);
+      return;
+    case 'reset-passphrase':
+      await h.handleUserResetPassphrase(parsed);
+      return;
+    default:
+      throw new Error(`unknown user verb "${verb}"`);
+  }
+}
+
 async function dispatchAgent(verb: string | undefined, args: string[], env: GlobalEnv): Promise<void> {
   if (!verb) {
     printVerbHelp('agent', verb);
@@ -584,6 +626,9 @@ async function main(): Promise<void> {
         return;
       case 'token':
         await dispatchToken(verb, remainder);
+        return;
+      case 'user':
+        await dispatchUser(verb, remainder);
         return;
       case 'agent':
         await dispatchAgent(verb, remainder, env);

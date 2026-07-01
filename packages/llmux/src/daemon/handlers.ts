@@ -11,6 +11,7 @@ import * as tmux from './tmux.ts';
 import * as authStore from './auth-store.ts';
 import { FileUserStore } from '../v2/auth/users.ts';
 import { FileTokenStore } from '../v2/auth/tokens.ts';
+import { readPassphrase } from '../v2/auth/prompt.ts';
 import { startServer, printBanner, buildAgentCommand, parseEnvText, mergeSpawnEnv, editSession } from './web/server.ts';
 import * as turnqIntegration from './turnq-integration.ts';
 import { hostname } from 'node:os';
@@ -671,10 +672,109 @@ export async function handleTokenRename(args: ParsedArgs): Promise<void> {
   const idPrefix = args.positional[0] === 'rename' ? args.positional[1] : args.positional[0];
   if (!idPrefix) throw new Error('token rename requires an <id> (the token id shown by `token list`)');
   const newName = args.flags.name as string | undefined;
-  if (newName === undefined) throw new Error('token rename requires --name <label> (pass --name "" to clear)');
+  if (newName === undefined) throw new Error('token rename requires --name "<label>" (pass --name "" to clear)');
   const updated = await stores.tokens.rename(idPrefix, newName);
   if (!updated) throw new Error(`no token with id "${idPrefix}"`);
   console.log(`renamed ${updated.tokenId} → "${updated.name}"`);
+}
+
+// ---------- v2 user management (CLI-local access) ----------
+// Mirrors the /api/admin/users web routes' business rules exactly (see
+// v2/auth/handlers.ts handleAdminCreateUser/DeleteUser/ResetPassphrase) —
+// this is the CLI-side recovery path for a locked-out sole admin, which
+// previously did not exist despite the sign-in page telling operators to
+// run it (`llmux user reset-passphrase <username>` — "unknown command").
+// No caller-identity concept here, same as the token CLI: the CLI is
+// admin-level because it has filesystem access to the store.
+
+async function promptNewPassphrase(label: string): Promise<string> {
+  const p1 = await readPassphrase(`New passphrase for ${label}: `);
+  const p2 = await readPassphrase('Confirm passphrase: ');
+  if (p1 !== p2) throw new Error('passphrases did not match');
+  return p1;
+}
+
+export async function handleUserCreate(args: ParsedArgs): Promise<void> {
+  const username = (args.positional[0] === 'create' ? args.positional[1] : args.positional[0])
+    ?? (args.flags.username as string | undefined);
+  if (!username) throw new Error('user create requires a <username>');
+  const stores = cliTokenStores();
+  if (await stores.users.getUser(username)) {
+    throw new Error(`user "${username}" already exists`);
+  }
+  const name = (args.flags.name as string | undefined) ?? username;
+  const admin = Boolean(args.flags.admin);
+  const passphrase = (args.flags.passphrase as string | undefined)
+    ?? process.env.LLMUX_PASSPHRASE
+    ?? await promptNewPassphrase(username);
+  const user = await stores.users.createUser({ username, name, passphrase, admin });
+  console.log(`user created: ${user.username}${user.admin ? ' (admin)' : ''}`);
+}
+
+export async function handleUserList(args: ParsedArgs): Promise<void> {
+  const stores = cliTokenStores();
+  const users = await stores.users.listUsers();
+  if (args.flags.json) {
+    console.log(JSON.stringify(users.map((u) => ({
+      username: u.username, name: u.name, admin: u.admin, createdAt: u.createdAt,
+    })), null, 2));
+    return;
+  }
+  if (users.length === 0) {
+    console.log('no users. Create one via `llmux user create <username>` or the web /setup wizard.');
+    return;
+  }
+  const headers = ['USERNAME', 'NAME', 'ADMIN', 'CREATED'];
+  const rows = users.map((u) => [u.username, u.name, u.admin ? 'yes' : '-', u.createdAt]);
+  const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i]!.length)));
+  console.log(headers.map((h, i) => h.padEnd(widths[i]!)).join('  '));
+  for (const r of rows) console.log(r.map((c, i) => c.padEnd(widths[i]!)).join('  '));
+}
+
+export async function handleUserDelete(args: ParsedArgs): Promise<void> {
+  const username = args.positional[0] === 'delete' ? args.positional[1] : args.positional[0];
+  if (!username) throw new Error('user delete requires a <username>');
+  const stores = cliTokenStores();
+  const target = await stores.users.getUser(username);
+  if (!target) throw new Error(`user "${username}" not found`);
+  if (target.admin) {
+    const all = await stores.users.listUsers();
+    const adminCount = all.filter((u) => u.admin).length;
+    if (adminCount <= 1) {
+      throw new Error(`cannot delete "${username}" — the last admin. Create another admin first with \`llmux user create --admin\`.`);
+    }
+  }
+  if (!Boolean(args.flags.yes)) {
+    if (!process.stdin.isTTY) {
+      throw new Error('user delete without --yes requires an interactive terminal');
+    }
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise<string>((resolve) =>
+      rl.question(`Delete user "${username}" and revoke all their tokens? [y/N] `, (a) => resolve(a)),
+    );
+    rl.close();
+    if (!/^y(es)?$/i.test(answer.trim())) {
+      console.log('cancelled');
+      return;
+    }
+  }
+  await stores.users.deleteUser(username);
+  const revoked = await stores.tokens.revokeAllForUser(username);
+  console.log(`deleted user "${username}" (revoked ${revoked} token${revoked === 1 ? '' : 's'})`);
+}
+
+export async function handleUserResetPassphrase(args: ParsedArgs): Promise<void> {
+  const username = args.positional[0] === 'reset-passphrase' ? args.positional[1] : args.positional[0];
+  if (!username) throw new Error('user reset-passphrase requires a <username>');
+  const stores = cliTokenStores();
+  const target = await stores.users.getUser(username);
+  if (!target) throw new Error(`user "${username}" not found`);
+  const passphrase = (args.flags.passphrase as string | undefined)
+    ?? process.env.LLMUX_PASSPHRASE
+    ?? await promptNewPassphrase(username);
+  await stores.users.setPassphrase(username, passphrase);
+  const revoked = await stores.tokens.revokeAllForUser(username);
+  console.log(`passphrase reset for "${username}" (revoked ${revoked} existing token${revoked === 1 ? '' : 's'} — they'll need to sign in again)`);
 }
 
 async function respawnOne(target: string, opts: { skipInit?: boolean } = {}): Promise<void> {
