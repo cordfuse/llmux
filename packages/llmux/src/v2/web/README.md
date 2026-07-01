@@ -91,7 +91,7 @@ Before merging a new page into the v2 web tree:
       (background `#11141a`, border `#262c34`, focus border `#2d4a66`)
 - [ ] Primary button: `color: #7cc4ff; border-color: #2d4a66`
 - [ ] Danger button: `color: #f85149; border-color: #4a2329`
-- [ ] Mobile responsive: tested at 360px width (Steve's primary phone form)
+- [ ] Mobile responsive: tested at 360px width (a common phone portrait width)
 - [ ] No emoji icons beyond the existing drawer set (CSS-in-JS sneaks
       them in easily; resist)
 - [ ] `Cache-Control: no-cache` set on the response (`sendHtml()` already

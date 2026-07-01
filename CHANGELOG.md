@@ -326,9 +326,7 @@ Claude Code ships two ways and detection now covers both explicitly:
 
 ### Changed — OpenCode adapter swapped from `node:sqlite` to `better-sqlite3`
 
-Per mac's CR
-(`<NAS>/multiagent-chat/2026-06-19T1422-mac-to-cachy-swap-opencode-sqlite-to-better-sqlite3-keep-node20.md`)
-and Steve's direction. Two reasons the prior `node:sqlite` choice
+Per code-review feedback and product direction. Two reasons the prior `node:sqlite` choice
 needed fixing:
 
 1. **Silent feature gap.** `engines.node` is `>=20` but `node:sqlite`
@@ -374,7 +372,7 @@ adapters are filesystem/jsonl, no change)
 
 `engines.node` stays `>=20`.
 
-### Verification on cachy
+### Verification
 
 - Build green, typecheck clean
 - Daemon log: **no ExperimentalWarning** anywhere
@@ -435,8 +433,8 @@ Fix in `daemon/tmux.ts::killSession`:
 Guard against ever killing the daemon's own pid (defense-in-depth
 — the parent-walk shouldn't reach us, but cheap insurance).
 
-**Reported by mac**, validated on macOS arm64 / node 22.22.1 in
-isolated repro. Verified on cachy with a rebind loop: spawn gemini
+**Reported on macOS** arm64 / node 22.22.1 in
+isolated repro. Verified on Linux with a rebind loop: spawn gemini
 → 3 procs, PATCH `resumeFrom` (auto-respawn) → 3 procs, stop →
 0 gemini procs. No accumulation across rebinds.
 
@@ -536,8 +534,7 @@ session-list poll when a session has a `resumeFrom` set.
 purple bold). This release also adds a left-border accent + subtle
 background tint on the same row via a new `has-current` class on the
 conv button, so the bound row is unmistakable in a long list (the
-operator's opencode picker on cachy has 408 rows in the
-crosstalk-runtime cwd).
+operator's opencode picker had 408 rows in a busy cwd).
 
 ### API addition — `SessionView.resumeFromTitle`
 
@@ -548,10 +545,9 @@ when the session is bound and the adapter resolved a title.
 
 ### Added — OpenCode history adapter (sqlite-backed, completes the official 6)
 
-Wires the last of the Cordfuse official 6. Mac validated the schema
-against a real populated `opencode.db` and sent a CR with the verified
-spec (`<NAS>/multiagent-chat/2026-06-19T1314-mac-to-cachy-opencode-
-history-adapter-CR-sqlite-full-spec.md`); this release implements it.
+Wires the last of the Cordfuse official 6. Validated the schema
+against a real populated `opencode.db` with a verified spec;
+this release implements it.
 
 **Storage:** `~/.local/share/opencode/opencode.db` (XDG-data-home
 respecting; same path on macOS + Linux). Sqlite, WAL mode. Two tables:
@@ -621,8 +617,8 @@ Re-investigation found that:
   is a UI nicety only — the source-of-truth project identifier is
   the `projectHash` field inside each session's first event
   (`session_meta`), which equals `sha256(cwd)`. Verified:
-  `sha256("/home/.../Repos/steve-krisjanovs/cortex")` ==
-  `68f4fe7b6db05aae2925fd2c2a8f7ddfb83d7886b76776de0ef5e23641075613`,
+  `sha256("/home/user/Repos/myproject")` ==
+  `046b934ec7c94dead2d1f5df3c18512f2b8a927bdf103420a45569e365fae860`,
   which is the `projectHash` in that cwd's session files.
 - Qwen Code is a Gemini CLI fork (Alibaba). It uses the same
   `<root>/tmp/<dir>/chats/session-*.jsonl` storage layout but at
@@ -777,7 +773,7 @@ No code changes; published to refresh the README in the npm tarball.
 ### Changed — Mobile column-drop choice swapped: STATE hides instead of AGENT
 
 v0.31.3 hid the AGENT column on mobile to free room for the per-row
-Kill icon. Steve pushed back — AGENT is the column he wants visible
+Kill icon. Feedback: AGENT is the column that should stay visible
 on the phone. v0.31.4 reverts that and instead hides the STATE
 column, surfacing status as a small colored dot (`●`) prefixed onto
 the session name inside the name-block:
@@ -942,7 +938,7 @@ boxes that directory can hold hundreds of MB (a single transcript can
 exceed 50MB). `readFileSync` + `split('\n')` over all of them on
 every 3s poll blocked the event loop for ~1s per render and
 catastrophically longer when a session's cwd happened to map to a
-densely-populated `/tmp` directory — Steve's daemon's `/` route was
+densely-populated `/tmp` directory — the daemon's `/` route was
 timing out at 10s with the phone unable to load any page.
 
 Fix: new optional `countConversations(cwd)` method on
@@ -1391,7 +1387,7 @@ while the About page is the active screen.
 
 The Sessions page (mobile-tap-from-phone path; also desktop) gained:
 
-- **Host machine name in the header** — `LLMUX on steve-cachyos · Sessions` style. Reads from `os.hostname()` so cachy shows `steve-cachyos`, mac shows `Steves-Air`. Distinguishes which daemon's UI you're on when you have multiple panes open.
+- **Host machine name in the header** — `LLMUX on <hostname> · Sessions` style. Reads from `os.hostname()`, so each machine shows its own real hostname. Distinguishes which daemon's UI you're on when you have multiple panes open.
 - **Checkbox column on every row** + select-all checkbox in the column header (tri-state — checked / unchecked / indeterminate).
 - **Bulk toolbar above the list** with four text-labelled buttons: **Start**, **Stop**, **Respawn**, **Kill**. Each fires per-name POSTs in parallel against the existing `/api/sessions/<name>/{respawn,stop,kill}` endpoints.
 - **Smart enable/disable** — `Start` lights up only when the selection has at least one exited session, `Stop` only when there's at least one running. `Respawn` and `Kill` light up whenever anything's selected. Empty selection = all four toolbar buttons disabled.
@@ -1418,8 +1414,8 @@ fails — every WS terminal attach died with `4040 spawn failed:
 posix_spawnp failed` surfaced to the user as the misleading "session
 ended — The tmux session is no longer running."
 
-Linux is unaffected (forkpty, no helper exec), so cachy-side testing
-never saw it. Mac caught it on a fresh `npm i -g @cordfuse/llmux`
+Linux is unaffected (forkpty, no helper exec), so testing there
+never surfaced it. Caught on macOS on a fresh `npm i -g @cordfuse/llmux`
 install of v0.21.3.
 
 Fix is a small `postinstall` script (`scripts/fix-pty-permissions.mjs`)

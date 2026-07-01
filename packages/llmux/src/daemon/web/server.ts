@@ -522,7 +522,7 @@ async function pickerPage(): Promise<string> {
     .actions button .label{display:none}
     .actions button{padding:5px 6px;min-width:28px;justify-content:center;margin-left:2px}
   }
-  /* Sub-420px viewports (Pixel/Galaxy portrait, Steve's screenshot) — tighten
+  /* Sub-420px viewports (Pixel/Galaxy portrait) — tighten
      button width further so 4 per-row icons (Conversations / Resume / Edit /
      Kill on a session with history) still fit without clipping the right
      edge of the viewport. */

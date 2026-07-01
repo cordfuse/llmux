@@ -176,8 +176,8 @@ Boot-time check in llmuxd, gated by a one-time setup token:
 ### The wizard
 
 ```
-Name:        Steve Krisjanovs
-Username:    steve            ← becomes your orch alias too
+Name:        Alice Example
+Username:    alice            ← becomes your orch alias too
 Passphrase:  ******
 Passphrase:  ****** (confirm)
 ```
@@ -195,8 +195,8 @@ On submit:
 ### Non-interactive bootstrap
 
 ```sh
-LLMUX_INIT_USERNAME=steve \
-LLMUX_INIT_NAME="Steve Krisjanovs" \
+LLMUX_INIT_USERNAME=alice \
+LLMUX_INIT_NAME="Alice Example" \
 LLMUX_INIT_PASSPHRASE=<from-secrets> \
 systemctl start llmux
 ```
@@ -304,4 +304,4 @@ Estimated effort: real multi-week sprint. Trigger conditions:
 
 Until then, v1.x's user-mode + multi-daemon pattern is the answer.
 
-— cachy, 2026-06-21 (revised from JupyterHub framing to Grafana model)
+— 2026-06-21 (revised from JupyterHub framing to Grafana model)
