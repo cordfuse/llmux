@@ -153,7 +153,8 @@ out sole admin):
 Agent verbs:
   agent list [--all] [--installed] [--json]     list agents (default: installed-only)
 
-Logs verbs (always local — reads the daemon's in-process ring buffer):
+Logs verbs (local: reads THIS process's own ring buffer — empty unless
+you're the daemon itself; pass --server for a running daemon's real logs):
   logs list [--limit N] [--json]                print buffered log lines (newest at the end)
   logs tail [--since ISO]                       print buffer then live-tail until Ctrl-C
 
@@ -558,9 +559,23 @@ async function dispatchAuth(verb: string | undefined, args: string[], env: Globa
   }
 }
 
-async function dispatchLogs(verb: string | undefined, args: string[]): Promise<void> {
+async function dispatchLogs(verb: string | undefined, args: string[], env: GlobalEnv): Promise<void> {
   if (!verb) {
     printVerbHelp('logs', verb);
+    return;
+  }
+  // Remote logs verbs route through the client — the local handler reads
+  // an in-process ring buffer, which is empty in a fresh CLI invocation
+  // whenever the daemon runs as a separate (long-running) process, the
+  // normal deployment shape. /api/logs and /api/logs/stream already exist
+  // and hit the daemon's real buffer directly.
+  if (env.server !== undefined && (verb === 'list' || verb === 'show' || verb === 'tail')) {
+    process.env.LLMUX_SERVER = env.server;
+    if (env.token) process.env.LLMUX_TOKEN = env.token;
+    const cmdName = verb === 'tail' ? 'logstail' : 'logs';
+    const cmd = clientCommands[cmdName];
+    if (!cmd) throw new Error(`internal: client ${cmdName} command missing`);
+    await cmd.run(args);
     return;
   }
   const parsed = parseArgs(args, {
@@ -571,7 +586,7 @@ async function dispatchLogs(verb: string | undefined, args: string[]): Promise<v
   switch (verb) {
     case 'list':
     case 'show':
-      h.handleLogsList(parsed);
+      await h.handleLogsList(parsed);
       return;
     case 'tail':
       await h.handleLogsTail(parsed);
@@ -634,7 +649,7 @@ async function main(): Promise<void> {
         await dispatchAgent(verb, remainder, env);
         return;
       case 'logs':
-        await dispatchLogs(verb, remainder);
+        await dispatchLogs(verb, remainder, env);
         return;
       case 'settings':
         await dispatchSettings(verb, remainder);

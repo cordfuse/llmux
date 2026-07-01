@@ -559,6 +559,72 @@ const agents: ClientCommand = {
   },
 };
 
+interface LogEntryView { ts: string; level: string; text: string; }
+
+function printLogLine(e: LogEntryView): void {
+  console.log(`${e.ts}  ${e.level.toUpperCase().padEnd(5)}  ${e.text}`);
+}
+
+const logs: ClientCommand = {
+  summary: 'List recent log entries from the daemon',
+  usage: 'llmux logs list --server <url> [--limit N] [--json]',
+  help: help('logs', 'List recent log entries from the daemon', 'llmux logs list --server <url> [--limit N] [--json]'),
+  run: async (argv) => {
+    const args = parseArgs(argv);
+    const ctx = resolveContext();
+    const result = await request<{ capacity: number; entries: LogEntryView[] }>(ctx, 'GET', '/api/logs');
+    let entries = result.entries;
+    const limitStr = flag(args, 'limit');
+    if (limitStr) entries = entries.slice(-Math.max(1, Number(limitStr)));
+    maybeJson(args, entries, () => { for (const e of entries) printLogLine(e); });
+  },
+};
+
+const logsTail: ClientCommand = {
+  summary: 'Tail live log entries from the daemon (Ctrl-C to stop)',
+  usage: 'llmux logs tail --server <url> [--since ISO]',
+  help: help('logs', 'Tail live log entries from the daemon', 'llmux logs tail --server <url> [--since ISO]'),
+  run: async (argv) => {
+    const args = parseArgs(argv);
+    const ctx = resolveContext();
+    // Print the buffered entries first (parity with local `logs tail`), same
+    // since-cutoff semantics, then subscribe to the SSE stream for new ones.
+    const since = flag(args, 'since');
+    const sinceMs = since ? Date.parse(since) : 0;
+    const initial = await request<{ capacity: number; entries: LogEntryView[] }>(ctx, 'GET', '/api/logs');
+    for (const e of initial.entries) {
+      if (!since || Date.parse(e.ts) >= sinceMs) printLogLine(e);
+    }
+    // Hand-rolled SSE reader, not EventSource — same reason the WS client is
+    // hand-rolled: EventSource can't set the Authorization header this
+    // endpoint requires (see fix/loopback-auth-bypass; /api/logs/stream has
+    // no exemption).
+    const headers: Record<string, string> = {};
+    if (ctx.token) headers['authorization'] = `Bearer ${ctx.token}`;
+    const res = await fetch(`${ctx.baseUrl}/api/logs/stream`, { headers });
+    if (!res.ok || !res.body) throw new Error(`failed to open log stream (HTTP ${res.status})`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        for (const line of frame.split('\n')) {
+          if (!line.startsWith('data: ')) continue; // ':'-prefixed lines are heartbeats/handshake — ignored
+          try {
+            printLogLine(JSON.parse(line.slice('data: '.length)) as LogEntryView);
+          } catch { /* malformed frame — skip */ }
+        }
+      }
+    }
+  },
+};
+
 const attach: ClientCommand = {
   summary: 'Attach to a session via WebSocket (raw TTY pass-through)',
   usage: 'llmux attach <session>',
@@ -669,5 +735,7 @@ export const clientCommands: Record<string, ClientCommand> = {
   resume,
   conversations,
   agents,
+  logs,
+  logstail: logsTail,
   attach,
 };
