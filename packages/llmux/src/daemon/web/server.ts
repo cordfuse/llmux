@@ -3208,11 +3208,6 @@ function sessionPage(name: string): string {
 const COOKIE_NAME = 'llmuxd_token';
 const COOKIE_RE = new RegExp(`(?:^|;\\s*)${COOKIE_NAME}=([^;]+)`);
 
-function isLocalhost(req: IncomingMessage): boolean {
-  const ra = req.socket.remoteAddress;
-  return ra === '127.0.0.1' || ra === '::1' || ra === '::ffff:127.0.0.1';
-}
-
 function extractToken(req: IncomingMessage): string | undefined {
   const auth = req.headers['authorization'];
   if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
@@ -3232,19 +3227,29 @@ function extractWsToken(req: IncomingMessage, urlSearch: URLSearchParams): strin
   return extractToken(req);
 }
 
-// Auth surface unification: a request is authorized if it's localhost, OR
-// presents a valid v1 SAS token (legacy, read-only sunset path), OR is a
-// v2 authenticated session. The v1 "no tokens means auth disabled" escape
-// hatch is gone — after the v2 unification, v2 users are the auth source
-// of truth, and a fresh install with a v2 admin must present a session.
+// Auth surface unification: a request is authorized if it presents a valid
+// v1 SAS token (legacy, read-only sunset path) OR is a v2 authenticated
+// session. The v1 "no tokens means auth disabled" escape hatch is gone —
+// after the v2 unification, v2 users are the auth source of truth, and a
+// fresh install with a v2 admin must present a session.
+//
+// NOTE: this used to also short-circuit `true` for any request whose
+// req.socket.remoteAddress looked like loopback ("trust localhost"). That
+// bypass is gone — `tailscale serve` (and any other local reverse proxy)
+// connects to this daemon via 127.0.0.1, so every proxied visitor's
+// request looked exactly like a trusted local one. Confirmed exploitable:
+// unauthenticated GET /api/sessions and /api/settings returned full data
+// over the daemon's own Tailscale-fronted URL. There is no way to make an
+// IP-based "is this really local" check safe once anything can proxy to
+// the daemon over loopback, so the fix is to not special-case address at
+// all — auth is real credentials, always, exactly like the v2 routes
+// (/account, /admin/users) already required.
 async function isAuthorized(req: IncomingMessage): Promise<boolean> {
-  if (isLocalhost(req)) return true;
   if (authStore.authEnabled() && authStore.validateAuthToken(extractToken(req))) return true;
   return (await getV2User(req)) !== undefined;
 }
 
 async function isWsAuthorized(req: IncomingMessage, urlSearch: URLSearchParams): Promise<boolean> {
-  if (isLocalhost(req)) return true;
   if (authStore.authEnabled() && authStore.validateAuthToken(extractWsToken(req, urlSearch))) return true;
   return (await getV2User(req)) !== undefined;
 }
@@ -3361,10 +3366,6 @@ function gatePage(reason: 'missing' | 'invalid'): string {
 </body></html>`;
 }
 
-function sendGate(res: ServerResponse, reason: 'missing' | 'invalid' = 'missing'): void {
-  res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' });
-  res.end(gatePage(reason));
-}
 
 function buildCookie(token: string): string {
   // Session cookie — clears on browser exit. HttpOnly so JS can't lift it.
@@ -3909,13 +3910,21 @@ export function startServer(opts: ServeOptions): ServerHandle {
 
     // ---- Auth check for everything else ----
     if (!(await isAuthorized(req))) {
-      // HTML routes get the gate page; API routes get 401 JSON.
+      // API routes get 401 JSON. HTML routes redirect to the v2 sign-in
+      // page — same mechanism v2-routes.ts already uses for /account and
+      // /admin/users (redirect(res, `/login?returnTo=...`)) — so a picker
+      // visitor lands back on the page they wanted after signing in. The
+      // old v1-only gatePage() token-entry form is no longer the default:
+      // it required a v1 SAS token, which can no longer be minted, so an
+      // admin with only a v2 account (the normal case now) would have had
+      // no way through it. gatePage() itself stays for the legacy `?token=`
+      // deep-link below, which still serves real v1-token holders.
       const isApi = url.pathname.startsWith('/api/');
       if (isApi) {
         return sendJson(res, { ok: false, error: 'unauthorized' }, 401);
       }
-      const hasInvalidToken = Boolean(extractToken(req));
-      return sendGate(res, hasInvalidToken ? 'invalid' : 'missing');
+      res.writeHead(302, { location: `/login?returnTo=${encodeURIComponent(url.pathname)}` });
+      return res.end();
     }
 
     // ---- API ----
