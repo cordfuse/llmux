@@ -794,6 +794,25 @@ ${renderHeader({
 </footer>
 <script>
 (function(){
+  // Any 401 anywhere in this SPA means the session cookie is missing or
+  // expired. Before the loopback-trust auth bypass was removed, a request
+  // from a trusted-looking client essentially never got a 401, so nothing
+  // here ever had to handle it — the poll loop's catch block just flips
+  // the status dot to "offline" forever, with no indication the real
+  // problem is "sign in again" and no way to get there. Wrap fetch once,
+  // globally, so every call site's existing catch block still fires (this
+  // throws, same as any other fetch failure) but the page also redirects
+  // to sign-in instead of being stuck.
+  const _fetch = window.fetch.bind(window);
+  window.fetch = async function(input, init){
+    const r = await _fetch(input, init);
+    if (r.status === 401 && !location.pathname.startsWith('/login')){
+      location.href = '/login?returnTo=' + encodeURIComponent(location.pathname + location.search);
+      throw new Error('unauthorized — redirecting to sign in');
+    }
+    return r;
+  };
+
   const container = document.getElementById('list-container');
   const dot = document.getElementById('refresh-dot');
   const label = document.getElementById('refresh-label');
@@ -2682,6 +2701,23 @@ function sessionPage(name: string): string {
 <script src="${XTERM_FIT_JS}"></script>
 <script>
 (function(){
+  // Same fetch wrapper as the picker's script (see fix/loopback-auth-bypass):
+  // any 401 means the session cookie is missing or expired — redirect to
+  // sign-in instead of leaving this page's one fetch call (respawn) fail
+  // silently. The WS attach connection itself can't be checked this way —
+  // browsers don't expose a rejected WS handshake's HTTP status — so an
+  // unauthorized reconnect loop below also fires a throwaway authed fetch
+  // to surface the same redirect instead of "reconnecting…" forever.
+  const _fetch = window.fetch.bind(window);
+  window.fetch = async function(input, init){
+    const r = await _fetch(input, init);
+    if (r.status === 401 && !location.pathname.startsWith('/login')){
+      location.href = '/login?returnTo=' + encodeURIComponent(location.pathname + location.search);
+      throw new Error('unauthorized — redirecting to sign in');
+    }
+    return r;
+  };
+
   const name = ${jsonName};
   const version = ${jsonVersion};
   const dot = document.getElementById('title-dot');
@@ -2812,6 +2848,13 @@ function sessionPage(name: string): string {
         return;
       }
       if (everConnected) setStatus('closed', 'disconnected — reconnecting');
+      // The WS close event never carries the handshake's rejected HTTP
+      // status (browsers don't expose that), so an unauthorized attach
+      // would otherwise just say "disconnected — reconnecting" forever.
+      // Fire a throwaway authed fetch — the wrapper above redirects to
+      // sign-in if it 401s; any other outcome just falls through to the
+      // normal reconnect.
+      fetch('/api/sessions', { cache: 'no-store' }).catch(function(){});
       scheduleReconnect();
     };
     ws.onerror = function(){
