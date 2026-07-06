@@ -2535,9 +2535,9 @@ function chatPage(name: string, agentKey: string): string {
 <style>
   :root{--topbar-h:38px;color-scheme:dark}
   *{box-sizing:border-box}
-  html,body{margin:0;height:100dvh;background:#0b0c10;color:#eee;font-family:system-ui,-apple-system,sans-serif;overscroll-behavior:none}
+  html,body{margin:0;height:100dvh;background:#0b0c10;color:#eee;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overscroll-behavior:none}
   #topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:#11141a;border-bottom:1px solid #1f2329;display:flex;align-items:center;gap:8px;padding:0 10px;z-index:21}
-  #topbar a.btn,#topbar #back{flex:0 0 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;height:26px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:12px system-ui,sans-serif;text-decoration:none}
+  #topbar a.btn,#topbar #back{flex:0 0 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;height:26px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:12px ui-monospace,monospace;text-decoration:none}
   #topbar #back{width:36px;font-size:16px}
   #topbar a.btn:active,#topbar #back:active{background:#252b34;border-color:#3a414b}
   #title-block{flex:1 1 auto;display:flex;align-items:center;gap:8px;min-width:0}
@@ -2573,29 +2573,29 @@ function chatPage(name: string, agentKey: string): string {
   #bar{position:fixed;bottom:0;left:0;right:0;background:#11141a;padding:8px 12px 14px;z-index:20}
   /* chatframe-style composer pill: textarea on top, icon send button beneath,
      rounded container whose border lifts to the accent on focus-within. */
-  #composer{max-width:820px;margin:0 auto;background:#0f1118;border:1px solid #262c34;border-radius:22px;transition:border-color .15s;overflow:hidden}
+  #composer{max-width:820px;margin:0 auto;background:transparent;border:1px solid #262c34;border-radius:22px;transition:border-color .15s;overflow:hidden}
   #composer:focus-within{border-color:#2d5a85}
-  #input{display:block;width:100%;resize:none;min-height:24px;max-height:180px;background:transparent;color:#e6e8eb;border:none;outline:none;padding:12px 16px 4px;font:14px system-ui,sans-serif;line-height:1.45}
+  #input{display:block;width:100%;resize:none;min-height:24px;max-height:180px;background:transparent;color:#e6e8eb;border:none;outline:none;padding:12px 16px 4px;font:14px ui-monospace,monospace;line-height:1.45}
   #input::placeholder{color:#5a6068}
   #composer-actions{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:2px 8px 8px}
   #composer-left{display:flex;align-items:center;gap:2px;min-width:0}
   #composer-left button{display:flex;align-items:center;justify-content:center;height:30px;min-width:30px;padding:0 7px;border:none;border-radius:9px;background:transparent;color:#8a919b;cursor:pointer;transition:background .12s,color .12s}
   #composer-left button:hover{background:#1a1e27;color:#c9d1d9}
   #model-wrap{position:relative;display:none}
-  #model-btn{gap:5px;font:600 12px system-ui,sans-serif;max-width:150px}
+  #model-btn{gap:5px;font:600 12px ui-monospace,monospace;max-width:150px}
   #model-btn #model-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #model-btn .caret{font-size:9px;opacity:.7;flex:0 0 auto}
   /* position:fixed so it escapes the composer's overflow:hidden clip and sits
      above everything (z-index over #bar / #log / #note). JS sets left/bottom. */
   #model-menu{display:none;position:fixed;min-width:170px;max-height:260px;overflow:auto;background:#12151c;border:1px solid #262c34;border-radius:10px;padding:4px;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.5)}
   #model-menu.open{display:block}
-  #model-menu button{display:block;width:100%;min-width:0;height:auto;text-align:left;padding:7px 10px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px system-ui,sans-serif}
+  #model-menu button{display:block;width:100%;min-width:0;height:auto;text-align:left;padding:7px 10px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px ui-monospace,monospace}
   #model-menu button:hover{background:#1a1e27;color:#c9d1d9}
   #model-menu button.sel{color:#7cc4ff}
   #attach-wrap{position:relative}
   #attach-menu{display:none;position:fixed;min-width:158px;background:#12151c;border:1px solid #262c34;border-radius:10px;padding:4px;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.5)}
   #attach-menu.open{display:block}
-  #attach-menu button{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;min-width:0;height:auto;padding:9px 11px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px system-ui,sans-serif;text-align:left}
+  #attach-menu button{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;min-width:0;height:auto;padding:9px 11px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px ui-monospace,monospace;text-align:left}
   #attach-menu button:hover{background:#1a1e27;color:#c9d1d9}
   #attach-menu button svg{flex:0 0 auto;color:#8a919b}
   #send{display:flex;align-items:center;justify-content:center;height:32px;width:32px;flex:0 0 auto;border:none;border-radius:12px;background:#1f6feb;color:#fff;cursor:pointer;transition:opacity .15s}
