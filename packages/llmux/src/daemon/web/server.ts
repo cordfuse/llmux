@@ -2633,10 +2633,10 @@ function chatPage(name: string, agentKey: string): string {
   #attach-menu button{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;min-width:0;height:auto;padding:9px 11px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px ui-monospace,monospace;text-align:left}
   #attach-menu button:hover{background:#1a1e27;color:#c9d1d9}
   #attach-menu button svg{flex:0 0 auto;color:#8a919b}
-  #send{display:flex;align-items:center;justify-content:center;height:32px;width:32px;flex:0 0 auto;border:none;border-radius:12px;background:#1f6feb;color:#fff;cursor:pointer;transition:opacity .15s}
+  #send{display:flex;align-items:center;justify-content:center;height:32px;width:32px;flex:0 0 auto;border:1px solid #2d5a85;border-radius:12px;background:#1e3a52;color:#e6f0fa;cursor:pointer;transition:opacity .15s}
   #send:hover{opacity:.9}
   #send:disabled{opacity:.4;cursor:default}
-  #send.stop{background:#b62324}
+  #send.stop{background:#b62324;border-color:#d64545}
   #send.stop:hover{opacity:.9}
   #empty{color:#5a6068;text-align:center;padding:40px 20px;font-size:13px}
 </style></head>
