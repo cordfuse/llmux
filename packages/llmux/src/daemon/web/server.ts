@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tryV2Route, initV2Routes, getV2User, getV2Stores } from '../v2-routes.ts';
-import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, watch, type FSWatcher } from 'node:fs';
+import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, watch, writeFileSync, mkdirSync, type FSWatcher } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join, basename } from 'node:path';
 import { hostname } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
@@ -2564,8 +2564,8 @@ function chatPage(name: string, agentKey: string): string {
   .md a{color:#7cc4ff}
   .md table{border-collapse:collapse;display:block;overflow-x:auto}
   .md th,.md td{border:1px solid #262c34;padding:4px 8px}
-  details.tool{background:#12151c;border:none;border-radius:8px;margin:0;font-size:12.5px;max-width:82%;width:100%}
-  details.tool.err{background:#1a1214}
+  details.tool{background:#12151c;border:1px solid #2b323d;border-radius:8px;margin:0;font-size:12.5px;max-width:82%;width:100%}
+  details.tool.err{background:#1a1214;border-color:#5a2f2f}
   details.tool summary{cursor:pointer;padding:7px 11px;color:#7cc4ff;font-family:ui-monospace,monospace;user-select:none;list-style:none}
   details.tool summary::-webkit-details-marker{display:none}
   details.tool.err summary{color:#f85149}
@@ -2585,11 +2585,19 @@ function chatPage(name: string, agentKey: string): string {
   #model-btn{gap:5px;font:600 12px system-ui,sans-serif;max-width:150px}
   #model-btn #model-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #model-btn .caret{font-size:9px;opacity:.7;flex:0 0 auto}
-  #model-menu{display:none;position:absolute;bottom:calc(100% + 6px);left:0;min-width:170px;max-height:240px;overflow:auto;background:#12151c;border:1px solid #262c34;border-radius:10px;padding:4px;z-index:30;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  /* position:fixed so it escapes the composer's overflow:hidden clip and sits
+     above everything (z-index over #bar / #log / #note). JS sets left/bottom. */
+  #model-menu{display:none;position:fixed;min-width:170px;max-height:260px;overflow:auto;background:#12151c;border:1px solid #262c34;border-radius:10px;padding:4px;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.5)}
   #model-menu.open{display:block}
   #model-menu button{display:block;width:100%;min-width:0;height:auto;text-align:left;padding:7px 10px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px system-ui,sans-serif}
   #model-menu button:hover{background:#1a1e27;color:#c9d1d9}
   #model-menu button.sel{color:#7cc4ff}
+  #attach-wrap{position:relative}
+  #attach-menu{display:none;position:fixed;min-width:158px;background:#12151c;border:1px solid #262c34;border-radius:10px;padding:4px;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+  #attach-menu.open{display:block}
+  #attach-menu button{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;min-width:0;height:auto;padding:9px 11px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px system-ui,sans-serif;text-align:left}
+  #attach-menu button:hover{background:#1a1e27;color:#c9d1d9}
+  #attach-menu button svg{flex:0 0 auto;color:#8a919b}
   #send{display:flex;align-items:center;justify-content:center;height:32px;width:32px;flex:0 0 auto;border:none;border-radius:12px;background:#1f6feb;color:#fff;cursor:pointer;transition:opacity .15s}
   #send:hover{opacity:.9}
   #send:disabled{opacity:.4;cursor:default}
@@ -2608,17 +2616,24 @@ function chatPage(name: string, agentKey: string): string {
   <textarea id="input" rows="1" placeholder="Send a message…"></textarea>
   <div id="composer-actions">
     <div id="composer-left">
-      <button id="attach" type="button" title="Insert file mention (@)" aria-label="Attach file">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49"/></svg>
-      </button>
-      <button id="mcp" type="button" title="Insert /mcp command" aria-label="MCP">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-      </button>
+      <div id="attach-wrap">
+        <button id="attach" type="button" title="Attach" aria-label="Attach file">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49"/></svg>
+        </button>
+        <div id="attach-menu">
+          <button type="button" id="att-camera"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Camera</button>
+          <button type="button" id="att-photo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Photos</button>
+          <button type="button" id="att-doc"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Documents</button>
+        </div>
+      </div>
       <div id="model-wrap">
         <button id="model-btn" type="button" title="Model"><span id="model-label">model</span><span class="caret">▾</span></button>
         <div id="model-menu"></div>
       </div>
     </div>
+    <input id="file-camera" type="file" accept="image/*" capture="environment" style="display:none">
+    <input id="file-photo" type="file" accept="image/*" style="display:none">
+    <input id="file-doc" type="file" style="display:none">
     <button id="send" type="button" title="Send" aria-label="Send" disabled>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
     </button>
@@ -2712,23 +2727,56 @@ function chatPage(name: string, agentKey: string): string {
       .finally(function(){ syncComposer(); ta.focus(); });
   }
 
-  // --- composer controls: attach (@ mention), MCP (/mcp), model picker ---
+  // --- composer controls: attach (file picker) + model picker ---
   function insertAtCursor(text){
     var s=ta.selectionStart||0, e=ta.selectionEnd||0, v=ta.value;
     ta.value = v.slice(0,s)+text+v.slice(e);
     var pos=s+text.length; ta.selectionStart=ta.selectionEnd=pos;
     ta.focus(); syncComposer();
   }
-  document.getElementById('attach').addEventListener('click', function(){ insertAtCursor('@'); });
-  document.getElementById('mcp').addEventListener('click', function(){ insertAtCursor('/mcp'); });
+  // Fixed-position popovers so they escape the composer's overflow:hidden clip
+  // and stack above everything (see #attach-menu / #model-menu z-index).
+  function openMenuAbove(menu, btn){
+    var r=btn.getBoundingClientRect();
+    menu.style.left = r.left+'px';
+    menu.style.bottom = (window.innerHeight - r.top + 6)+'px';
+    menu.classList.add('open');
+  }
+  function closeMenus(){ attachMenu.classList.remove('open'); modelMenu.classList.remove('open'); }
 
+  // attach: native file picker (camera / photos / documents) → upload → insert path
+  var attachBtn=document.getElementById('attach');
+  var attachMenu=document.getElementById('attach-menu');
+  var fileCamera=document.getElementById('file-camera');
+  var filePhoto=document.getElementById('file-photo');
+  var fileDoc=document.getElementById('file-doc');
+  attachBtn.addEventListener('click', function(e){ e.stopPropagation(); var wasOpen=attachMenu.classList.contains('open'); closeMenus(); if(!wasOpen) openMenuAbove(attachMenu, attachBtn); });
+  document.getElementById('att-camera').addEventListener('click', function(){ closeMenus(); fileCamera.click(); });
+  document.getElementById('att-photo').addEventListener('click', function(){ closeMenus(); filePhoto.click(); });
+  document.getElementById('att-doc').addEventListener('click', function(){ closeMenus(); fileDoc.click(); });
+  function uploadFile(f){
+    if(!f) return;
+    var reader=new FileReader();
+    reader.onload=function(){
+      var b64=String(reader.result||'').split(',')[1]||'';
+      showNote('uploading '+f.name+'…');
+      fetch('/api/sessions/'+encodeURIComponent(NAME)+'/upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({filename:f.name,dataBase64:b64})})
+        .then(function(r){ return r.json().catch(function(){ return {}; }); })
+        .then(function(j){ if(j&&j.ok&&j.path){ noteEl.style.display='none'; insertAtCursor(j.path+' '); } else { showNote('upload failed: '+((j&&j.error)||'unknown')); } })
+        .catch(function(){ showNote('upload failed (network)'); });
+    };
+    reader.readAsDataURL(f);
+  }
+  [fileCamera,filePhoto,fileDoc].forEach(function(inp){ inp.addEventListener('change', function(){ if(inp.files&&inp.files[0]) uploadFile(inp.files[0]); inp.value=''; }); });
+
+  // model picker
   var modelWrap=document.getElementById('model-wrap');
   var modelBtn=document.getElementById('model-btn');
   var modelLabel=document.getElementById('model-label');
   var modelMenu=document.getElementById('model-menu');
   var currentModel=null;
   function selectModel(mname){
-    modelMenu.classList.remove('open');
+    closeMenus();
     fetch('/api/sessions/'+encodeURIComponent(NAME)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:'/model '+mname})})
       .then(function(r){ return r.json().catch(function(){ return {}; }); })
       .then(function(res){
@@ -2758,8 +2806,8 @@ function chatPage(name: string, agentKey: string): string {
       })
       .catch(function(){});
   }
-  modelBtn.addEventListener('click', function(e){ e.stopPropagation(); modelMenu.classList.toggle('open'); });
-  document.addEventListener('click', function(){ modelMenu.classList.remove('open'); });
+  modelBtn.addEventListener('click', function(e){ e.stopPropagation(); var wasOpen=modelMenu.classList.contains('open'); closeMenus(); if(!wasOpen) openMenuAbove(modelMenu, modelBtn); });
+  document.addEventListener('click', closeMenus);
 
   ta.addEventListener('input', syncComposer);
   ta.addEventListener('keydown', function(e){ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
@@ -4149,6 +4197,7 @@ const CONVERSATIONS_RE = /^\/api\/sessions\/([^/]+)\/conversations$/;
 const TRANSCRIPT_RE = /^\/api\/sessions\/([^/]+)\/transcript$/;
 const TRANSCRIPT_STREAM_RE = /^\/api\/sessions\/([^/]+)\/transcript\/stream$/;
 const MODELS_RE = /^\/api\/sessions\/([^/]+)\/models$/;
+const UPLOAD_RE = /^\/api\/sessions\/([^/]+)\/upload$/;
 const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
 
 // Cap the initial chat-view snapshot — a long-running Claude Code transcript
@@ -4600,6 +4649,30 @@ export function startServer(opts: ServeOptions): ServerHandle {
       }
     }
     if (method === 'POST') {
+      // ---- Chat view: file attachment upload ----
+      // Saves an uploaded file (base64 JSON) into <cwd>/.llmux-uploads/ and
+      // returns its path so the composer can reference it to the agent (CLI
+      // agents like Claude Code read image/doc files by path).
+      const mUpload = url.pathname.match(UPLOAD_RE);
+      if (mUpload) {
+        const name = decodeURIComponent(mUpload[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: 'session not found' }, 404);
+        try {
+          const body = (await readJsonBody(req, 12 * 1024 * 1024)) as { filename?: unknown; dataBase64?: unknown };
+          if (typeof body.filename !== 'string' || typeof body.dataBase64 !== 'string') {
+            return sendJson(res, { ok: false, error: 'filename and dataBase64 required' }, 400);
+          }
+          const safe = basename(body.filename).replace(/[^\w.\-]+/g, '_').slice(0, 120) || 'upload';
+          const dir = join(session.cwd, '.llmux-uploads');
+          mkdirSync(dir, { recursive: true });
+          const dest = join(dir, safe);
+          writeFileSync(dest, Buffer.from(body.dataBase64, 'base64'));
+          return sendJson(res, { ok: true, path: dest });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'upload failed' }, 400);
+        }
+      }
       const mRespawn = url.pathname.match(RESPAWN_RE);
       if (mRespawn) {
         const name = decodeURIComponent(mRespawn[1]!);
