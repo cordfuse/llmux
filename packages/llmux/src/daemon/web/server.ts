@@ -2577,8 +2577,20 @@ function chatPage(name: string, agentKey: string): string {
   #composer:focus-within{border-color:#2d5a85}
   #input{display:block;width:100%;resize:none;min-height:24px;max-height:180px;background:transparent;color:#e6e8eb;border:none;outline:none;padding:12px 16px 4px;font:14px system-ui,sans-serif;line-height:1.45}
   #input::placeholder{color:#5a6068}
-  #composer-actions{display:flex;justify-content:flex-end;align-items:center;padding:2px 8px 8px}
-  #send{display:flex;align-items:center;justify-content:center;height:32px;width:32px;border:none;border-radius:12px;background:#1f6feb;color:#fff;cursor:pointer;transition:opacity .15s}
+  #composer-actions{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:2px 8px 8px}
+  #composer-left{display:flex;align-items:center;gap:2px;min-width:0}
+  #composer-left button{display:flex;align-items:center;justify-content:center;height:30px;min-width:30px;padding:0 7px;border:none;border-radius:9px;background:transparent;color:#8a919b;cursor:pointer;transition:background .12s,color .12s}
+  #composer-left button:hover{background:#1a1e27;color:#c9d1d9}
+  #model-wrap{position:relative;display:none}
+  #model-btn{gap:5px;font:600 12px system-ui,sans-serif;max-width:150px}
+  #model-btn #model-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #model-btn .caret{font-size:9px;opacity:.7;flex:0 0 auto}
+  #model-menu{display:none;position:absolute;bottom:calc(100% + 6px);left:0;min-width:170px;max-height:240px;overflow:auto;background:#12151c;border:1px solid #262c34;border-radius:10px;padding:4px;z-index:30;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  #model-menu.open{display:block}
+  #model-menu button{display:block;width:100%;min-width:0;height:auto;text-align:left;padding:7px 10px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px system-ui,sans-serif}
+  #model-menu button:hover{background:#1a1e27;color:#c9d1d9}
+  #model-menu button.sel{color:#7cc4ff}
+  #send{display:flex;align-items:center;justify-content:center;height:32px;width:32px;flex:0 0 auto;border:none;border-radius:12px;background:#1f6feb;color:#fff;cursor:pointer;transition:opacity .15s}
   #send:hover{opacity:.9}
   #send:disabled{opacity:.4;cursor:default}
   #empty{color:#5a6068;text-align:center;padding:40px 20px;font-size:13px}
@@ -2595,6 +2607,18 @@ function chatPage(name: string, agentKey: string): string {
 <div id="bar"><div id="composer">
   <textarea id="input" rows="1" placeholder="Send a message…"></textarea>
   <div id="composer-actions">
+    <div id="composer-left">
+      <button id="attach" type="button" title="Insert file mention (@)" aria-label="Attach file">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49"/></svg>
+      </button>
+      <button id="mcp" type="button" title="Insert /mcp command" aria-label="MCP">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      </button>
+      <div id="model-wrap">
+        <button id="model-btn" type="button" title="Model"><span id="model-label">model</span><span class="caret">▾</span></button>
+        <div id="model-menu"></div>
+      </div>
+    </div>
     <button id="send" type="button" title="Send" aria-label="Send" disabled>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
     </button>
@@ -2688,11 +2712,61 @@ function chatPage(name: string, agentKey: string): string {
       .finally(function(){ syncComposer(); ta.focus(); });
   }
 
+  // --- composer controls: attach (@ mention), MCP (/mcp), model picker ---
+  function insertAtCursor(text){
+    var s=ta.selectionStart||0, e=ta.selectionEnd||0, v=ta.value;
+    ta.value = v.slice(0,s)+text+v.slice(e);
+    var pos=s+text.length; ta.selectionStart=ta.selectionEnd=pos;
+    ta.focus(); syncComposer();
+  }
+  document.getElementById('attach').addEventListener('click', function(){ insertAtCursor('@'); });
+  document.getElementById('mcp').addEventListener('click', function(){ insertAtCursor('/mcp'); });
+
+  var modelWrap=document.getElementById('model-wrap');
+  var modelBtn=document.getElementById('model-btn');
+  var modelLabel=document.getElementById('model-label');
+  var modelMenu=document.getElementById('model-menu');
+  var currentModel=null;
+  function selectModel(mname){
+    modelMenu.classList.remove('open');
+    fetch('/api/sessions/'+encodeURIComponent(NAME)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:'/model '+mname})})
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(res){
+        if (res && res.ok===false){ showNote('model switch failed: '+(res.error||'unknown')); return; }
+        currentModel=mname; modelLabel.textContent=mname;
+        Array.prototype.forEach.call(modelMenu.children,function(c){ c.className = c.textContent===mname ? 'sel' : ''; });
+      })
+      .catch(function(){ showNote('model switch failed (network)'); });
+  }
+  function loadModels(){
+    fetch('/api/sessions/'+encodeURIComponent(NAME)+'/models',{cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var models=(j&&j.models)||[];
+        if (!models.length) return; // no operator-configured models → picker stays hidden
+        currentModel = j.current || null;
+        modelLabel.textContent = currentModel || 'model';
+        modelMenu.innerHTML='';
+        models.forEach(function(mname){
+          var b=document.createElement('button'); b.type='button'; b.textContent=mname;
+          if (mname===currentModel) b.className='sel';
+          b.addEventListener('click', function(){ selectModel(mname); });
+          modelMenu.appendChild(b);
+        });
+        modelWrap.style.display='block';
+        syncComposer();
+      })
+      .catch(function(){});
+  }
+  modelBtn.addEventListener('click', function(e){ e.stopPropagation(); modelMenu.classList.toggle('open'); });
+  document.addEventListener('click', function(){ modelMenu.classList.remove('open'); });
+
   ta.addEventListener('input', syncComposer);
   ta.addEventListener('keydown', function(e){ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
   sendBtn.addEventListener('click', send);
   window.addEventListener('resize', syncComposer);
   syncComposer();
+  loadModels();
   connect();
 })();
 </script>
@@ -4074,6 +4148,7 @@ const SEND_RE = /^\/api\/sessions\/([^/]+)\/send$/;
 const CONVERSATIONS_RE = /^\/api\/sessions\/([^/]+)\/conversations$/;
 const TRANSCRIPT_RE = /^\/api\/sessions\/([^/]+)\/transcript$/;
 const TRANSCRIPT_STREAM_RE = /^\/api\/sessions\/([^/]+)\/transcript\/stream$/;
+const MODELS_RE = /^\/api\/sessions\/([^/]+)\/models$/;
 const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
 
 // Cap the initial chat-view snapshot — a long-running Claude Code transcript
@@ -4715,6 +4790,20 @@ export function startServer(opts: ServeOptions): ServerHandle {
         } catch (err) {
           return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'transcript read failed' }, 500);
         }
+      }
+
+      // ---- Chat view: model picker options (operator-configured, not hardcoded) ----
+      const mModels = url.pathname.match(MODELS_RE);
+      if (mModels) {
+        const name = decodeURIComponent(mModels[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: 'session not found' }, 404);
+        const models = currentConfig?.agents?.[session.agent]?.models ?? [];
+        // Best-effort current model: parse a --model flag out of the effective
+        // launch flags (per-session override, else the agent default).
+        const flags = session.flags ?? DEFAULT_AGENTS[session.agent]?.flags ?? '';
+        const m = flags.match(/--model[ =]([^\s]+)/);
+        return sendJson(res, { models, current: m ? m[1] : null });
       }
 
       const mConvs = url.pathname.match(CONVERSATIONS_RE);
