@@ -2518,6 +2518,46 @@ function deadSessionPage(s: SessionView): string {
 }
 
 /**
+ * Shared top nav for the session views (terminal + chat) so the two can't
+ * drift. Same markup + CSS on both; only the live-state dot driver and the
+ * cross-link (Terminal <-> Chat) differ. `#title-dot` is set by each page's
+ * own connection logic.
+ */
+function sessionTopbarCss(): string {
+  return `
+  #topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:#11141a;border-bottom:1px solid #1f2329;display:flex;align-items:center;gap:8px;padding:0 10px;z-index:21;box-sizing:border-box}
+  #topbar #back{flex:0 0 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;height:26px;width:36px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:16px ui-monospace,monospace;text-decoration:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
+  #topbar #back:active{background:#252b34;border-color:#3a414b}
+  #title-block{flex:1 1 auto;display:flex;align-items:center;gap:8px;color:#c9d1d9;font-size:12px;min-width:0}
+  #title-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s,box-shadow .2s}
+  #title-dot[data-state="live"]{background:#7ee787;box-shadow:0 0 6px #7ee78766}
+  #title-dot[data-state="error"],#title-dot[data-state="closed"],#title-dot[data-state="reconnecting"]{background:#f85149}
+  #title-dot[data-state="reconnecting"]{animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #title-agent{flex:0 0 auto;color:#a371f7;font-size:11px}
+  #topbar .xlink{flex:0 0 auto;background:#1c2128;color:#7cc4ff;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:600 11px/1 ui-monospace,monospace;display:inline-flex;align-items:center;text-decoration:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
+  #topbar .xlink:active{background:#252b34;border-color:#3a414b}
+  #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;padding-left:4px}
+  #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px}
+  `;
+}
+
+/** Shared topbar markup. mode picks the cross-link target/label. */
+function sessionTopbar(name: string, agentLabel: string, mode: 'chat' | 'terminal'): string {
+  const cross = mode === 'chat'
+    ? `<a class="xlink" href="/session/${encodeURIComponent(name)}" title="Terminal view">Terminal</a>`
+    : `<a class="xlink" href="/chat/${encodeURIComponent(name)}" title="Chat view">Chat</a>`;
+  return `<div id="topbar">
+  <a id="back" href="/" title="Session list">⌂</a>
+  <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapeHtml(name)}</span><span id="title-agent">${escapeHtml(agentLabel)}</span></span>
+  ${cross}
+  <span id="title-brand">LLMUX</span>
+  <span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span>
+</div>`;
+}
+
+/**
  * Chat GUI view. Renders a session's conversation from the agent's on-disk
  * transcript (streamed as normalized turns via SSE) and sends operator input
  * through the existing /send send-keys route. Structure lifted from chatframe;
@@ -2536,17 +2576,7 @@ function chatPage(name: string, agentKey: string): string {
   :root{--topbar-h:38px;color-scheme:dark}
   *{box-sizing:border-box}
   html,body{margin:0;height:100dvh;background:#0b0c10;color:#eee;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overscroll-behavior:none}
-  #topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:#11141a;border-bottom:1px solid #1f2329;display:flex;align-items:center;gap:8px;padding:0 10px;z-index:21}
-  #topbar a.btn,#topbar #back{flex:0 0 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;height:26px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:12px ui-monospace,monospace;text-decoration:none}
-  #topbar #back{width:36px;font-size:16px}
-  #topbar a.btn:active,#topbar #back:active{background:#252b34;border-color:#3a414b}
-  #title-block{flex:1 1 auto;display:flex;align-items:center;gap:8px;min-width:0}
-  #dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s,box-shadow .2s}
-  #dot[data-state="live"]{background:#7ee787;box-shadow:0 0 6px #7ee78766}
-  #dot[data-state="error"]{background:#f85149}
-  #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #title-agent{flex:0 0 auto;color:#a371f7;font-size:11px}
-  #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;margin-left:auto}
+  ${sessionTopbarCss()}
   #note{display:none;position:fixed;top:var(--topbar-h);left:0;right:0;background:#3a2a12;color:#f0c674;border-bottom:1px solid #5a4522;padding:8px 14px;font-size:13px;z-index:20}
   #log{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:84px;overflow-y:auto;padding:12px 0}
   #log-inner{max-width:820px;margin:0 auto}
@@ -2604,12 +2634,7 @@ function chatPage(name: string, agentKey: string): string {
   #empty{color:#5a6068;text-align:center;padding:40px 20px;font-size:13px}
 </style></head>
 <body>
-<div id="topbar">
-  <a id="back" href="/" title="Chat list">⌂</a>
-  <span id="title-block"><span id="dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span><span id="title-agent">${agentLabel}</span></span>
-  <a class="btn" href="/session/${encodeURIComponent(name)}" title="Terminal view">Terminal</a>
-  <span id="title-brand">LLMUX</span>
-</div>
+${sessionTopbar(name, agentLabel, 'chat')}
 <div id="note"></div>
 <div id="log"><div id="log-inner"><div id="empty">No messages yet. Type below to send input to this agent.</div></div></div>
 <div id="bar"><div id="composer">
@@ -2647,7 +2672,7 @@ function chatPage(name: string, agentKey: string): string {
   var logEl = document.getElementById('log');
   var innerEl = document.getElementById('log-inner');
   var emptyEl = document.getElementById('empty');
-  var dot = document.getElementById('dot');
+  var dot = document.getElementById('title-dot');
   var ta = document.getElementById('input');
   var sendBtn = document.getElementById('send');
   var noteEl = document.getElementById('note');
@@ -2821,8 +2846,9 @@ function chatPage(name: string, agentKey: string): string {
 </body></html>`;
 }
 
-function sessionPage(name: string): string {
+function sessionPage(name: string, agentKey: string): string {
   const escapedName = escapeHtml(name);
+  const agentLabel = DEFAULT_AGENTS[agentKey]?.displayName ?? agentKey;
   const jsonName = JSON.stringify(name);
   const jsonVersion = JSON.stringify(DAEMON_VERSION);
   return `<!doctype html><html lang="en"><head>
@@ -2836,24 +2862,7 @@ function sessionPage(name: string): string {
   html,body{margin:0;background:#0b0c10;color:#eee;font-family:ui-monospace,monospace;overscroll-behavior:none}
   html{height:100dvh}
   body{height:100dvh;min-height:100dvh}
-  #topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:#11141a;border-bottom:1px solid #1f2329;display:flex;align-items:center;gap:8px;padding:0 10px;z-index:21;box-sizing:border-box}
-  #topbar #back{flex:0 0 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;height:26px;width:36px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-family:system-ui,sans-serif;font-size:16px;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
-  #topbar #back:active{background:#252b34;border-color:#3a414b}
-  #title-block{flex:1 1 auto;display:flex;align-items:center;gap:8px;color:#c9d1d9;font-size:12px;min-width:0}
-  #title-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s,box-shadow .2s;cursor:pointer}
-  #title-dot[data-state="live"]{background:#7ee787;box-shadow:0 0 6px #7ee78766}
-  #title-dot[data-state="error"],#title-dot[data-state="closed"],#title-dot[data-state="reconnecting"]{background:#f85149}
-  #title-dot[data-state="reconnecting"]{animation:pulse 1s ease-in-out infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-  #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;padding-left:8px}
-  #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;padding-left:6px}
-  #copy-buf,#copy-all{flex:0 0 auto;background:#1c2128;color:#7ee787;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:500 11px/1 ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none;margin-right:4px;transition:background .12s,border-color .12s,color .12s}
-  #copy-buf{margin-left:auto}
-  #chat-link{flex:0 0 auto;background:#1c2128;color:#7cc4ff;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:600 11px/1 ui-monospace,monospace;display:inline-flex;align-items:center;text-decoration:none;margin-right:4px}
-  #chat-link:active{background:#252b34;border-color:#3a414b}
-  #copy-buf:active,#copy-all:active{background:#252b34;border-color:#3a414b}
-  #copy-buf.copied,#copy-all.copied{color:#0b0c10;background:#7ee787;border-color:#7ee787}
+  ${sessionTopbarCss()}
   #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:6px 0 14px;z-index:20;box-sizing:border-box}
   #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:0 0 auto;height:32px}
   #bar .row.arrows{justify-content:center}
@@ -2908,15 +2917,7 @@ function sessionPage(name: string): string {
   }
 </style></head>
 <body>
-<div id="topbar">
-  <button id="back" title="Back to chat list">⌂</button>
-  <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span></span>
-  <button id="copy-buf" title="Copy visible terminal text" aria-label="copy visible">Copy</button>
-  <button id="copy-all" title="Copy full scrollback" aria-label="copy all">All</button>
-  <a id="chat-link" href="/chat/${encodeURIComponent(name)}" title="Chat view">Chat</a>
-  <span id="title-brand">LLMUX</span>
-  <span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span>
-</div>
+${sessionTopbar(name, agentLabel, 'terminal')}
 <div id="bar">
   <div class="row arrows">
     <button data-mod="shift" title="Shift (next char uppercase; double-tap to lock)">Shift</button>
@@ -3427,26 +3428,8 @@ function sessionPage(name: string): string {
     btn.classList.add('copied');
     setTimeout(function(){ btn.classList.remove('copied'); }, 600);
   }
-  const copyBufBtn = document.getElementById('copy-buf');
-  copyBufBtn.addEventListener('click', function(e){
-    e.preventDefault();
-    if (!term.buffer || !term.buffer.active){ return; }
-    const top = term.buffer.active.viewportY;
-    const text = _readBufferRange(top, top + term.rows);
-    if (!text){ _showCopyToast('nothing to copy'); return; }
-    _writeClipboard(text);
-    _flashButton(copyBufBtn);
-  });
-  const copyAllBtn = document.getElementById('copy-all');
-  copyAllBtn.addEventListener('click', function(e){
-    e.preventDefault();
-    if (!term.buffer || !term.buffer.active){ return; }
-    const total = term.buffer.active.length;
-    const text = _readBufferRange(0, total);
-    if (!text){ _showCopyToast('nothing to copy'); return; }
-    _writeClipboard(text);
-    _flashButton(copyAllBtn);
-  });
+  // (Copy / All topbar buttons removed — desktop auto-copy on selection below
+  //  still handles clipboard.)
 
   // --- Desktop: auto-copy on xterm selection change (ttyd's pattern). ---
   //     On desktop, mouse-drag triggers xterm's internal selection, which
@@ -4954,7 +4937,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
       if (!tmux.hasSession(name)) {
         return sendHtml(res, deadSessionPage(viewOf(session, false)));
       }
-      return sendHtml(res, sessionPage(name));
+      return sendHtml(res, sessionPage(name, session.agent));
     }
     if (url.pathname.startsWith('/chat/')) {
       const name = decodeURIComponent(url.pathname.slice('/chat/'.length));
