@@ -2552,11 +2552,11 @@ function chatPage(name: string, agentKey: string): string {
   #log-inner{max-width:820px;margin:0 auto}
   .turn{display:flex;margin:10px 14px}
   .turn.user{justify-content:flex-end}
-  .turn.assistant,.turn.tool{justify-content:flex-start}
+  .turn.assistant,.turn.toolrow{justify-content:flex-start}
+  .turn.toolrow{margin:5px 14px}
   .bubble{max-width:82%;border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.55;word-wrap:break-word;overflow-wrap:anywhere}
   .turn.user .bubble{background:#1e3a52;color:#e6f0fa;border:1px solid #2d5a85}
   .turn.assistant .bubble{background:#161b22;border:1px solid #262c34;color:#e6e8eb}
-  .turn.tool .bubble{background:transparent;border:none;padding:0;max-width:82%;width:100%}
   .md>*:first-child{margin-top:0}.md>*:last-child{margin-bottom:0}
   .md pre{background:#0b0c10;border:1px solid #1f2329;border-radius:6px;padding:8px;overflow-x:auto}
   .md code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12.5px}
@@ -2564,12 +2564,12 @@ function chatPage(name: string, agentKey: string): string {
   .md a{color:#7cc4ff}
   .md table{border-collapse:collapse;display:block;overflow-x:auto}
   .md th,.md td{border:1px solid #262c34;padding:4px 8px}
-  details.tool{background:#0e1116;border:1px solid #1f2329;border-radius:6px;margin:4px 0;font-size:12.5px}
-  details.tool.err{border-color:#5a2a2a}
-  details.tool summary{cursor:pointer;padding:6px 10px;color:#7cc4ff;font-family:ui-monospace,monospace;user-select:none;list-style:none}
+  details.tool{background:#12151c;border:none;border-radius:8px;margin:0;font-size:12.5px;max-width:82%;width:100%}
+  details.tool.err{background:#1a1214}
+  details.tool summary{cursor:pointer;padding:7px 11px;color:#7cc4ff;font-family:ui-monospace,monospace;user-select:none;list-style:none}
   details.tool summary::-webkit-details-marker{display:none}
   details.tool.err summary{color:#f85149}
-  .tool-body{margin:0;padding:8px 10px;border-top:1px solid #1f2329;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;color:#c9d1d9}
+  .tool-body{margin:0;padding:8px 11px;border-top:1px solid #20252e;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;color:#c9d1d9}
   #bar{position:fixed;bottom:0;left:0;right:0;background:#11141a;padding:8px 12px 14px;z-index:20}
   /* chatframe-style composer pill: textarea on top, icon send button beneath,
      rounded container whose border lifts to the accent on focus-within. */
@@ -2642,10 +2642,21 @@ function chatPage(name: string, agentKey: string): string {
     seen[t.id]=1;
     if (emptyEl){ emptyEl.remove(); emptyEl=null; }
     var stick = atBottom();
-    var row=document.createElement('div'); row.className='turn '+(t.role||'assistant');
-    var bub=document.createElement('div'); bub.className='bubble';
-    (t.parts||[]).forEach(function(p){ bub.appendChild(renderPart(p)); });
-    row.appendChild(bub); innerEl.appendChild(row);
+    var role = t.role || 'assistant';
+    var bubbleParts = (t.parts||[]).filter(function(p){ return p.kind==='text'; });
+    var toolParts = (t.parts||[]).filter(function(p){ return p.kind!=='text'; });
+    // Text goes in a role-aligned bubble; tool_use / tool_result render as
+    // standalone bare cards (never nested in a bubble → no double border).
+    if (bubbleParts.length){
+      var row=document.createElement('div'); row.className='turn '+role;
+      var bub=document.createElement('div'); bub.className='bubble';
+      bubbleParts.forEach(function(p){ bub.appendChild(renderPart(p)); });
+      row.appendChild(bub); innerEl.appendChild(row);
+    }
+    toolParts.forEach(function(p){
+      var trow=document.createElement('div'); trow.className='turn toolrow';
+      trow.appendChild(renderPart(p)); innerEl.appendChild(trow);
+    });
     if (stick) scrollDown();
   }
 
