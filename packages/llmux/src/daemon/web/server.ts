@@ -2585,6 +2585,11 @@ function chatPage(name: string, agentKey: string): string {
   .bubble-copy:hover,.bubble-copy:active{opacity:1;color:#c9d1d9}
   .code-copy{position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#1c2128;color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.75;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
   .code-copy:hover,.code-copy:active{opacity:1;color:#c9d1d9}
+  .typing-dots{display:inline-flex;align-items:center;gap:5px;padding:3px 2px}
+  .typing-dots span{width:7px;height:7px;border-radius:50%;background:#8a919b;display:inline-block;animation:tbounce 1.25s infinite ease-in-out}
+  .typing-dots span:nth-child(2){animation-delay:.16s}
+  .typing-dots span:nth-child(3){animation-delay:.32s}
+  @keyframes tbounce{0%,65%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-5px);opacity:1}}
   .turn.user .bubble{background:#1e3a52;color:#e6f0fa;border:1px solid #2d5a85}
   .turn.assistant .bubble{background:#161b22;border:1px solid #262c34;color:#e6e8eb}
   .md>*:first-child{margin-top:0}.md>*:last-child{margin-bottom:0}
@@ -2662,7 +2667,7 @@ ${sessionTopbar(name, agentLabel, 'chat')}
     <input id="file-photo" type="file" accept="image/*" style="display:none">
     <input id="file-doc" type="file" style="display:none">
     <button id="send" type="button" title="Send" aria-label="Send" disabled>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
     </button>
   </div>
 </div></div>
@@ -2725,8 +2730,24 @@ ${sessionTopbar(name, agentLabel, 'chat')}
     if (on){ sendBtn.innerHTML=STOP_SVG; sendBtn.title='Stop'; sendBtn.setAttribute('aria-label','Stop'); sendBtn.classList.add('stop'); sendBtn.disabled=false; }
     else { sendBtn.innerHTML=SEND_SVG; sendBtn.title='Send'; sendBtn.setAttribute('aria-label','Send'); sendBtn.classList.remove('stop'); syncComposer(); }
   }
-  function startInference(){ inferencing=true; sawOutput=false; if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} setStopMode(true); }
-  function endInference(){ inferencing=false; sawOutput=false; if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} setStopMode(false); }
+  // bouncing "…" typing indicator, shown for the whole inference window
+  var typingEl=null;
+  function showTyping(){
+    if (emptyEl){ emptyEl.remove(); emptyEl=null; }
+    if (!typingEl){
+      typingEl=document.createElement('div'); typingEl.className='turn assistant typing-row';
+      var b=document.createElement('div'); b.className='bubble';
+      var d=document.createElement('div'); d.className='typing-dots';
+      d.innerHTML='<span></span><span></span><span></span>';
+      b.appendChild(d); typingEl.appendChild(b);
+    }
+    var stick=atBottom();
+    innerEl.appendChild(typingEl); // (re)attach at the very end
+    if (stick) scrollDown();
+  }
+  function hideTyping(){ if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl); }
+  function startInference(){ inferencing=true; sawOutput=false; if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} setStopMode(true); showTyping(); }
+  function endInference(){ inferencing=false; sawOutput=false; if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} setStopMode(false); hideTyping(); }
   function bumpInference(role){
     if (!inferencing) return;
     if (role && role!=='user') sawOutput=true;
@@ -2783,6 +2804,7 @@ ${sessionTopbar(name, agentLabel, 'chat')}
       trow.appendChild(renderPart(p)); innerEl.appendChild(trow);
     });
     bumpInference(role);
+    if (typingEl && typingEl.parentNode) innerEl.appendChild(typingEl); // keep dots pinned to the bottom
     if (stick) scrollDown();
   }
 
