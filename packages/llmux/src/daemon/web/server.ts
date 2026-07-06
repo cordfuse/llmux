@@ -2581,9 +2581,10 @@ function chatPage(name: string, agentKey: string): string {
   .turn.assistant,.turn.toolrow{justify-content:flex-start}
   .turn.toolrow{margin:5px 14px}
   .bubble{position:relative;max-width:82%;border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.55;word-wrap:break-word;overflow-wrap:anywhere}
-  .bubble-copy{position:absolute;top:4px;right:4px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:rgba(11,12,16,.7);color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.5;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
+  .bubble-copy{position:absolute;bottom:4px;right:4px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:rgba(11,12,16,.7);color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.5;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
   .bubble-copy:hover,.bubble-copy:active{opacity:1;color:#c9d1d9}
-  .code-copy{position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#1c2128;color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.75;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
+  .pre-wrap{position:relative}
+  .code-copy{position:absolute;top:6px;right:6px;z-index:2;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#1c2128;color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.75;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
   .code-copy:hover,.code-copy:active{opacity:1;color:#c9d1d9}
   .typing-dots{display:inline-flex;align-items:center;gap:5px;padding:3px 2px}
   .typing-dots span{width:7px;height:7px;border-radius:50%;background:#8a919b;display:inline-block;animation:tbounce 1.25s infinite ease-in-out}
@@ -2708,9 +2709,16 @@ ${sessionTopbar(name, agentLabel, 'chat')}
   }
   function enhanceCode(container){
     Array.prototype.forEach.call(container.querySelectorAll('pre'), function(pre){
-      if (pre.querySelector('.code-copy')) return;
+      var parent=pre.parentNode;
+      if (!parent || parent.className==='pre-wrap') return; // already wrapped
       var code=pre.querySelector('code'); var text=(code?code.innerText:pre.innerText)||'';
-      pre.appendChild(mkCopyBtn('code-copy', function(){ return text; }));
+      // Wrap the (horizontally-scrolling) pre in a static container and anchor
+      // the copy button to THAT, so it stays pinned in the corner instead of
+      // scrolling away with the code content.
+      var wrap=document.createElement('div'); wrap.className='pre-wrap';
+      parent.insertBefore(wrap, pre);
+      wrap.appendChild(pre);
+      wrap.appendChild(mkCopyBtn('code-copy', function(){ return text; }));
     });
   }
   function addBubbleCopy(bub, parts){
