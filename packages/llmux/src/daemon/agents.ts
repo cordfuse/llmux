@@ -12,6 +12,25 @@ export interface Conversation {
   messageCount: number;
 }
 
+/**
+ * A normalized, render-ready fragment of a conversation turn. The chat view
+ * (daemon/web/server.ts → chatPage) consumes these instead of each CLI's raw
+ * on-disk transcript schema, so the frontend stays agent-agnostic.
+ */
+export type TranscriptPart =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool_use'; id?: string | undefined; name: string; input: unknown }
+  | { kind: 'tool_result'; forId?: string | undefined; text: string; isError?: boolean | undefined };
+
+export interface TranscriptTurn {
+  /** Stable id for client-side de-dup when the snapshot + live tail overlap. */
+  id: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  /** ISO timestamp of the source event, when the transcript records one. */
+  ts?: string | undefined;
+  parts: TranscriptPart[];
+}
+
 export interface AgentHistoryAdapter {
   /** Past conversations for this agent in this cwd, newest-first. */
   listConversations(cwd: string): Conversation[];
@@ -35,6 +54,22 @@ export interface AgentHistoryAdapter {
   lookupTitle?(cwd: string, conversationId: string): string | undefined;
   /** Build the launch flag fragment to resume a specific conversation. */
   resumeFlag(conversationId: string): string;
+  /**
+   * Absolute path of the agent's CURRENTLY ACTIVE transcript file for this
+   * cwd (newest by mtime), or undefined if none / unsupported. The chat view
+   * tails this file to render the live conversation. Optional — an agent
+   * without it simply has no chat-GUI view (the terminal view still works).
+   */
+  currentTranscript?(cwd: string): string | undefined;
+  /** Parse a whole transcript file into normalized chat turns (snapshot). */
+  readTranscript?(path: string): TranscriptTurn[];
+  /**
+   * Parse ONE transcript line into 0..n normalized turns. Used by the live
+   * tailer as lines are appended. A single source event can yield more than
+   * one turn (e.g. a Claude `user` event carrying both a real prompt and a
+   * tool_result block).
+   */
+  parseTranscriptLine?(line: string): TranscriptTurn[];
 }
 
 /**
@@ -145,6 +180,91 @@ function looksLikeRealUserMessage(text: string): boolean {
   return true;
 }
 
+/** Flatten a Claude tool_result block's `content` (string | block[]) to text. */
+function extractClaudeToolResultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const texts: string[] = [];
+    for (const block of content) {
+      if (typeof block === 'string') texts.push(block);
+      else if (typeof block === 'object' && block !== null) {
+        const b = block as { type?: string; text?: string };
+        if (typeof b.text === 'string') texts.push(b.text);
+      }
+    }
+    return texts.join('\n');
+  }
+  if (content == null) return '';
+  try { return JSON.stringify(content); } catch { return String(content); }
+}
+
+/**
+ * Map one parsed Claude JSONL event to 0..n normalized chat turns. Subagent
+ * (sidechain) and meta/command-stub events are dropped so the chat view shows
+ * the human-visible conversation. A `user` event can split into a `tool` turn
+ * (tool_result blocks) plus a `user` turn (a real typed prompt).
+ */
+function normalizeClaudeEvent(evt: {
+  type?: string;
+  timestamp?: string;
+  uuid?: string;
+  isSidechain?: boolean;
+  isMeta?: boolean;
+  message?: unknown;
+}): TranscriptTurn[] {
+  if (evt.isSidechain || evt.isMeta) return [];
+  const ts = evt.timestamp;
+  const uuid = evt.uuid ?? `${evt.type}-${ts ?? ''}`;
+  const msg = evt.message;
+  const content = (typeof msg === 'object' && msg !== null) ? (msg as { content?: unknown }).content : undefined;
+
+  if (evt.type === 'assistant') {
+    const parts: TranscriptPart[] = [];
+    if (typeof content === 'string') {
+      if (content.trim()) parts.push({ kind: 'text', text: content });
+    } else if (Array.isArray(content)) {
+      for (const block of content) {
+        if (typeof block !== 'object' || block === null) continue;
+        const b = block as { type?: string; text?: string; id?: string; name?: string; input?: unknown };
+        if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+          parts.push({ kind: 'text', text: b.text });
+        } else if (b.type === 'tool_use' && typeof b.name === 'string') {
+          parts.push({ kind: 'tool_use', id: b.id, name: b.name, input: b.input });
+        }
+        // thinking / redacted_thinking blocks are intentionally dropped
+      }
+    }
+    return parts.length ? [{ id: uuid, role: 'assistant', ts, parts }] : [];
+  }
+
+  if (evt.type === 'user') {
+    if (typeof content === 'string') {
+      return looksLikeRealUserMessage(content)
+        ? [{ id: uuid, role: 'user', ts, parts: [{ kind: 'text', text: content }] }]
+        : [];
+    }
+    if (Array.isArray(content)) {
+      const userParts: TranscriptPart[] = [];
+      const toolParts: TranscriptPart[] = [];
+      for (const block of content) {
+        if (typeof block !== 'object' || block === null) continue;
+        const b = block as { type?: string; text?: string; tool_use_id?: string; content?: unknown; is_error?: boolean };
+        if (b.type === 'text' && typeof b.text === 'string' && looksLikeRealUserMessage(b.text)) {
+          userParts.push({ kind: 'text', text: b.text });
+        } else if (b.type === 'tool_result') {
+          toolParts.push({ kind: 'tool_result', forId: b.tool_use_id, text: extractClaudeToolResultText(b.content), isError: b.is_error });
+        }
+      }
+      const turns: TranscriptTurn[] = [];
+      if (toolParts.length) turns.push({ id: `${uuid}:tool`, role: 'tool', ts, parts: toolParts });
+      if (userParts.length) turns.push({ id: `${uuid}:user`, role: 'user', ts, parts: userParts });
+      return turns;
+    }
+  }
+
+  return [];
+}
+
 const claudeHistory: AgentHistoryAdapter = {
   listConversations(cwd: string): Conversation[] {
     const dir = join(homedir(), '.claude', 'projects', encodeClaudeCwd(cwd));
@@ -238,6 +358,61 @@ const claudeHistory: AgentHistoryAdapter = {
   },
   resumeFlag(id: string): string {
     return `--resume ${id}`;
+  },
+  currentTranscript(cwd: string): string | undefined {
+    const dir = join(homedir(), '.claude', 'projects', encodeClaudeCwd(cwd));
+    if (!existsSync(dir)) return undefined;
+    let files: string[];
+    try {
+      files = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+    } catch {
+      return undefined;
+    }
+    let best: string | undefined;
+    let bestMtime = -1;
+    for (const f of files) {
+      const fpath = join(dir, f);
+      try {
+        const m = statSync(fpath).mtimeMs;
+        if (m > bestMtime) {
+          bestMtime = m;
+          best = fpath;
+        }
+      } catch {
+        // skip
+      }
+    }
+    return best;
+  },
+  readTranscript(path: string): TranscriptTurn[] {
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch {
+      return [];
+    }
+    const turns: TranscriptTurn[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line) continue;
+      let evt: Parameters<typeof normalizeClaudeEvent>[0];
+      try {
+        evt = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      for (const t of normalizeClaudeEvent(evt)) turns.push(t);
+    }
+    return turns;
+  },
+  parseTranscriptLine(line: string): TranscriptTurn[] {
+    if (!line) return [];
+    let evt: Parameters<typeof normalizeClaudeEvent>[0];
+    try {
+      evt = JSON.parse(line);
+    } catch {
+      return [];
+    }
+    return normalizeClaudeEvent(evt);
   },
 };
 
