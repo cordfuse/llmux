@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tryV2Route, initV2Routes, getV2User, getV2Stores } from '../v2-routes.ts';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, watch, type FSWatcher } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { hostname } from 'node:os';
@@ -55,6 +55,8 @@ export interface ServeOptions {
 const XTERM_CSS = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css';
 const XTERM_JS = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js';
 const XTERM_FIT_JS = 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js';
+// Markdown renderer for the chat view — same CDN pattern as xterm above.
+const MARKED_JS = 'https://cdn.jsdelivr.net/npm/marked@14.1.3/lib/marked.umd.min.js';
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -2515,6 +2517,162 @@ function deadSessionPage(s: SessionView): string {
 </body></html>`;
 }
 
+/**
+ * Chat GUI view. Renders a session's conversation from the agent's on-disk
+ * transcript (streamed as normalized turns via SSE) and sends operator input
+ * through the existing /send send-keys route. Structure lifted from chatframe;
+ * plain vanilla JS + a CDN markdown lib to fit llmux's zero-build web idiom.
+ */
+function chatPage(name: string, agentKey: string): string {
+  const escapedName = escapeHtml(name);
+  const jsonName = JSON.stringify(name);
+  const agentLabel = escapeHtml(DEFAULT_AGENTS[agentKey]?.displayName ?? agentKey);
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<title>${escapedName} — chat — llmux</title>
+<link rel="icon" href="${FAVICON_DATA_URL}">
+<link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
+<style>
+  :root{--topbar-h:38px;color-scheme:dark}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100dvh;background:#0b0c10;color:#eee;font-family:system-ui,-apple-system,sans-serif;overscroll-behavior:none}
+  #topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:#11141a;border-bottom:1px solid #1f2329;display:flex;align-items:center;gap:8px;padding:0 10px;z-index:21}
+  #topbar a.btn,#topbar #back{flex:0 0 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;height:26px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:12px system-ui,sans-serif;text-decoration:none}
+  #topbar #back{width:36px;font-size:16px}
+  #topbar a.btn:active,#topbar #back:active{background:#252b34;border-color:#3a414b}
+  #title-block{flex:1 1 auto;display:flex;align-items:center;gap:8px;min-width:0}
+  #dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s,box-shadow .2s}
+  #dot[data-state="live"]{background:#7ee787;box-shadow:0 0 6px #7ee78766}
+  #dot[data-state="error"]{background:#f85149}
+  #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #title-agent{flex:0 0 auto;color:#a371f7;font-size:11px}
+  #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;margin-left:auto}
+  #note{display:none;position:fixed;top:var(--topbar-h);left:0;right:0;background:#3a2a12;color:#f0c674;border-bottom:1px solid #5a4522;padding:8px 14px;font-size:13px;z-index:20}
+  #log{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:84px;overflow-y:auto;padding:12px 0}
+  #log-inner{max-width:820px;margin:0 auto}
+  .turn{display:flex;margin:10px 14px}
+  .turn.user{justify-content:flex-end}
+  .turn.assistant,.turn.tool{justify-content:flex-start}
+  .bubble{max-width:82%;border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.55;word-wrap:break-word;overflow-wrap:anywhere}
+  .turn.user .bubble{background:#1e3a52;color:#e6f0fa;border:1px solid #2d5a85}
+  .turn.assistant .bubble{background:#161b22;border:1px solid #262c34;color:#e6e8eb}
+  .turn.tool .bubble{background:transparent;border:none;padding:0;max-width:82%;width:100%}
+  .md>*:first-child{margin-top:0}.md>*:last-child{margin-bottom:0}
+  .md pre{background:#0b0c10;border:1px solid #1f2329;border-radius:6px;padding:8px;overflow-x:auto}
+  .md code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12.5px}
+  .md :not(pre)>code{background:#0b0c10;border:1px solid #1f2329;border-radius:4px;padding:1px 4px}
+  .md a{color:#7cc4ff}
+  .md table{border-collapse:collapse;display:block;overflow-x:auto}
+  .md th,.md td{border:1px solid #262c34;padding:4px 8px}
+  details.tool{background:#0e1116;border:1px solid #1f2329;border-radius:6px;margin:4px 0;font-size:12.5px}
+  details.tool.err{border-color:#5a2a2a}
+  details.tool summary{cursor:pointer;padding:6px 10px;color:#7cc4ff;font-family:ui-monospace,monospace;user-select:none;list-style:none}
+  details.tool summary::-webkit-details-marker{display:none}
+  details.tool.err summary{color:#f85149}
+  .tool-body{margin:0;padding:8px 10px;border-top:1px solid #1f2329;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;color:#c9d1d9}
+  #bar{position:fixed;bottom:0;left:0;right:0;background:#11141a;border-top:1px solid #1f2329;padding:10px;z-index:20}
+  #bar-inner{max-width:820px;margin:0 auto;display:flex;gap:8px;align-items:flex-end}
+  #input{flex:1 1 auto;resize:none;min-height:38px;max-height:160px;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:8px;padding:9px 12px;font:14px system-ui,sans-serif;line-height:1.4;outline:none}
+  #input:focus{border-color:#2d5a85}
+  #send{flex:0 0 auto;background:#1e3a52;color:#7cc4ff;border:1px solid #2d5a85;border-radius:8px;height:38px;padding:0 16px;font:600 13px system-ui,sans-serif;cursor:pointer}
+  #send:active{background:#26496a}
+  #send:disabled{opacity:.5;cursor:default}
+  #empty{color:#5a6068;text-align:center;padding:40px 20px;font-size:13px}
+</style></head>
+<body>
+<div id="topbar">
+  <a id="back" href="/" title="Chat list">⌂</a>
+  <span id="title-block"><span id="dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span><span id="title-agent">${agentLabel}</span></span>
+  <a class="btn" href="/session/${encodeURIComponent(name)}" title="Terminal view">Terminal</a>
+  <span id="title-brand">LLMUX</span>
+</div>
+<div id="note"></div>
+<div id="log"><div id="log-inner"><div id="empty">No messages yet. Type below to send input to this agent.</div></div></div>
+<div id="bar"><div id="bar-inner">
+  <textarea id="input" rows="1" placeholder="Message ${escapedName}… (Enter to send, Shift+Enter for newline)"></textarea>
+  <button id="send">Send</button>
+</div></div>
+<script src="${MARKED_JS}"></script>
+<script>
+(function(){
+  var NAME = ${jsonName};
+  var seen = Object.create(null);
+  var logEl = document.getElementById('log');
+  var innerEl = document.getElementById('log-inner');
+  var emptyEl = document.getElementById('empty');
+  var dot = document.getElementById('dot');
+  var ta = document.getElementById('input');
+  var sendBtn = document.getElementById('send');
+  var noteEl = document.getElementById('note');
+
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function md(t){ try { return window.marked ? marked.parse(t,{breaks:true,gfm:true}) : esc(t); } catch(e){ return esc(t); } }
+  function atBottom(){ return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 90; }
+  function scrollDown(){ logEl.scrollTop = logEl.scrollHeight; }
+  function showNote(m){ noteEl.textContent = m; noteEl.style.display = 'block'; }
+
+  function renderPart(p){
+    if (p.kind === 'text'){ var d=document.createElement('div'); d.className='md'; d.innerHTML=md(p.text); return d; }
+    if (p.kind === 'tool_use'){
+      var det=document.createElement('details'); det.className='tool';
+      var sum=document.createElement('summary'); sum.textContent='⚙ '+(p.name||'tool'); det.appendChild(sum);
+      var pre=document.createElement('pre'); pre.className='tool-body';
+      pre.textContent = p.input==null ? '' : (typeof p.input==='string'? p.input : JSON.stringify(p.input,null,2));
+      det.appendChild(pre); return det;
+    }
+    if (p.kind === 'tool_result'){
+      var det2=document.createElement('details'); det2.className='tool'+(p.isError?' err':'');
+      var sum2=document.createElement('summary'); sum2.textContent=(p.isError?'⚠ result':'↩ result'); det2.appendChild(sum2);
+      var pre2=document.createElement('pre'); pre2.className='tool-body'; pre2.textContent=p.text||''; det2.appendChild(pre2);
+      return det2;
+    }
+    return document.createTextNode('');
+  }
+
+  function addTurn(t){
+    if (!t || !t.id || seen[t.id]) return;
+    seen[t.id]=1;
+    if (emptyEl){ emptyEl.remove(); emptyEl=null; }
+    var stick = atBottom();
+    var row=document.createElement('div'); row.className='turn '+(t.role||'assistant');
+    var bub=document.createElement('div'); bub.className='bubble';
+    (t.parts||[]).forEach(function(p){ bub.appendChild(renderPart(p)); });
+    row.appendChild(bub); innerEl.appendChild(row);
+    if (stick) scrollDown();
+  }
+
+  function clearLog(){ innerEl.innerHTML=''; seen=Object.create(null); }
+
+  function connect(){
+    var es = new EventSource('/api/sessions/'+encodeURIComponent(NAME)+'/transcript/stream');
+    es.onopen = function(){ dot.dataset.state='live'; dot.title='live'; };
+    es.onerror = function(){ dot.dataset.state='error'; dot.title='reconnecting…'; };
+    es.onmessage = function(ev){ try{ addTurn(JSON.parse(ev.data)); }catch(e){} };
+    es.addEventListener('reset', function(){ clearLog(); });
+    es.addEventListener('unsupported', function(){ dot.dataset.state='error'; showNote('This agent has no transcript adapter yet — chat view unavailable. Use the Terminal view.'); });
+  }
+
+  function autosize(){ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,160)+'px'; }
+  function send(){
+    var v = ta.value;
+    if (!v.trim()) return;
+    ta.value=''; autosize(); sendBtn.disabled=true;
+    fetch('/api/sessions/'+encodeURIComponent(NAME)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:v})})
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(j){ if (j && j.ok===false) showNote('send failed: '+(j.error||'unknown')); })
+      .catch(function(){ showNote('send failed (network)'); })
+      .finally(function(){ sendBtn.disabled=false; ta.focus(); });
+  }
+
+  ta.addEventListener('input', autosize);
+  ta.addEventListener('keydown', function(e){ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
+  sendBtn.addEventListener('click', send);
+  connect();
+})();
+</script>
+</body></html>`;
+}
+
 function sessionPage(name: string): string {
   const escapedName = escapeHtml(name);
   const jsonName = JSON.stringify(name);
@@ -2544,6 +2702,8 @@ function sessionPage(name: string): string {
   #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;padding-left:6px}
   #copy-buf,#copy-all{flex:0 0 auto;background:#1c2128;color:#7ee787;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:500 11px/1 ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none;margin-right:4px;transition:background .12s,border-color .12s,color .12s}
   #copy-buf{margin-left:auto}
+  #chat-link{flex:0 0 auto;background:#1c2128;color:#7cc4ff;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:600 11px/1 ui-monospace,monospace;display:inline-flex;align-items:center;text-decoration:none;margin-right:4px}
+  #chat-link:active{background:#252b34;border-color:#3a414b}
   #copy-buf:active,#copy-all:active{background:#252b34;border-color:#3a414b}
   #copy-buf.copied,#copy-all.copied{color:#0b0c10;background:#7ee787;border-color:#7ee787}
   #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:6px 0 14px;z-index:20;box-sizing:border-box}
@@ -2605,6 +2765,7 @@ function sessionPage(name: string): string {
   <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span></span>
   <button id="copy-buf" title="Copy visible terminal text" aria-label="copy visible">Copy</button>
   <button id="copy-all" title="Copy full scrollback" aria-label="copy all">All</button>
+  <a id="chat-link" href="/chat/${encodeURIComponent(name)}" title="Chat view">Chat</a>
   <span id="title-brand">LLMUX</span>
   <span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span>
 </div>
@@ -3885,7 +4046,14 @@ const KILL_RE = /^\/api\/sessions\/([^/]+)\/kill$/;
 const RESUME_RE = /^\/api\/sessions\/([^/]+)\/resume$/;
 const SEND_RE = /^\/api\/sessions\/([^/]+)\/send$/;
 const CONVERSATIONS_RE = /^\/api\/sessions\/([^/]+)\/conversations$/;
+const TRANSCRIPT_RE = /^\/api\/sessions\/([^/]+)\/transcript$/;
+const TRANSCRIPT_STREAM_RE = /^\/api\/sessions\/([^/]+)\/transcript\/stream$/;
 const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
+
+// Cap the initial chat-view snapshot — a long-running Claude Code transcript
+// can be hundreds of MB; we never ship the whole history to the browser, just
+// the tail. Live turns stream in after.
+const TRANSCRIPT_SNAPSHOT_MAX = 300;
 
 export function startServer(opts: ServeOptions): ServerHandle {
   // Boot snapshot — refreshed in-place by the PUT /api/settings/* handlers
@@ -4391,6 +4559,138 @@ export function startServer(opts: ServeOptions): ServerHandle {
       }
     }
     if (method === 'GET') {
+      // ---- Chat view: transcript snapshot + live SSE tail ----
+      // The chat GUI renders a session's conversation by reading the agent's
+      // on-disk transcript (never the PTY byte stream — so it sidesteps the
+      // turnq display-filter freeze class entirely). Input goes through the
+      // existing /send send-keys route.
+      const mTStream = url.pathname.match(TRANSCRIPT_STREAM_RE);
+      if (mTStream) {
+        const name = decodeURIComponent(mTStream[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: 'session not found' }, 404);
+        const agent = DEFAULT_AGENTS[session.agent];
+        const hist = agent?.history;
+        const cwd = session.cwd;
+
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache, no-transform',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        });
+        res.write(': stream open\n\n');
+
+        if (!hist?.currentTranscript || !hist.readTranscript || !hist.parseTranscriptLine) {
+          res.write('event: unsupported\ndata: {}\n\n');
+          res.end();
+          return;
+        }
+
+        let activePath: string | undefined;
+        let offset = 0;
+        let leftover = '';
+        let fileWatcher: FSWatcher | undefined;
+
+        const sendTurn = (t: unknown) => {
+          try { res.write(`data: ${JSON.stringify(t)}\n\n`); } catch {}
+        };
+
+        // Read appended bytes from the active file and emit each complete line
+        // as normalized turns. Offset-based so we never re-parse the whole file.
+        const drain = () => {
+          if (!activePath) return;
+          try {
+            const size = statSync(activePath).size;
+            if (size < offset) { offset = 0; leftover = ''; } // truncated / rotated
+            if (size <= offset) return;
+            const fd = openSync(activePath, 'r');
+            const buf = Buffer.alloc(size - offset);
+            readSync(fd, buf, 0, size - offset, offset);
+            closeSync(fd);
+            offset = size;
+            leftover += buf.toString('utf8');
+            let idx: number;
+            while ((idx = leftover.indexOf('\n')) >= 0) {
+              const line = leftover.slice(0, idx);
+              leftover = leftover.slice(idx + 1);
+              if (line) for (const turn of hist.parseTranscriptLine!(line)) sendTurn(turn);
+            }
+          } catch {}
+        };
+
+        const watchActive = () => {
+          if (fileWatcher) { try { fileWatcher.close(); } catch {} fileWatcher = undefined; }
+          if (!activePath) return;
+          try { fileWatcher = watch(activePath, () => drain()); } catch {}
+        };
+
+        // Attach to a transcript file: emit its tail as the initial snapshot,
+        // then park the offset at EOF so the tailer only ships new lines.
+        const attach = (path: string) => {
+          activePath = path;
+          offset = 0;
+          leftover = '';
+          try {
+            const all = hist.readTranscript!(path);
+            const init = all.length > TRANSCRIPT_SNAPSHOT_MAX ? all.slice(-TRANSCRIPT_SNAPSHOT_MAX) : all;
+            for (const turn of init) sendTurn(turn);
+          } catch {}
+          try { offset = statSync(path).size; } catch { offset = 0; }
+          watchActive();
+        };
+
+        const initial = hist.currentTranscript(cwd);
+        if (initial) attach(initial);
+
+        // Poll for the active file switching (fresh spawn writes a new file) and
+        // as a drain fallback on platforms where fs.watch is flaky.
+        const poll = setInterval(() => {
+          try {
+            const p = hist.currentTranscript!(cwd);
+            if (p && p !== activePath) {
+              try { res.write('event: reset\ndata: {}\n\n'); } catch {}
+              attach(p);
+            } else if (p && p === activePath) {
+              drain();
+            }
+          } catch {}
+        }, 2000);
+
+        const heartbeat = setInterval(() => {
+          try { res.write(': heartbeat\n\n'); } catch {}
+        }, 30000);
+
+        req.on('close', () => {
+          clearInterval(poll);
+          clearInterval(heartbeat);
+          if (fileWatcher) { try { fileWatcher.close(); } catch {} }
+          try { res.end(); } catch {}
+        });
+        return;
+      }
+
+      const mTranscript = url.pathname.match(TRANSCRIPT_RE);
+      if (mTranscript) {
+        const name = decodeURIComponent(mTranscript[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: 'session not found' }, 404);
+        const agent = DEFAULT_AGENTS[session.agent];
+        const hist = agent?.history;
+        if (!hist?.currentTranscript || !hist.readTranscript) {
+          return sendJson(res, { supported: false, path: null, turns: [] });
+        }
+        const path = hist.currentTranscript(session.cwd);
+        if (!path) return sendJson(res, { supported: true, path: null, turns: [] });
+        try {
+          const all = hist.readTranscript(path);
+          const turns = all.length > TRANSCRIPT_SNAPSHOT_MAX ? all.slice(-TRANSCRIPT_SNAPSHOT_MAX) : all;
+          return sendJson(res, { supported: true, path, truncated: all.length > turns.length, turns });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'transcript read failed' }, 500);
+        }
+      }
+
       const mConvs = url.pathname.match(CONVERSATIONS_RE);
       if (mConvs) {
         const name = decodeURIComponent(mConvs[1]!);
@@ -4467,6 +4767,14 @@ export function startServer(opts: ServeOptions): ServerHandle {
         return sendHtml(res, deadSessionPage(viewOf(session, false)));
       }
       return sendHtml(res, sessionPage(name));
+    }
+    if (url.pathname.startsWith('/chat/')) {
+      const name = decodeURIComponent(url.pathname.slice('/chat/'.length));
+      const session = state.get(name);
+      if (!session) return sendText(res, 'session not found', 404);
+      // The chat view reads the on-disk transcript, so unlike the terminal it
+      // works even when tmux has no live pane (shows the last conversation).
+      return sendHtml(res, chatPage(name, session.agent));
     }
     return sendText(res, 'not found', 404);
   });
