@@ -113,6 +113,21 @@ export function sendKeys(name: string, text: string, opts: { enter?: boolean } =
 }
 
 /**
+ * Send a single named tmux key (e.g. `Escape`, `C-c`) to the session — NOT
+ * literal text (no `-l`), so tmux interprets the key name. Used by the chat
+ * view's Stop button to interrupt an in-flight agent turn with Escape.
+ */
+export function sendKey(name: string, key: string): void {
+  if (!hasSession(name)) {
+    throw new Error(`tmux session "${name}" not found`);
+  }
+  const r = spawnSync('tmux', ['send-keys', '-t', name, key], { stdio: 'pipe' });
+  if (r.status !== 0) {
+    throw new Error(`tmux send-keys ${key} failed: ${r.stderr.toString().trim() || `exit ${r.status}`}`);
+  }
+}
+
+/**
  * Read the pane's root pid (the immediate process tmux spawned to run
  * the agent's command). For the multi-window edge case we only take the
  * first; llmux sessions are always single-window single-pane.

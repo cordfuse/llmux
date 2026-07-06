@@ -2580,11 +2580,15 @@ function chatPage(name: string, agentKey: string): string {
   .turn.user{justify-content:flex-end}
   .turn.assistant,.turn.toolrow{justify-content:flex-start}
   .turn.toolrow{margin:5px 14px}
-  .bubble{max-width:82%;border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.55;word-wrap:break-word;overflow-wrap:anywhere}
+  .bubble{position:relative;max-width:82%;border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.55;word-wrap:break-word;overflow-wrap:anywhere}
+  .bubble-copy{position:absolute;top:4px;right:4px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:rgba(11,12,16,.7);color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.5;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
+  .bubble-copy:hover,.bubble-copy:active{opacity:1;color:#c9d1d9}
+  .code-copy{position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#1c2128;color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.75;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
+  .code-copy:hover,.code-copy:active{opacity:1;color:#c9d1d9}
   .turn.user .bubble{background:#1e3a52;color:#e6f0fa;border:1px solid #2d5a85}
   .turn.assistant .bubble{background:#161b22;border:1px solid #262c34;color:#e6e8eb}
   .md>*:first-child{margin-top:0}.md>*:last-child{margin-bottom:0}
-  .md pre{background:#0b0c10;border:1px solid #1f2329;border-radius:6px;padding:8px;overflow-x:auto}
+  .md pre{position:relative;background:#0b0c10;border:1px solid #1f2329;border-radius:6px;padding:8px;overflow-x:auto}
   .md code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12.5px}
   .md :not(pre)>code{background:#0b0c10;border:1px solid #1f2329;border-radius:4px;padding:1px 4px}
   .md a{color:#7cc4ff}
@@ -2627,6 +2631,8 @@ function chatPage(name: string, agentKey: string): string {
   #send{display:flex;align-items:center;justify-content:center;height:32px;width:32px;flex:0 0 auto;border:none;border-radius:12px;background:#1f6feb;color:#fff;cursor:pointer;transition:opacity .15s}
   #send:hover{opacity:.9}
   #send:disabled{opacity:.4;cursor:default}
+  #send.stop{background:#b62324}
+  #send.stop:hover{opacity:.9}
   #empty{color:#5a6068;text-align:center;padding:40px 20px;font-size:13px}
 </style></head>
 <body>
@@ -2679,6 +2685,63 @@ ${sessionTopbar(name, agentLabel, 'chat')}
   function scrollDown(){ logEl.scrollTop = logEl.scrollHeight; }
   function showNote(m){ noteEl.textContent = m; noteEl.style.display = 'block'; }
 
+  // --- copy affordances (chat bubbles + code blocks) ---
+  var SEND_SVG = sendBtn.innerHTML; // capture original paper-plane markup
+  var STOP_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>';
+  var COPY_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  var CHECK_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+  function copyText(text, btn){
+    function ok(){ if(!btn) return; var prev=btn.innerHTML; btn.innerHTML=CHECK_SVG; btn.classList.add('ok'); setTimeout(function(){ btn.innerHTML=prev; btn.classList.remove('ok'); }, 1100); }
+    function fallback(){ try{ var t=document.createElement('textarea'); t.value=text; t.style.position='fixed'; t.style.opacity='0'; document.body.appendChild(t); t.focus(); t.select(); document.execCommand('copy'); document.body.removeChild(t); ok(); }catch(e){} }
+    if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(ok).catch(fallback); }
+    else fallback();
+  }
+  function mkCopyBtn(cls, getText){
+    var b=document.createElement('button'); b.type='button'; b.className=cls; b.title='Copy'; b.setAttribute('aria-label','Copy'); b.innerHTML=COPY_SVG;
+    b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); copyText(getText(), b); });
+    return b;
+  }
+  function enhanceCode(container){
+    Array.prototype.forEach.call(container.querySelectorAll('pre'), function(pre){
+      if (pre.querySelector('.code-copy')) return;
+      var code=pre.querySelector('code'); var text=(code?code.innerText:pre.innerText)||'';
+      pre.appendChild(mkCopyBtn('code-copy', function(){ return text; }));
+    });
+  }
+  function addBubbleCopy(bub, parts){
+    var text=parts.map(function(p){ return p.text||''; }).join('\\n\\n');
+    bub.appendChild(mkCopyBtn('bubble-copy', function(){ return text; }));
+  }
+
+  // --- inference state: while the agent produces, the send button becomes a
+  //     Stop button that sends Escape into the pane. No explicit "done" event
+  //     exists in the transcript, so: Stop shows on send and holds through the
+  //     agent's think window; once agent output has begun, a quiet gap (no new
+  //     turns for IDLE_MS) flips it back to Send. Stop-click ends it at once. ---
+  var stopMode=false, inferencing=false, sawOutput=false, idleTimer=null;
+  var IDLE_MS=6000;
+  function setStopMode(on){
+    stopMode=on;
+    if (on){ sendBtn.innerHTML=STOP_SVG; sendBtn.title='Stop'; sendBtn.setAttribute('aria-label','Stop'); sendBtn.classList.add('stop'); sendBtn.disabled=false; }
+    else { sendBtn.innerHTML=SEND_SVG; sendBtn.title='Send'; sendBtn.setAttribute('aria-label','Send'); sendBtn.classList.remove('stop'); syncComposer(); }
+  }
+  function startInference(){ inferencing=true; sawOutput=false; if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} setStopMode(true); }
+  function endInference(){ inferencing=false; sawOutput=false; if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} setStopMode(false); }
+  function bumpInference(role){
+    if (!inferencing) return;
+    if (role && role!=='user') sawOutput=true;
+    if (!sawOutput) return; // still in the initial think window — hold Stop, no timer yet
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer=setTimeout(endInference, IDLE_MS);
+  }
+  function doStop(){
+    fetch('/api/sessions/'+encodeURIComponent(NAME)+'/interrupt',{method:'POST'})
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(j){ if(j&&j.ok===false) showNote('stop failed: '+(j.error||'unknown')); })
+      .catch(function(){ showNote('stop failed (network)'); });
+    endInference();
+  }
+
   function renderPart(p){
     if (p.kind === 'text'){ var d=document.createElement('div'); d.className='md'; d.innerHTML=md(p.text); return d; }
     if (p.kind === 'tool_use'){
@@ -2711,12 +2774,15 @@ ${sessionTopbar(name, agentLabel, 'chat')}
       var row=document.createElement('div'); row.className='turn '+role;
       var bub=document.createElement('div'); bub.className='bubble';
       bubbleParts.forEach(function(p){ bub.appendChild(renderPart(p)); });
+      enhanceCode(bub);
+      addBubbleCopy(bub, bubbleParts);
       row.appendChild(bub); innerEl.appendChild(row);
     }
     toolParts.forEach(function(p){
       var trow=document.createElement('div'); trow.className='turn toolrow';
       trow.appendChild(renderPart(p)); innerEl.appendChild(trow);
     });
+    bumpInference(role);
     if (stick) scrollDown();
   }
 
@@ -2734,18 +2800,19 @@ ${sessionTopbar(name, agentLabel, 'chat')}
   var barEl = document.getElementById('bar');
   function syncComposer(){
     ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,180)+'px';
-    sendBtn.disabled = !ta.value.trim();
+    if (!stopMode) sendBtn.disabled = !ta.value.trim(); // Stop button stays enabled in stop mode
     logEl.style.bottom = barEl.offsetHeight + 'px'; // keep last message above the pill as it grows
   }
   function send(){
     var v = ta.value;
     if (!v.trim()) return;
     ta.value=''; syncComposer();
+    startInference();
     fetch('/api/sessions/'+encodeURIComponent(NAME)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:v})})
       .then(function(r){ return r.json().catch(function(){ return {}; }); })
-      .then(function(j){ if (j && j.ok===false) showNote('send failed: '+(j.error||'unknown')); })
-      .catch(function(){ showNote('send failed (network)'); })
-      .finally(function(){ syncComposer(); ta.focus(); });
+      .then(function(j){ if (j && j.ok===false){ showNote('send failed: '+(j.error||'unknown')); endInference(); } })
+      .catch(function(){ showNote('send failed (network)'); endInference(); })
+      .finally(function(){ ta.focus(); });
   }
 
   // --- composer controls: attach (file picker) + model picker ---
@@ -2832,7 +2899,7 @@ ${sessionTopbar(name, agentLabel, 'chat')}
 
   ta.addEventListener('input', syncComposer);
   ta.addEventListener('keydown', function(e){ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
-  sendBtn.addEventListener('click', send);
+  sendBtn.addEventListener('click', function(){ if (stopMode) doStop(); else send(); });
   window.addEventListener('resize', syncComposer);
   syncComposer();
   loadModels();
@@ -4177,6 +4244,7 @@ const TRANSCRIPT_RE = /^\/api\/sessions\/([^/]+)\/transcript$/;
 const TRANSCRIPT_STREAM_RE = /^\/api\/sessions\/([^/]+)\/transcript\/stream$/;
 const MODELS_RE = /^\/api\/sessions\/([^/]+)\/models$/;
 const UPLOAD_RE = /^\/api\/sessions\/([^/]+)\/upload$/;
+const INTERRUPT_RE = /^\/api\/sessions\/([^/]+)\/interrupt$/;
 const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
 
 // Cap the initial chat-view snapshot — a long-running Claude Code transcript
@@ -4650,6 +4718,19 @@ export function startServer(opts: ServeOptions): ServerHandle {
           return sendJson(res, { ok: true, path: dest });
         } catch (err) {
           return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'upload failed' }, 400);
+        }
+      }
+      // ---- Chat view: interrupt (Stop button → Escape into the pane) ----
+      const mInterrupt = url.pathname.match(INTERRUPT_RE);
+      if (mInterrupt) {
+        const name = decodeURIComponent(mInterrupt[1]!);
+        if (!state.get(name)) return sendJson(res, { ok: false, error: `no tracked session "${name}"` }, 404);
+        if (!tmux.hasSession(name)) return sendJson(res, { ok: false, error: `session "${name}" is not running` }, 409);
+        try {
+          tmux.sendKey(name, 'Escape');
+          return sendJson(res, { ok: true });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'interrupt failed' }, 500);
         }
       }
       const mRespawn = url.pathname.match(RESPAWN_RE);
