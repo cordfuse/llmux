@@ -2570,13 +2570,17 @@ function chatPage(name: string, agentKey: string): string {
   details.tool summary::-webkit-details-marker{display:none}
   details.tool.err summary{color:#f85149}
   .tool-body{margin:0;padding:8px 10px;border-top:1px solid #1f2329;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;color:#c9d1d9}
-  #bar{position:fixed;bottom:0;left:0;right:0;background:#11141a;border-top:1px solid #1f2329;padding:10px;z-index:20}
-  #bar-inner{max-width:820px;margin:0 auto;display:flex;gap:8px;align-items:flex-end}
-  #input{flex:1 1 auto;resize:none;min-height:38px;max-height:160px;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:8px;padding:9px 12px;font:14px system-ui,sans-serif;line-height:1.4;outline:none}
-  #input:focus{border-color:#2d5a85}
-  #send{flex:0 0 auto;background:#1e3a52;color:#7cc4ff;border:1px solid #2d5a85;border-radius:8px;height:38px;padding:0 16px;font:600 13px system-ui,sans-serif;cursor:pointer}
-  #send:active{background:#26496a}
-  #send:disabled{opacity:.5;cursor:default}
+  #bar{position:fixed;bottom:0;left:0;right:0;background:#11141a;padding:8px 12px 14px;z-index:20}
+  /* chatframe-style composer pill: textarea on top, icon send button beneath,
+     rounded container whose border lifts to the accent on focus-within. */
+  #composer{max-width:820px;margin:0 auto;background:#0f1118;border:1px solid #262c34;border-radius:22px;transition:border-color .15s;overflow:hidden}
+  #composer:focus-within{border-color:#2d5a85}
+  #input{display:block;width:100%;resize:none;min-height:24px;max-height:180px;background:transparent;color:#e6e8eb;border:none;outline:none;padding:12px 16px 4px;font:14px system-ui,sans-serif;line-height:1.45}
+  #input::placeholder{color:#5a6068}
+  #composer-actions{display:flex;justify-content:flex-end;align-items:center;padding:2px 8px 8px}
+  #send{display:flex;align-items:center;justify-content:center;height:32px;width:32px;border:none;border-radius:12px;background:#1f6feb;color:#fff;cursor:pointer;transition:opacity .15s}
+  #send:hover{opacity:.9}
+  #send:disabled{opacity:.4;cursor:default}
   #empty{color:#5a6068;text-align:center;padding:40px 20px;font-size:13px}
 </style></head>
 <body>
@@ -2588,9 +2592,13 @@ function chatPage(name: string, agentKey: string): string {
 </div>
 <div id="note"></div>
 <div id="log"><div id="log-inner"><div id="empty">No messages yet. Type below to send input to this agent.</div></div></div>
-<div id="bar"><div id="bar-inner">
-  <textarea id="input" rows="1" placeholder="Message ${escapedName}… (Enter to send, Shift+Enter for newline)"></textarea>
-  <button id="send">Send</button>
+<div id="bar"><div id="composer">
+  <textarea id="input" rows="1" placeholder="Send a message…"></textarea>
+  <div id="composer-actions">
+    <button id="send" type="button" title="Send" aria-label="Send" disabled>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+    </button>
+  </div>
 </div></div>
 <script src="${MARKED_JS}"></script>
 <script>
@@ -2652,21 +2660,28 @@ function chatPage(name: string, agentKey: string): string {
     es.addEventListener('unsupported', function(){ dot.dataset.state='error'; showNote('This agent has no transcript adapter yet — chat view unavailable. Use the Terminal view.'); });
   }
 
-  function autosize(){ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,160)+'px'; }
+  var barEl = document.getElementById('bar');
+  function syncComposer(){
+    ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,180)+'px';
+    sendBtn.disabled = !ta.value.trim();
+    logEl.style.bottom = barEl.offsetHeight + 'px'; // keep last message above the pill as it grows
+  }
   function send(){
     var v = ta.value;
     if (!v.trim()) return;
-    ta.value=''; autosize(); sendBtn.disabled=true;
+    ta.value=''; syncComposer();
     fetch('/api/sessions/'+encodeURIComponent(NAME)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:v})})
       .then(function(r){ return r.json().catch(function(){ return {}; }); })
       .then(function(j){ if (j && j.ok===false) showNote('send failed: '+(j.error||'unknown')); })
       .catch(function(){ showNote('send failed (network)'); })
-      .finally(function(){ sendBtn.disabled=false; ta.focus(); });
+      .finally(function(){ syncComposer(); ta.focus(); });
   }
 
-  ta.addEventListener('input', autosize);
+  ta.addEventListener('input', syncComposer);
   ta.addEventListener('keydown', function(e){ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
   sendBtn.addEventListener('click', send);
+  window.addEventListener('resize', syncComposer);
+  syncComposer();
   connect();
 })();
 </script>
