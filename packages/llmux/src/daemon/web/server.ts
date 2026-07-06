@@ -2538,8 +2538,6 @@ function sessionTopbarCss(): string {
   #title-agent{flex:0 0 auto;color:#a371f7;font-size:11px}
   #topbar .xlink{flex:0 0 auto;background:#1c2128;color:#7cc4ff;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:600 11px/1 ui-monospace,monospace;display:inline-flex;align-items:center;text-decoration:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
   #topbar .xlink:active{background:#252b34;border-color:#3a414b}
-  #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;padding-left:4px}
-  #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px}
   `;
 }
 
@@ -2552,8 +2550,6 @@ function sessionTopbar(name: string, agentLabel: string, mode: 'chat' | 'termina
   <a id="back" href="/" title="Session list">⌂</a>
   <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapeHtml(name)}</span><span id="title-agent">${escapeHtml(agentLabel)}</span></span>
   ${cross}
-  <span id="title-brand">LLMUX</span>
-  <span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span>
 </div>`;
 }
 
