@@ -182,6 +182,18 @@ export interface AgentDefinition {
    * given an id upfront (e.g. Codex has no --session-id equivalent).
    */
   detectFreshSessionId?: (ctx: { cwd: string }) => Promise<string | undefined>;
+  /**
+   * Literal text sent (as a real prompt, not a special key) to start a new
+   * conversation within the SAME running process. Verified live against
+   * each CLI's own slash-command listing, not assumed — claude/gemini/agy
+   * only have `/clear`; codex and opencode have both `/new` and `/clear`
+   * (picked `/new` for those two, functionally identical either way).
+   * Every agent with this set also needs detectFreshSessionId (or is agy,
+   * whose existing pinning-free design already tolerates it) — sending
+   * this command without a re-pin plan would let Chat view go stale the
+   * same way the Codex cross-session bug did.
+   */
+  newChatCommand?: string;
 }
 
 /**
@@ -194,6 +206,53 @@ export interface AgentDefinition {
  */
 function encodeClaudeCwd(cwd: string): string {
   return cwd.replace(/\//g, '-');
+}
+
+/**
+ * Shared by every *DetectFreshSessionId function below. 60s, not 15s —
+ * confirmed live that 15s isn't always enough: Codex specifically doesn't
+ * create its new rollout file the moment `/new` runs, only once the
+ * OPERATOR sends their first real message in the fresh conversation (a
+ * real test with a ~10s gap between clicking New Chat and sending a
+ * follow-up prompt missed a 15s window entirely, even though the file
+ * appeared correctly once the message landed). A real person composing a
+ * message after starting a fresh conversation can easily take longer than
+ * 15s. Cheap to be generous here — this is a detached/fire-and-forget
+ * background poll either way (see armFreshSessionIdDetection), never
+ * something a caller blocks on.
+ */
+const FRESH_SESSION_ID_DETECT_TIMEOUT_MS = 60000;
+
+/**
+ * Claude Code's sessionIdFlag only pins an id at SPAWN time. Mid-session
+ * `/clear` ("Start a new session with empty context") creates a genuinely
+ * NEW <uuid>.jsonl in the same per-cwd directory — confirmed live: sent
+ * /clear to a disposable test session, watched a brand-new file appear
+ * distinct from the pinned externalSessionId. Without re-detecting and
+ * re-pinning after that, Chat view would keep showing the pre-clear
+ * conversation forever. Same snapshot-then-poll shape as
+ * codexDetectFreshSessionId, simpler here since the per-cwd directory
+ * already does the cwd-filtering — no need to parse file content to check.
+ */
+async function claudeDetectFreshSessionId(ctx: { cwd: string }): Promise<string | undefined> {
+  const dir = join(homedir(), '.claude', 'projects', encodeClaudeCwd(ctx.cwd));
+  const listDir = (): string[] => {
+    try {
+      return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.jsonl')) : [];
+    } catch {
+      return [];
+    }
+  };
+  const before = new Set(listDir());
+  const deadline = Date.now() + FRESH_SESSION_ID_DETECT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    for (const f of listDir()) {
+      if (before.has(f)) continue;
+      return f.slice(0, -'.jsonl'.length);
+    }
+  }
+  return undefined;
 }
 
 function extractClaudeUserText(msg: unknown): string | undefined {
@@ -609,13 +668,17 @@ function codexSessionCwd(fpath: string): string | undefined {
  * chosen ahead of time the way Claude Code's sessionIdFlag does. Instead:
  * snapshot the existing rollout files right before spawn, then poll for a
  * NEW one to appear whose session_meta.cwd matches — that new file's id is
- * the just-spawned session's id, discovered instead of guessed. Codex
- * writes session_meta as the very first line as soon as the file is
- * created, so this doesn't need to wait for any real conversation content.
+ * the just-spawned session's id, discovered instead of guessed. Once the
+ * file exists, session_meta is its very first line, so no need to wait for
+ * further content to identify it — BUT the file itself doesn't come into
+ * existence right away. Confirmed live: after `/new` (or a fresh spawn),
+ * nothing appears on disk until the operator's next real message — this is
+ * exactly what FRESH_SESSION_ID_DETECT_TIMEOUT_MS's generous window
+ * protects against.
  */
 async function codexDetectFreshSessionId(ctx: { cwd: string }): Promise<string | undefined> {
   const before = new Set(walkCodexSessionFiles());
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + FRESH_SESSION_ID_DETECT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 500));
     for (const fpath of walkCodexSessionFiles()) {
@@ -1264,6 +1327,31 @@ function parseGeminiSessionMeta(fpath: string): GeminiSessionMeta | undefined {
   }
 }
 
+/**
+ * Shared by Gemini CLI and Qwen Code (both built on makeGeminiLikeAdapter).
+ * Unlike Claude/Codex, currentTranscript here has NEVER accepted a pinned
+ * sessionId at all — pure cwd-hash+mtime guess, the same latent cross-
+ * session-shadowing risk Codex had before it was fixed, just not yet
+ * reported for these two. `/clear` ("Clear the screen and start a new
+ * session") creates a new file the same way Claude's does, so New Chat
+ * needs the same detect-and-repin treatment. Same snapshot-then-poll
+ * shape as claudeDetectFreshSessionId/codexDetectFreshSessionId.
+ */
+async function geminiLikeDetectFreshSessionId(tmpRoot: () => string, ctx: { cwd: string }): Promise<string | undefined> {
+  const cwdHash = sha256OfPath(ctx.cwd);
+  const before = new Set(walkSessionJsonlFiles(tmpRoot()));
+  const deadline = Date.now() + FRESH_SESSION_ID_DETECT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    for (const fpath of walkSessionJsonlFiles(tmpRoot())) {
+      if (before.has(fpath)) continue;
+      const meta = parseGeminiSessionMeta(fpath);
+      if (meta?.projectHash === cwdHash && meta.sessionId) return meta.sessionId;
+    }
+  }
+  return undefined;
+}
+
 function geminiLineId(line: string): string {
   return createHash('sha1').update(line).digest('hex').slice(0, 16);
 }
@@ -1512,13 +1600,24 @@ function makeGeminiLikeAdapter(opts: {
       // silently fail.
       return opts.resumeFlag(id, '');
     },
-    currentTranscript(cwd: string): string | undefined {
+    currentTranscript(cwd: string, sessionId?: string): string | undefined {
       // Unlike agy, projectHash is embedded directly in each file's own
       // first line (sha256 of cwd, written once at session creation) —
       // no lossy external cache to join through, so newest-mtime-among-
       // cwd-matched-files is reliable here (same pattern as codex).
       const cwdHash = sha256OfPath(cwd);
       const files = walkSessionJsonlFiles(opts.tmpRoot());
+      // A pinned id (from detectFreshSessionId, e.g. after New Chat) maps
+      // deterministically — prefer it over the mtime guess below, which is
+      // wrong whenever two same-cwd sessions of this agent are both active
+      // (same cross-session-shadowing risk the Claude Code / Codex fixes
+      // closed — this adapter never had pinning at all until now).
+      if (sessionId) {
+        for (const fpath of files) {
+          const meta = parseGeminiSessionMeta(fpath);
+          if (meta?.sessionId === sessionId) return fpath;
+        }
+      }
       let best: string | undefined;
       let bestMtime = -1;
       for (const fpath of files) {
@@ -1644,6 +1743,38 @@ function openOpencodeDb(): InstanceType<typeof Database> | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * OpenCode's currentTranscript never accepted a pinned sessionId at all —
+ * pure cwd+time_updated guess, same latent cross-session-shadowing risk
+ * Codex had before it was fixed. `/new` ("New session") creates a genuinely
+ * new row in the session table, so New Chat needs the same detect-and-repin
+ * treatment as the other agents. Same snapshot-then-poll shape, querying
+ * the session table instead of walking files.
+ */
+async function opencodeDetectFreshSessionId(ctx: { cwd: string }): Promise<string | undefined> {
+  const snapshot = (): Set<string> => {
+    const db = openOpencodeDb();
+    if (!db) return new Set();
+    try {
+      const rows = db.prepare(`SELECT id FROM session WHERE directory = ?`).all(ctx.cwd) as { id: string }[];
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      return new Set();
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  };
+  const before = snapshot();
+  const deadline = Date.now() + FRESH_SESSION_ID_DETECT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    for (const id of snapshot()) {
+      if (!before.has(id)) return id;
+    }
+  }
+  return undefined;
 }
 
 // Never a real filesystem path — a marker the SSE handler checks for to
@@ -1779,10 +1910,21 @@ const opencodeHistory: AgentHistoryAdapter = {
   // skip anything already rendered. currentTranscript returns a synthetic
   // `opencode-session:<id>` identifier (never a real path) precisely so
   // that branch can detect this case instead of trying to fs.watch it.
-  currentTranscript(cwd: string): string | undefined {
+  currentTranscript(cwd: string, sessionId?: string): string | undefined {
     const db = openOpencodeDb();
     if (!db) return undefined;
     try {
+      // A pinned id (from detectFreshSessionId, e.g. after New Chat) maps
+      // deterministically — prefer it over the mtime guess below, which is
+      // wrong whenever two same-cwd sessions of this agent are both active
+      // (same cross-session-shadowing risk the Claude Code / Codex fixes
+      // closed — this adapter never had pinning at all until now).
+      if (sessionId) {
+        const pinned = db.prepare(
+          `SELECT id FROM session WHERE id = ? AND directory = ? AND time_archived IS NULL`
+        ).get(sessionId, cwd) as { id: string } | undefined;
+        if (pinned) return opencodeSyntheticPath(pinned.id);
+      }
       const row = db.prepare(
         `SELECT id FROM session
          WHERE directory = ? AND time_archived IS NULL AND parent_id IS NULL
@@ -1887,11 +2029,11 @@ const claudeInstalled = (): boolean => {
 };
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
-  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', detectInstalled: claudeInstalled, installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory, sessionIdFlag: (id) => `--session-id ${id}` },
-  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory, preSpawn: codexPreSpawnTrust, detectFreshSessionId: codexDetectFreshSessionId },
-  agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install', history: agyHistory },
-  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli', history: geminiHistory },
-  qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code', history: qwenHistory },
+  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', detectInstalled: claudeInstalled, installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory, sessionIdFlag: (id) => `--session-id ${id}`, detectFreshSessionId: claudeDetectFreshSessionId, newChatCommand: '/clear' },
+  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory, preSpawn: codexPreSpawnTrust, detectFreshSessionId: codexDetectFreshSessionId, newChatCommand: '/new' },
+  agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install', history: agyHistory, newChatCommand: '/clear' },
+  gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli', history: geminiHistory, detectFreshSessionId: (ctx) => geminiLikeDetectFreshSessionId(() => join(homedir(), '.gemini', 'tmp'), ctx), newChatCommand: '/clear' },
+  qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code', history: qwenHistory, detectFreshSessionId: (ctx) => geminiLikeDetectFreshSessionId(() => join(homedir(), '.qwen', 'tmp'), ctx), newChatCommand: '/clear' },
   // OpenCode's --dangerously-skip-permissions only applies to `opencode run`
   // (one-shot). The TUI default mode rejects it and exits — danger mode in
   // the TUI is controlled via OPENCODE_YOLO=1 instead.
@@ -1900,7 +2042,7 @@ export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   // overrides per-spawn via the flags field if they want a specific model
   // (e.g. `-m openrouter/anthropic/claude-sonnet-4.6` or
   // `-m ollama/qwen2.5-coder:14b`).
-  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     readyPrompt: '^>', installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai',          envDefaults: { OPENCODE_YOLO: '1' }, history: opencodeHistory },
+  opencode: { key: 'opencode', displayName: 'OpenCode',            cmd: 'opencode',     readyPrompt: '^>', installHint: 'curl -fsSL https://opencode.ai/install | bash',   docsUrl: 'https://opencode.ai',          envDefaults: { OPENCODE_YOLO: '1' }, history: opencodeHistory, detectFreshSessionId: opencodeDetectFreshSessionId, newChatCommand: '/new' },
   amp:      { key: 'amp',      displayName: 'Sourcegraph Amp',     cmd: 'amp',          flags: '--dangerously-allow-all',     readyPrompt: '^>', installHint: 'npm install -g @sourcegraph/amp',                 docsUrl: 'https://ampcode.com/manual' },
   grok:     { key: 'grok',     displayName: 'Grok Build CLI',      cmd: 'grok',         flags: '--always-approve', readyPrompt: '^grok>', installHint: 'curl -fsSL https://x.ai/cli/install.sh | bash',   docsUrl: 'https://x.ai/cli' },
   aider:    { key: 'aider',    displayName: 'Aider',               cmd: 'aider',        flags: '--yes-always --model claude-opus-4-6',   readyPrompt: '^> $', installHint: 'python -m pip install aider-chat',                docsUrl: 'https://aider.chat' },

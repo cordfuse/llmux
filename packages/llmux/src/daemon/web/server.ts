@@ -2529,16 +2529,50 @@ function sessionTopbarCss(): string {
   `;
 }
 
-/** Shared topbar markup. mode picks the cross-link target/label. */
-function sessionTopbar(name: string, agentLabel: string, mode: 'chat' | 'terminal'): string {
+/**
+ * Shared topbar markup. mode picks the cross-link target/label. Used by
+ * both the Chat GUI and Terminal views — so New Chat lives in exactly one
+ * place instead of being wired twice.
+ */
+function sessionTopbar(name: string, agentKey: string, mode: 'chat' | 'terminal'): string {
+  const agentLabel = DEFAULT_AGENTS[agentKey]?.displayName ?? agentKey;
   const cross = mode === 'chat'
     ? `<a class="xlink" href="/session/${encodeURIComponent(name)}" title="Terminal view">Terminal</a>`
     : `<a class="xlink" href="/chat/${encodeURIComponent(name)}" title="Chat view">Chat</a>`;
+  // Only rendered when this agent actually has a verified new-chat command
+  // (see AgentDefinition.newChatCommand's docstring) — hidden entirely for
+  // agents without one (e.g. amp, grok — not among the 6 canonical CLIs
+  // this was built and verified against) rather than showing a button that
+  // would silently no-op.
+  const newChatBtn = DEFAULT_AGENTS[agentKey]?.newChatCommand
+    ? `<button id="new-chat-btn" class="xlink" title="Start a new conversation">+ New</button>`
+    : '';
   return `<div id="topbar">
   <a id="back" href="/" title="Session list">⌂</a>
   <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapeHtml(name)}</span><span id="title-agent">${escapeHtml(agentLabel)}</span></span>
+  ${newChatBtn}
   ${cross}
-</div>`;
+</div>
+<script>(function(){
+  var btn = document.getElementById('new-chat-btn');
+  if (!btn) return;
+  var busy = false;
+  btn.addEventListener('click', function(){
+    if (busy) return;
+    if (!confirm('Start a new conversation? The current one stays available in session history.')) return;
+    busy = true;
+    btn.disabled = true;
+    var label = btn.textContent;
+    btn.textContent = '…';
+    fetch('/api/sessions/${encodeURIComponent(name)}/new-chat', { method: 'POST' })
+      .then(function(r){ return r.json().catch(function(){ return { ok: false }; }); })
+      .then(function(j){
+        if (!j.ok) alert('New chat failed: ' + (j.error || 'unknown error'));
+      })
+      .catch(function(){ alert('New chat failed: network error'); })
+      .finally(function(){ busy = false; btn.disabled = false; btn.textContent = label; });
+  });
+})();</script>`;
 }
 
 /**
@@ -2550,7 +2584,6 @@ function sessionTopbar(name: string, agentLabel: string, mode: 'chat' | 'termina
 function chatPage(name: string, agentKey: string): string {
   const escapedName = escapeHtml(name);
   const jsonName = JSON.stringify(name);
-  const agentLabel = escapeHtml(DEFAULT_AGENTS[agentKey]?.displayName ?? agentKey);
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <title>${escapedName} — chat — llmux</title>
@@ -2660,7 +2693,7 @@ function chatPage(name: string, agentKey: string): string {
   #lightbox .lightbox-bar a:hover,#lightbox .lightbox-bar button:hover{background:#262c34}
 </style></head>
 <body>
-${sessionTopbar(name, agentLabel, 'chat')}
+${sessionTopbar(name, agentKey, 'chat')}
 <div id="note"></div>
 <div id="log"><div id="log-inner"><div id="empty">No messages yet. Type below to send input to this agent.</div></div></div>
 <div id="bar"><div id="composer">
@@ -3098,7 +3131,6 @@ ${sessionTopbar(name, agentLabel, 'chat')}
 
 function sessionPage(name: string, agentKey: string): string {
   const escapedName = escapeHtml(name);
-  const agentLabel = DEFAULT_AGENTS[agentKey]?.displayName ?? agentKey;
   const jsonName = JSON.stringify(name);
   const jsonVersion = JSON.stringify(DAEMON_VERSION);
   return `<!doctype html><html lang="en"><head>
@@ -3168,7 +3200,7 @@ function sessionPage(name: string, agentKey: string): string {
   }
 </style></head>
 <body>
-${sessionTopbar(name, agentLabel, 'terminal')}
+${sessionTopbar(name, agentKey, 'terminal')}
 <div id="bar">
   <div class="row arrows">
     <button data-mod="shift" title="Shift (next char uppercase; double-tap to lock)">Shift</button>
@@ -4570,6 +4602,7 @@ const MODELS_RE = /^\/api\/sessions\/([^/]+)\/models$/;
 const UPLOAD_RE = /^\/api\/sessions\/([^/]+)\/upload$/;
 const INTERRUPT_RE = /^\/api\/sessions\/([^/]+)\/interrupt$/;
 const KEY_RE = /^\/api\/sessions\/([^/]+)\/key$/;
+const NEW_CHAT_RE = /^\/api\/sessions\/([^/]+)\/new-chat$/;
 // Allowlist for the chat view's pending-prompt answer flow (arrow-navigate +
 // Enter/Escape) — deliberately narrow, not a general "send any tmux key" API.
 const ALLOWED_KEYS = new Set(['Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab']);
@@ -5077,6 +5110,36 @@ export function startServer(opts: ServeOptions): ServerHandle {
         } catch (err) {
           return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'key send failed' }, 500);
         }
+      }
+      const mNewChat = url.pathname.match(NEW_CHAT_RE);
+      if (mNewChat) {
+        const name = decodeURIComponent(mNewChat[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: `no tracked session "${name}"` }, 404);
+        if (!tmux.hasSession(name)) return sendJson(res, { ok: false, error: `session "${name}" is not running` }, 409);
+        const agent = DEFAULT_AGENTS[session.agent];
+        if (!agent?.newChatCommand) {
+          return sendJson(res, { ok: false, error: `agent "${session.agent}" has no new-chat command configured` }, 400);
+        }
+        // Snapshot BEFORE sending the command — detection needs a head
+        // start over the CLI's own new-conversation-file creation, same
+        // ordering requirement as fresh-spawn detection (see
+        // startFreshSessionIdDetection's docstring). resumeFrom passed as
+        // undefined deliberately: unlike a fresh spawn, whether THIS
+        // session originally resumed something is irrelevant here — /clear
+        // or /new always creates a brand new conversation regardless.
+        const freshIdPending = startFreshSessionIdDetection(agent, session.cwd, undefined);
+        try {
+          await turnqIntegration.sendWithTurn(name, agent.newChatCommand, {
+            enter: true,
+            skipTurnq: false,
+            turnqConfig: currentConfig?.turnq,
+          });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+        }
+        armFreshSessionIdDetection(name, freshIdPending);
+        return sendJson(res, { ok: true });
       }
       const mRespawn = url.pathname.match(RESPAWN_RE);
       if (mRespawn) {
