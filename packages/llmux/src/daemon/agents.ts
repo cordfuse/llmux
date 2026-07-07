@@ -56,11 +56,20 @@ export interface AgentHistoryAdapter {
   resumeFlag(conversationId: string): string;
   /**
    * Absolute path of the agent's CURRENTLY ACTIVE transcript file for this
-   * cwd (newest by mtime), or undefined if none / unsupported. The chat view
-   * tails this file to render the live conversation. Optional — an agent
-   * without it simply has no chat-GUI view (the terminal view still works).
+   * cwd, or undefined if none / unsupported. The chat view tails this file
+   * to render the live conversation. Optional — an agent without it simply
+   * has no chat-GUI view (the terminal view still works).
+   *
+   * `sessionId`, when passed, is this session's own pinned/resumed id
+   * (`resumeFrom` if resumed, else the id passed to the CLI's own
+   * `sessionIdFlag` at spawn, if the agent has one) — adapters that can map
+   * an id directly to its exact transcript file should prefer that over
+   * mtime-guessing, which is only ever a same-cwd heuristic and is WRONG
+   * whenever two sessions share a cwd (see `sessionIdFlag`'s docstring).
+   * Sessions spawned before an adapter supported this have no persisted id
+   * and fall back to the mtime guess same as before.
    */
-  currentTranscript?(cwd: string): string | undefined;
+  currentTranscript?(cwd: string, sessionId?: string): string | undefined;
   /** Parse a whole transcript file into normalized chat turns (snapshot). */
   readTranscript?(path: string): TranscriptTurn[];
   /**
@@ -143,6 +152,21 @@ export interface AgentDefinition {
    * are logged + swallowed; spawn proceeds without the side effect.
    */
   preSpawn?: (ctx: { cwd: string }) => void;
+  /**
+   * Builds the CLI flag fragment that pins a fresh, caller-generated session
+   * id at spawn time (e.g. Claude Code's `--session-id <uuid>`). Only set
+   * for agents whose CLI supports it — used exclusively on FRESH (non-
+   * resumed) spawns, so `currentTranscript` can look up the exact transcript
+   * file deterministically instead of guessing by mtime.
+   *
+   * That guess is provably wrong whenever two sessions share a cwd: verified
+   * live on this machine — llmux's OWN dev session and a separately-tracked
+   * `tmux-claude` session both had cwd `~/Repos`, and the dev session's
+   * constantly-refreshing mtime permanently shadowed the other one's actual
+   * transcript in its Chat view, even though the sessions were completely
+   * unrelated.
+   */
+  sessionIdFlag?: (id: string) => string;
 }
 
 /**
@@ -408,9 +432,18 @@ const claudeHistory: AgentHistoryAdapter = {
   resumeFlag(id: string): string {
     return `--resume ${id}`;
   },
-  currentTranscript(cwd: string): string | undefined {
+  currentTranscript(cwd: string, sessionId?: string): string | undefined {
     const dir = join(homedir(), '.claude', 'projects', encodeClaudeCwd(cwd));
     if (!existsSync(dir)) return undefined;
+    // A pinned/resumed session id maps deterministically to its own file —
+    // prefer it over the mtime guess below, which is only ever a heuristic
+    // and is wrong whenever two same-cwd sessions are both active (verified
+    // live: this exact daemon's own dev session shadowed a genuinely
+    // unrelated tmux-claude session sharing the same cwd).
+    if (sessionId) {
+      const pinned = join(dir, `${sessionId}.jsonl`);
+      if (existsSync(pinned)) return pinned;
+    }
     let files: string[];
     try {
       files = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
@@ -1670,7 +1703,7 @@ const claudeInstalled = (): boolean => {
 };
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
-  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', detectInstalled: claudeInstalled, installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory },
+  claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', detectInstalled: claudeInstalled, installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory, sessionIdFlag: (id) => `--session-id ${id}` },
   codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory, preSpawn: codexPreSpawnTrust },
   agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install', history: agyHistory },
   gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli', history: geminiHistory },

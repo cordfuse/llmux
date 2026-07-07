@@ -267,7 +267,7 @@ async function dispatchSession(verb: string | undefined, args: string[], env: Gl
       if (tmux.hasSession(name)) tmux.killSession(name);
       tmux.newSession({
         name,
-        command: buildAgentCommand(agent, session.flags, conversationId),
+        command: buildAgentCommand(agent, session.flags, conversationId).command,
         cwd: session.cwd,
         env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: name, LLMUX_AGENT: session.agent }),
       });

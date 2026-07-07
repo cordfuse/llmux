@@ -4,6 +4,7 @@ import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, watc
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
 import { hostname } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
 import QRCode from 'qrcode';
@@ -4016,15 +4017,31 @@ function sendJson(res: ServerResponse, body: unknown, status = 200): void {
 
 // ---------- API actions ----------
 
+export interface BuiltAgentCommand {
+  command: string;
+  /** Fresh id generated via agent.sessionIdFlag, when applicable — undefined when resuming (resumeFrom is already deterministic) or the agent has no sessionIdFlag. Callers should persist this on the session record. */
+  externalSessionId?: string;
+}
+
 export function buildAgentCommand(
   agent: AgentDefinition,
   flagsOverride?: string,
   resumeFrom?: string,
-): string {
+): BuiltAgentCommand {
   const flags = flagsOverride !== undefined ? flagsOverride : (agent.flags ?? '');
   const resumeFragment = resumeFrom && agent.history ? agent.history.resumeFlag(resumeFrom) : '';
-  const tail = [flags, resumeFragment].filter((s) => s.length > 0).join(' ');
-  return tail ? `${agent.cmd} ${tail}` : agent.cmd;
+  // Only pin a fresh session id on a genuinely NEW (non-resumed) launch —
+  // resuming already has a deterministic id via resumeFrom, and Claude
+  // Code's --session-id + --resume together would be at best redundant.
+  let externalSessionId: string | undefined;
+  let sessionIdFragment = '';
+  if (!resumeFrom && agent.sessionIdFlag) {
+    externalSessionId = randomUUID();
+    sessionIdFragment = agent.sessionIdFlag(externalSessionId);
+  }
+  const tail = [flags, resumeFragment, sessionIdFragment].filter((s) => s.length > 0).join(' ');
+  const command = tail ? `${agent.cmd} ${tail}` : agent.cmd;
+  return externalSessionId !== undefined ? { command, externalSessionId } : { command };
 }
 
 function viewOf(s: state.SessionState, live: boolean): SessionView {
@@ -4145,10 +4162,11 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
   const llmuxEnv: Record<string, string> = { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key };
   if (input.orchAlias) llmuxEnv['LLMUX_ORCH_ALIAS'] = input.orchAlias;
   agentDef.preSpawn?.({ cwd });
+  const built = buildAgentCommand(agentDef, flagsOverride, resumeFrom);
   try {
     tmux.newSession({
       name,
-      command: buildAgentCommand(agentDef, flagsOverride, resumeFrom),
+      command: built.command,
       cwd,
       env: mergeSpawnEnv(agentDef, envOverride, llmuxEnv),
     });
@@ -4163,6 +4181,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
     ...(flagsOverride !== undefined ? { flags: flagsOverride } : {}),
     ...(envOverride !== undefined ? { env: envOverride } : {}),
     ...(resumeFrom !== undefined ? { resumeFrom } : {}),
+    ...(built.externalSessionId !== undefined ? { externalSessionId: built.externalSessionId } : {}),
     ...(input.initPrompts && input.initPrompts.length > 0 ? { initPrompts: input.initPrompts } : {}),
     ...(input.orchAlias ? { orchAlias: input.orchAlias } : {}),
     createdAt: new Date().toISOString(),
@@ -4189,11 +4208,13 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
+  let built: BuiltAgentCommand;
   try {
     agent.preSpawn?.({ cwd: session.cwd });
+    built = buildAgentCommand(agent, session.flags, session.resumeFrom);
     tmux.newSession({
       name: session.name,
-      command: buildAgentCommand(agent, session.flags, session.resumeFrom),
+      command: built.command,
       cwd: session.cwd,
       env: mergeSpawnEnv(agent, session.env, {
         LLMUX_SESSION: session.name,
@@ -4204,7 +4225,11 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
-  const refreshed: state.SessionState = { ...session, createdAt: new Date().toISOString() };
+  const refreshed: state.SessionState = {
+    ...session,
+    ...(built.externalSessionId !== undefined ? { externalSessionId: built.externalSessionId } : {}),
+    createdAt: new Date().toISOString(),
+  };
   state.record(refreshed);
   return { ok: true, session: viewOf(refreshed, true) };
 }
@@ -4235,7 +4260,7 @@ function resumeConversation(
     agent.preSpawn?.({ cwd: session.cwd });
     tmux.newSession({
       name: session.name,
-      command: buildAgentCommand(agent, session.flags, conversationId),
+      command: buildAgentCommand(agent, session.flags, conversationId).command,
       cwd: session.cwd,
       env: mergeSpawnEnv(agent, session.env, {
         LLMUX_SESSION: session.name,
@@ -4350,9 +4375,10 @@ export function editSession(
       try {
         tmux.killSession(updated.name);
         agent.preSpawn?.({ cwd: updated.cwd });
+        const built = buildAgentCommand(agent, updated.flags, updated.resumeFrom);
         tmux.newSession({
           name: updated.name,
-          command: buildAgentCommand(agent, updated.flags, updated.resumeFrom),
+          command: built.command,
           cwd: updated.cwd,
           env: mergeSpawnEnv(agent, updated.env, {
             LLMUX_SESSION: updated.name,
@@ -4362,7 +4388,11 @@ export function editSession(
         });
         // Refresh createdAt so the picker's "started Xm ago" reflects the
         // actual moment the agent process began running with the new cwd.
-        const refreshed: state.SessionState = { ...updated, createdAt: new Date().toISOString() };
+        const refreshed: state.SessionState = {
+          ...updated,
+          ...(built.externalSessionId !== undefined ? { externalSessionId: built.externalSessionId } : {}),
+          createdAt: new Date().toISOString(),
+        };
         state.record(refreshed);
         return { ok: true, session: viewOf(refreshed, true) };
       } catch (err) {
@@ -5006,6 +5036,10 @@ export function startServer(opts: ServeOptions): ServerHandle {
         const agent = DEFAULT_AGENTS[session.agent];
         const hist = agent?.history;
         const cwd = session.cwd;
+        // Whichever id deterministically identifies THIS session's own
+        // transcript file, if any adapter can use one — resumeFrom wins
+        // (already deterministic) over the spawn-time pinned id.
+        const pinnedSessionId = session.resumeFrom ?? session.externalSessionId;
 
         res.writeHead(200, {
           'content-type': 'text/event-stream',
@@ -5106,7 +5140,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
           watchActive();
         };
 
-        const initial = hist.currentTranscript(cwd);
+        const initial = hist.currentTranscript(cwd, pinnedSessionId);
         if (initial) attach(initial);
 
         // Poll for the active file switching (fresh spawn writes a new file) and
@@ -5114,7 +5148,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
         // carries the pending-prompt check (same cadence, one timer).
         const poll = setInterval(() => {
           try {
-            const p = hist.currentTranscript!(cwd);
+            const p = hist.currentTranscript!(cwd, pinnedSessionId);
             if (p && p !== activePath) {
               try { res.write('event: reset\ndata: {}\n\n'); } catch {}
               attach(p);
@@ -5148,7 +5182,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
         if (!hist?.currentTranscript || !hist.readTranscript) {
           return sendJson(res, { supported: false, path: null, turns: [] });
         }
-        const path = hist.currentTranscript(session.cwd);
+        const path = hist.currentTranscript(session.cwd, session.resumeFrom ?? session.externalSessionId);
         if (!path) return sendJson(res, { supported: true, path: null, turns: [] });
         try {
           const all = hist.readTranscript(path);

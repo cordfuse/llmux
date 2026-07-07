@@ -13,6 +13,16 @@ export interface SessionState {
   /** ID of the agent's prior conversation this session resumed from (if any). */
   resumeFrom?: string;
   /**
+   * Session id passed to the agent's own `sessionIdFlag` at spawn (e.g.
+   * Claude Code's `--session-id`), generated fresh on every non-resumed
+   * spawn/respawn for agents that support it. Lets `currentTranscript` look
+   * up the exact transcript file instead of guessing by mtime — the guess
+   * is wrong whenever two sessions share a cwd. Ignored (superseded) once
+   * `resumeFrom` is set — a resumed session's file is already deterministic
+   * from that id.
+   */
+  externalSessionId?: string;
+  /**
    * Per-session initialization prompts. Fired into the agent after the
    * readyPrompt regex matches (or a fallback 2s sleep). Re-fired on
    * `session restart` (a respawn restores the context); NOT fired on

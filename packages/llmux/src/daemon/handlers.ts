@@ -236,9 +236,10 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
     const llmuxEnv: Record<string, string> = { LLMUX_SESSION: sessionName, LLMUX_AGENT: agent.key };
     if (orchAlias) llmuxEnv['LLMUX_ORCH_ALIAS'] = orchAlias;
     agent.preSpawn?.({ cwd });
+    const built = buildAgentCommand(agent, flagsOverride, effectiveResume);
     tmux.newSession({
       name: sessionName,
-      command: buildAgentCommand(agent, flagsOverride, effectiveResume),
+      command: built.command,
       cwd,
       env: mergeSpawnEnv(agent, envOverride, llmuxEnv),
     });
@@ -249,6 +250,7 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
       ...(flagsOverride !== undefined ? { flags: flagsOverride } : {}),
       ...(envOverride !== undefined ? { env: envOverride } : {}),
       ...(effectiveResume !== undefined ? { resumeFrom: effectiveResume } : {}),
+      ...(built.externalSessionId !== undefined ? { externalSessionId: built.externalSessionId } : {}),
       ...(composedInitPrompts !== undefined && composedInitPrompts.length > 0 ? { initPrompts: composedInitPrompts } : {}),
       ...(marker !== undefined ? { turnqMarker: marker } : {}),
       ...(orchAlias !== undefined ? { orchAlias } : {}),
@@ -799,13 +801,18 @@ async function respawnOne(target: string, opts: { skipInit?: boolean } = {}): Pr
   }
 
   agent.preSpawn?.({ cwd: session.cwd });
+  const built = buildAgentCommand(agent, session.flags, session.resumeFrom);
   tmux.newSession({
     name: session.name,
-    command: buildAgentCommand(agent, session.flags, session.resumeFrom),
+    command: built.command,
     cwd: session.cwd,
     env: mergeSpawnEnv(agent, session.env, { LLMUX_SESSION: session.name, LLMUX_AGENT: session.agent }),
   });
-  state.record({ ...session, createdAt: new Date().toISOString() });
+  state.record({
+    ...session,
+    ...(built.externalSessionId !== undefined ? { externalSessionId: built.externalSessionId } : {}),
+    createdAt: new Date().toISOString(),
+  });
   console.log(`respawned ${target} (agent: ${session.agent}, cwd: ${session.cwd})`);
 
   // Re-fire the persisted init prompts so the restart re-establishes the
