@@ -5,6 +5,38 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.39.1] — 2026-07-07
+
+### Added
+
+- **Circular +/- zoom buttons in the Terminal view's key-helper bar** —
+  a tap-driven alternative to pinch/trackpad-zoom, for anyone who'd
+  rather not do a two-finger gesture.
+
+### Fixed
+
+- **Pinch-to-zoom on the Terminal view could jitter without the font
+  size actually changing**, reported specifically on OpenCode's
+  session. If the starting font size or touch distance was ever
+  invalid, every subsequent frame computed `NaN` — and `NaN !== NaN` in
+  JS defeats the "already applied" guard forever, so every touchmove
+  frame re-ran the clear+redraw+resize sequence with an invalid size.
+  Both the gesture-start and per-frame paths now guard against this.
+- **Both pinch and trackpad-wheel zoom stayed visually garbled until a
+  full browser refresh.** Every intermediate frame of a zoom gesture
+  was resizing the backend pty, and the server force-redraws (Ctrl+L)
+  ~100ms after each resize to fix partial-redraw TUIs — so a
+  continuous gesture queued dozens of staggered redraws, most landing
+  after a later resize had already superseded them. The backend is now
+  only resized once a gesture actually settles (touchend for pinch; a
+  150ms pause for wheel, which has no natural end event) — live visual
+  feedback during the gesture is unchanged.
+- **The new zoom buttons were dismissing the Android on-screen
+  keyboard on tap** — they were missing the pointerdown-preventDefault
+  + post-click refocus pattern every other button in the key-helper bar
+  already uses to avoid stealing focus from xterm's hidden input (what
+  the on-screen keyboard is actually anchored to).
+
 ## [0.39.0] — 2026-07-07
 
 ### Added — Chat GUI: a mobile-friendly second view alongside Terminal
