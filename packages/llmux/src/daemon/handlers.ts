@@ -213,7 +213,7 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
   const created: string[] = [];
 
   for (const agent of agents) {
-    const sessionName = name ?? (prefix ? `${prefix}${agent.key}` : agent.key);
+    const sessionName = name ?? (prefix ? `${prefix}${agent.displayName}` : agent.displayName);
     if (state.get(sessionName) || tmux.hasSession(sessionName)) {
       throw new Error(`session "${sessionName}" already exists`);
     }
@@ -272,7 +272,12 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
 export function handleStatus(args: ParsedArgs): void {
   // Reconcile state against tmux: anything tracked but missing in tmux is marked exited.
   const tracked = state.list();
-  const live = new Set(tmux.listSessions().map((s) => s.name));
+  // Name matching alone isn't enough — a foreign tmux session (created by
+  // hand, colliding with a stale registry entry) must not be reported as
+  // "running". Filter to sessions llmux actually spawned.
+  const live = new Set(
+    tmux.listSessions().map((s) => s.name).filter((n) => tmux.isOwnedSession(n)),
+  );
 
   if (args.flags.json) {
     const out = tracked.map((s) => ({

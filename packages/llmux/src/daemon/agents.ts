@@ -177,6 +177,8 @@ function looksLikeRealUserMessage(text: string): boolean {
   if (text.startsWith('<local-command')) return false;
   if (text.startsWith('<command-name>')) return false;
   if (text.startsWith('<command-message>')) return false;
+  if (text.startsWith('<system-reminder>')) return false;
+  if (text.startsWith('<task-notification>')) return false;
   return true;
 }
 
