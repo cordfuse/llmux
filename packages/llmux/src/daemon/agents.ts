@@ -831,8 +831,22 @@ const codexHistory: AgentHistoryAdapter = {
   resumeFlag(id: string): string {
     return `resume ${id}`;
   },
-  currentTranscript(cwd: string): string | undefined {
+  currentTranscript(cwd: string, sessionId?: string): string | undefined {
+    // Codex has no --session-id-equivalent flag to pin a FRESH spawn's id
+    // ahead of time (unlike Claude Code's sessionIdFlag) — but a RESUMED
+    // session's id is already known deterministically (session.resumeFrom),
+    // and the server already threads it through as `sessionId` here. Same
+    // cross-session-shadowing risk as the Claude Code bug this mirrors:
+    // the cwd+mtime guess below has zero correlation to which tmux session
+    // it's actually for whenever two sessions share a cwd. Filenames carry
+    // the uuid as a suffix (rollout-<ts>-<uuid>.jsonl — same trick as
+    // lookupTitle), so a pinned id can be resolved exactly instead of
+    // guessed, whenever one is available.
     const files = walkCodexSessionFiles();
+    if (sessionId) {
+      const pinned = files.find((f) => f.endsWith(`-${sessionId}.jsonl`));
+      if (pinned) return pinned;
+    }
     let best: string | undefined;
     let bestMtime = -1;
     for (const fpath of files) {
