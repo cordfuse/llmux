@@ -393,7 +393,6 @@ async function pickerPage(): Promise<string> {
   #bulk-toolbar button.respawn{color:#7cc4ff;border-color:#2d4a66}
   #bulk-toolbar button.kill{color:#f85149;border-color:#4a2329}
   #bulk-toolbar button.broadcast{color:#a371f7;border-color:#3c2a59}
-  .actions button.send-btn{color:#a371f7;border-color:#3c2a59}
   #sessions-filter{display:flex;gap:6px;align-items:center;margin-bottom:10px}
   #sessions-filter input{flex:1;background:#0b0c10;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:7px 10px;font:13px ui-monospace,monospace;outline:none}
   #sessions-filter input:focus{border-color:#2d4a66}
@@ -922,9 +921,6 @@ ${renderHeader({
     const linkOpen  = s.status === 'running' ? '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '">' : '<a class="session-link" href="/session/' + encodeURIComponent(s.name) + '" title="session is not running — click to respawn">';
     const editBtn = '<button class="edit" data-action="edit" data-name="' + escapeHtml(s.name) + '" data-cwd="' + escapeHtml(s.cwd) + '" data-agent="' + escapeHtml(s.agent) + '" data-flags="' + escapeHtml(s.flags || '') + '" data-env="' + escapeHtml(JSON.stringify(s.env || {})) + '" data-init="' + escapeHtml(JSON.stringify(s.initPrompts || [])) + '" data-resume="' + escapeHtml(s.resumeFrom || '') + '" title="edit name, cwd, flags, env, init prompts, resume binding" aria-label="edit"><span class="icon">✎</span><span class="label">edit</span></button>';
     const killBtn = '<button class="kill" data-action="kill" data-name="' + escapeHtml(s.name) + '" title="kill this session and remove its state record" aria-label="kill"><span class="icon">✕</span><span class="label">kill</span></button>';
-    const sendBtn = s.status === 'running'
-      ? '<button class="send-btn" data-action="send" data-name="' + escapeHtml(s.name) + '" title="send a prompt to this session without attaching the terminal" aria-label="send"><span class="icon">⤴</span><span class="label">send</span></button>'
-      : '';
     const resumeBtn = (s.hasHistory && s.conversationCount > 0)
       ? '<button class="resume-btn" data-action="resume" data-name="' + escapeHtml(s.name) + '" title="resume a past conversation for this agent + cwd" aria-label="resume"><span class="icon">☰</span><span class="label">' + s.conversationCount + '</span></button>'
       : '';
@@ -950,7 +946,7 @@ ${renderHeader({
       '<td class="agent-col">' + escapeHtml(s.agent) + '</td>' +
       '<td class="state-col ' + cls + '">' + s.status + '</td>' +
       '<td class="cwd cwd-col" title="' + escapeHtml(s.cwd) + '"><code>' + escapeHtml(cwdShort) + '</code></td>' +
-      '<td class="actions">' + resumeBtn + sendBtn + editBtn + killBtn + '</td>' +
+      '<td class="actions">' + resumeBtn + editBtn + killBtn + '</td>' +
       '</tr>';
   }
 
@@ -1258,10 +1254,6 @@ ${renderHeader({
       openConvsModal(name);
       return;
     }
-    if (kind === 'send'){
-      openPromptModal({ kind: 'single', name: name });
-      return;
-    }
     if (kind === 'kill'){
       // Per-row Kill — v0.31.2 home for the verb after the bulk toolbar's
       // 6-button overflow drove it off-fold on portrait phones. The same
@@ -1331,19 +1323,14 @@ ${renderHeader({
 
   function openPromptModal(target){
     promptTarget = target;
-    if (target.kind === 'single'){
-      promptTitle.textContent = 'Send prompt';
-      promptSub.textContent = 'to ' + target.name;
+    promptTitle.textContent = 'Broadcast prompt';
+    const n = target.names.length;
+    const total = target.totalSelected || n;
+    const skipped = total - n;
+    if (skipped === 0){
+      promptSub.textContent = 'to ' + n + ' selected session' + (n === 1 ? '' : 's');
     } else {
-      promptTitle.textContent = 'Broadcast prompt';
-      const n = target.names.length;
-      const total = target.totalSelected || n;
-      const skipped = total - n;
-      if (skipped === 0){
-        promptSub.textContent = 'to ' + n + ' selected session' + (n === 1 ? '' : 's');
-      } else {
-        promptSub.textContent = 'to ' + n + ' of ' + total + ' selected · ' + skipped + ' skipped (not running)';
-      }
+      promptSub.textContent = 'to ' + n + ' of ' + total + ' selected · ' + skipped + ' skipped (not running)';
     }
     promptText.value = '';
     promptEnter.checked = true;
@@ -1386,19 +1373,13 @@ ${renderHeader({
     promptSend.disabled = true;
     const enter = promptEnter.checked;
     try {
-      if (promptTarget.kind === 'single'){
-        const r = await sendPromptToSession(promptTarget.name, prompt, enter);
-        if (r.ok) showToast('sent → ' + r.name);
-        else showToast('send failed: ' + (r.error || 'unknown'), true);
-      } else {
-        const results = await Promise.all(promptTarget.names.map(function(n){
-          return sendPromptToSession(n, prompt, enter);
-        }));
-        const okCount = results.filter(function(r){ return r.ok; }).length;
-        const failCount = results.length - okCount;
-        if (failCount === 0) showToast('sent to ' + okCount + ' session' + (okCount === 1 ? '' : 's'));
-        else showToast(okCount + ' ok, ' + failCount + ' failed', failCount > 0);
-      }
+      const results = await Promise.all(promptTarget.names.map(function(n){
+        return sendPromptToSession(n, prompt, enter);
+      }));
+      const okCount = results.filter(function(r){ return r.ok; }).length;
+      const failCount = results.length - okCount;
+      if (failCount === 0) showToast('sent to ' + okCount + ' session' + (okCount === 1 ? '' : 's'));
+      else showToast(okCount + ' ok, ' + failCount + ' failed', failCount > 0);
       closePromptModal();
     } finally {
       promptSend.disabled = false;
@@ -1490,7 +1471,7 @@ ${renderHeader({
       showToast('no running sessions selected', true);
       return;
     }
-    openPromptModal({ kind: 'bulk', names: runningNames, totalSelected: selected.size });
+    openPromptModal({ names: runningNames, totalSelected: selected.size });
   });
   // Per-session Kill lives inside the edit form (formMode.edit). The bulk
   // Kill button was removed in v0.31.1 — at 6 toolbar buttons it was hanging
