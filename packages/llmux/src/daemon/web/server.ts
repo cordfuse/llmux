@@ -5509,6 +5509,9 @@ function attachSession(ws: WebSocket, sessionName: string): void {
     ws.close(4040, `session "${sessionName}" is not an llmux session (foreign tmux session)`);
     return;
   }
+  // Needed below to skip the post-resize force-redraw for Codex specifically
+  // — see that comment for why.
+  const attachedAgentKey = state.get(sessionName)?.agent;
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
@@ -5567,14 +5570,24 @@ function attachSession(ws: WebSocket, sessionName: string): void {
           term.resize(parsed.cols, parsed.rows);
           // Force the inner TUI to redraw after SIGWINCH propagates through
           // tmux. Partial-redraw TUIs (most chat-prompt agents — claude,
-          // codex, gemini, agy, qwen, opencode — and shells at a prompt)
-          // only re-emit cells they think changed, so post-resize rows sit
-          // next to pre-resize stale rows until the next render tick. C-l
-          // is the unix convention for "redraw screen" and every supported
-          // agent honors it. ~100ms delay gives tmux time to deliver
-          // SIGWINCH first so the TUI redraws into the new geometry.
-          const t = term;
-          setTimeout(() => { try { t.write('\x0c'); } catch { /* pty gone */ } }, 100);
+          // gemini, agy, qwen, opencode — and shells at a prompt) only
+          // re-emit cells they think changed, so post-resize rows sit next
+          // to pre-resize stale rows until the next render tick. C-l is the
+          // unix convention for "redraw screen" and every supported agent
+          // honors it EXCEPT Codex — confirmed live and reproduced: Codex's
+          // C-l clears the screen and repaints only the current idle
+          // composer view, wiping the ENTIRE visible conversation
+          // scrollback (data is untouched, this is purely a Terminal-view
+          // display bug, but a severe one) rather than doing a harmless
+          // repaint like every other agent. Separately confirmed Codex
+          // doesn't need this at all — it redraws its own scrollback
+          // correctly on a bare resize with no nudge. ~100ms delay gives
+          // tmux time to deliver SIGWINCH first so the TUI redraws into the
+          // new geometry.
+          if (attachedAgentKey !== 'codex') {
+            const t = term;
+            setTimeout(() => { try { t.write('\x0c'); } catch { /* pty gone */ } }, 100);
+          }
           return;
         }
       } catch {
