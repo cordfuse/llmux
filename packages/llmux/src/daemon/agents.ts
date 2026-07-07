@@ -844,6 +844,91 @@ function readAgyHistory(): AgyHistoryLine[] {
   return out;
 }
 
+/**
+ * A live agy conversation additionally logs every completed step (one JSON
+ * object per line) to `~/.gemini/antigravity-cli/brain/<conversationId>/
+ * .system_generated/logs/transcript.jsonl` — unlike history.jsonl (prompts
+ * only), this file carries the full back-and-forth: user turns, assistant
+ * replies (+ dropped `thinking`), and tool operations. Confirmed against
+ * the CLI's own internal SQLite `conversations/<id>.db` step_payload blobs,
+ * which reference this exact path as their "full untruncated conversation"
+ * log.
+ *
+ * agy bundles a tool call and its result into ONE completed-step event
+ * (unlike Claude/Codex's separate call/output pair) — there is no
+ * intermediate "pending call" line to correlate against. So each such event
+ * renders as a synthetic tool_use (named after the event's `type`) paired
+ * with its tool_result in the same turn. System bookkeeping event types
+ * (CONVERSATION_HISTORY / EPHEMERAL_MESSAGE / CHECKPOINT / SYSTEM_MESSAGE)
+ * are dropped — same convention as Claude's meta/sidechain filtering.
+ */
+interface AgyTranscriptEvent {
+  step_index?: number;
+  source?: string;
+  type?: string;
+  status?: string;
+  created_at?: string;
+  content?: string;
+  error?: string;
+  thinking?: string;
+}
+
+const AGY_SKIP_TRANSCRIPT_TYPES = new Set(['CONVERSATION_HISTORY', 'EPHEMERAL_MESSAGE', 'CHECKPOINT', 'SYSTEM_MESSAGE']);
+// USER_INPUT content wraps the real prompt in <USER_REQUEST> alongside
+// <ADDITIONAL_METADATA>/<USER_SETTINGS_CHANGE> noise appended after it.
+const AGY_USER_REQUEST_RE = /<USER_REQUEST>\n?([\s\S]*?)\n?<\/USER_REQUEST>/;
+
+function agyLineId(line: string): string {
+  return createHash('sha1').update(line).digest('hex').slice(0, 16);
+}
+
+function agyTranscriptPath(conversationId: string): string {
+  return join(homedir(), '.gemini', 'antigravity-cli', 'brain', conversationId, '.system_generated', 'logs', 'transcript.jsonl');
+}
+
+function normalizeAgyTranscriptEvent(evt: AgyTranscriptEvent, lineId: string): TranscriptTurn[] {
+  const type = evt.type;
+  if (!type || AGY_SKIP_TRANSCRIPT_TYPES.has(type)) return [];
+  const ts = evt.created_at;
+
+  if (type === 'USER_INPUT') {
+    const raw = evt.content ?? '';
+    const m = raw.match(AGY_USER_REQUEST_RE);
+    const text = (m ? m[1]! : raw).trim();
+    if (!text) return [];
+    return [{ id: lineId, role: 'user', ts, parts: [{ kind: 'text', text }] }];
+  }
+
+  if (type === 'PLANNER_RESPONSE') {
+    // `thinking` intentionally dropped — same convention as claudeHistory's
+    // thinking/redacted_thinking and codexHistory's reasoning blocks.
+    const text = (evt.content ?? '').trim();
+    if (!text) return [];
+    return [{ id: lineId, role: 'assistant', ts, parts: [{ kind: 'text', text }] }];
+  }
+
+  if (type === 'ERROR_MESSAGE') {
+    const text = evt.content ?? evt.error ?? '';
+    if (!text) return [];
+    return [{ id: lineId, role: 'tool', ts, parts: [{ kind: 'tool_result', forId: lineId, text, isError: true }] }];
+  }
+
+  // Every other type is a bundled tool call + result (RUN_COMMAND, VIEW_FILE,
+  // GREP_SEARCH, LIST_DIRECTORY, ASK_QUESTION, CODE_ACTION, GENERIC, and any
+  // tool type agy adds later — deliberately not an exhaustive allowlist).
+  const text = evt.content ?? '';
+  if (!text) return [];
+  return [{
+    id: lineId,
+    role: 'tool',
+    ts,
+    parts: [
+      { kind: 'tool_use', id: `${lineId}:call`, name: type.toLowerCase(), input: undefined },
+      { kind: 'tool_result', forId: `${lineId}:call`, text },
+    ],
+  }];
+}
+
 const agyHistory: AgentHistoryAdapter = {
   listConversations(cwd: string): Conversation[] {
     const lines = readAgyHistory();
@@ -895,6 +980,64 @@ const agyHistory: AgentHistoryAdapter = {
   },
   resumeFlag(id: string): string {
     return `--conversation ${id}`;
+  },
+  currentTranscript(cwd: string): string | undefined {
+    // history.jsonl maps workspace -> conversationId; the transcript file
+    // itself carries no workspace field, so cwd resolution has to go
+    // through this join. Pick the candidate transcript with the newest
+    // mtime (the actively-written one), same selection rule as codex.
+    const lines = readAgyHistory();
+    const ids = new Set<string>();
+    for (const line of lines) {
+      if (line.workspace === cwd && line.conversationId) ids.add(line.conversationId);
+    }
+    let best: string | undefined;
+    let bestMtime = -1;
+    for (const id of ids) {
+      const p = agyTranscriptPath(id);
+      try {
+        const m = statSync(p).mtimeMs;
+        if (m > bestMtime) {
+          bestMtime = m;
+          best = p;
+        }
+      } catch {
+        // no transcript file for this conversation (yet, or ever)
+      }
+    }
+    return best;
+  },
+  readTranscript(path: string): TranscriptTurn[] {
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch {
+      return [];
+    }
+    const turns: TranscriptTurn[] = [];
+    for (const rawLine of raw.split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      let evt: AgyTranscriptEvent;
+      try {
+        evt = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      for (const t of normalizeAgyTranscriptEvent(evt, agyLineId(line))) turns.push(t);
+    }
+    return turns;
+  },
+  parseTranscriptLine(line: string): TranscriptTurn[] {
+    const trimmed = line.trim();
+    if (!trimmed) return [];
+    let evt: AgyTranscriptEvent;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      return [];
+    }
+    return normalizeAgyTranscriptEvent(evt, agyLineId(trimmed));
   },
 };
 
