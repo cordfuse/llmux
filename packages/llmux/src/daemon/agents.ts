@@ -1124,6 +1124,112 @@ function parseGeminiSessionMeta(fpath: string): GeminiSessionMeta | undefined {
   }
 }
 
+function geminiLineId(line: string): string {
+  return createHash('sha1').update(line).digest('hex').slice(0, 16);
+}
+
+interface GeminiChatEvent {
+  id?: string;
+  timestamp?: string;
+  type?: string;
+  content?: unknown;
+  toolCalls?: Array<{ id?: string; name?: string; args?: unknown; result?: unknown }>;
+}
+
+/** Extract text from either a plain string (gemini/error/info events) or an array of {text} parts (user events). */
+function extractGeminiText(content: unknown): string | undefined {
+  if (typeof content === 'string') return content.length ? content : undefined;
+  if (Array.isArray(content)) {
+    const texts: string[] = [];
+    for (const part of content) {
+      if (typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string') {
+        texts.push((part as { text: string }).text);
+      }
+    }
+    return texts.length ? texts.join('\n\n') : undefined;
+  }
+  return undefined;
+}
+
+function geminiContentHasFunctionResponse(content: unknown): boolean {
+  return Array.isArray(content) && content.some((p) => typeof p === 'object' && p !== null && 'functionResponse' in (p as object));
+}
+
+/**
+ * A toolCall's `result` is Gemini's own functionResponse envelope
+ * (`[{ functionResponse: { response: { output } } }]`), not a plain string —
+ * unwrap it the same way extractCodexFunctionOutputText unwraps codex's
+ * MCP-style output arrays.
+ */
+function geminiToolResultText(result: unknown): string {
+  if (Array.isArray(result)) {
+    const texts: string[] = [];
+    for (const part of result) {
+      const fr = (typeof part === 'object' && part !== null ? (part as { functionResponse?: { response?: unknown } }).functionResponse : undefined);
+      const output = fr && typeof fr.response === 'object' && fr.response !== null ? (fr.response as { output?: unknown }).output : undefined;
+      if (typeof output === 'string') texts.push(output);
+      else texts.push(typeof part === 'string' ? part : JSON.stringify(part));
+    }
+    return texts.join('\n');
+  }
+  if (result == null) return '';
+  return typeof result === 'string' ? result : JSON.stringify(result);
+}
+
+/**
+ * Map one line of a gemini/qwen session jsonl to 0..n normalized chat turns.
+ * `$set`-only lines (mid-stream metadata patches) and the leading
+ * session_meta line carry no `type` and are dropped. `info` events are UI
+ * chrome (dropped); `error` events are real, user-visible failures and
+ * render as an error card. A `user` event whose content is ONLY
+ * functionResponse parts is dropped — that's the same tool result already
+ * bundled into the originating `gemini` event's own `toolCalls[].result`,
+ * so rendering both would double the tool card. `thoughts` (gemini's
+ * thinking) are intentionally dropped, same convention as Claude/Codex.
+ */
+function normalizeGeminiChatEvent(evt: GeminiChatEvent, lineId: string): TranscriptTurn[] {
+  const type = evt.type;
+  if (!type) return [];
+  const ts = evt.timestamp;
+
+  if (type === 'user') {
+    if (geminiContentHasFunctionResponse(evt.content)) return [];
+    const text = extractGeminiText(evt.content)?.trim();
+    if (!text) return [];
+    return [{ id: lineId, role: 'user', ts, parts: [{ kind: 'text', text }] }];
+  }
+
+  if (type === 'gemini') {
+    const turns: TranscriptTurn[] = [];
+    const text = extractGeminiText(evt.content)?.trim();
+    if (text) turns.push({ id: lineId, role: 'assistant', ts, parts: [{ kind: 'text', text }] });
+    if (Array.isArray(evt.toolCalls)) {
+      for (const call of evt.toolCalls) {
+        if (!call || typeof call.name !== 'string') continue;
+        const callId = call.id ?? `${lineId}:${call.name}`;
+        turns.push({
+          id: `${lineId}:${callId}`,
+          role: 'tool',
+          ts,
+          parts: [
+            { kind: 'tool_use', id: callId, name: call.name, input: call.args },
+            { kind: 'tool_result', forId: callId, text: geminiToolResultText(call.result) },
+          ],
+        });
+      }
+    }
+    return turns;
+  }
+
+  if (type === 'error') {
+    const text = typeof evt.content === 'string' ? evt.content : '';
+    if (!text) return [];
+    return [{ id: lineId, role: 'tool', ts, parts: [{ kind: 'tool_result', forId: lineId, text, isError: true }] }];
+  }
+
+  return []; // 'info' and any future type — UI chrome, not conversation.
+}
+
 function makeGeminiLikeAdapter(opts: {
   tmpRoot: () => string;
   resumeFlag: (id: string, fpath: string) => string;
@@ -1253,6 +1359,62 @@ function makeGeminiLikeAdapter(opts: {
       // (file deleted between list and resume). Better to attempt than
       // silently fail.
       return opts.resumeFlag(id, '');
+    },
+    currentTranscript(cwd: string): string | undefined {
+      // Unlike agy, projectHash is embedded directly in each file's own
+      // first line (sha256 of cwd, written once at session creation) —
+      // no lossy external cache to join through, so newest-mtime-among-
+      // cwd-matched-files is reliable here (same pattern as codex).
+      const cwdHash = sha256OfPath(cwd);
+      const files = walkSessionJsonlFiles(opts.tmpRoot());
+      let best: string | undefined;
+      let bestMtime = -1;
+      for (const fpath of files) {
+        const meta = parseGeminiSessionMeta(fpath);
+        if (meta?.projectHash !== cwdHash) continue;
+        try {
+          const m = statSync(fpath).mtimeMs;
+          if (m > bestMtime) {
+            bestMtime = m;
+            best = fpath;
+          }
+        } catch {
+          // skip unreadable
+        }
+      }
+      return best;
+    },
+    readTranscript(path: string): TranscriptTurn[] {
+      let raw: string;
+      try {
+        raw = readFileSync(path, 'utf8');
+      } catch {
+        return [];
+      }
+      const turns: TranscriptTurn[] = [];
+      for (const rawLine of raw.split('\n')) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        let evt: GeminiChatEvent;
+        try {
+          evt = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        for (const t of normalizeGeminiChatEvent(evt, geminiLineId(line))) turns.push(t);
+      }
+      return turns;
+    },
+    parseTranscriptLine(line: string): TranscriptTurn[] {
+      const trimmed = line.trim();
+      if (!trimmed) return [];
+      let evt: GeminiChatEvent;
+      try {
+        evt = JSON.parse(trimmed);
+      } catch {
+        return [];
+      }
+      return normalizeGeminiChatEvent(evt, geminiLineId(trimmed));
     },
   };
 }
