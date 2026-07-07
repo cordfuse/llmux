@@ -3123,6 +3123,7 @@ function sessionPage(name: string, agentKey: string): string {
   #bar button[aria-pressed="true"]{background:#1e3a52;border-color:#2d5a85;color:#7cc4ff}
   #bar button[aria-pressed="locked"]{background:#2d5a85;border-color:#4a7fae;color:#fff}
   #bar button.fail{background:#4a2329;border-color:#f85149;color:#f85149}
+  #bar button.zoom-btn{min-width:0;width:auto;aspect-ratio:1;padding:0;border-radius:50%;font-size:16px;line-height:1;display:inline-flex;align-items:center;justify-content:center}
   #all-keys{position:fixed;bottom:var(--bar-h);left:0;right:0;background:#0e1116;border-top:1px solid #1f2329;display:none;padding:8px;z-index:19;max-height:40vh;overflow-y:auto;box-sizing:border-box}
   #all-keys.open{display:block}
   #all-keys h4{margin:14px 4px 6px;font:500 10px/1 ui-monospace,monospace;color:#7a7f87;text-transform:uppercase;letter-spacing:.06em}
@@ -3183,6 +3184,8 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
     <button data-key="tab" title="Tab">Tab</button>
     <button data-mod="ctrl"  title="Ctrl (tap then key, double-tap to lock)">Ctrl</button>
     <button data-mod="alt"   title="Alt (tap then key, double-tap to lock)">Alt</button>
+    <button id="zoom-out" class="zoom-btn" title="Zoom out">−</button>
+    <button id="zoom-in"  class="zoom-btn" title="Zoom in">+</button>
     <button id="more" title="All keys">⋯</button>
   </div>
 </div>
@@ -3606,6 +3609,35 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
   termEl.addEventListener('touchend',    function(e){ if (e.touches.length < 2) _pinchEnd(); }, { passive: true });
   termEl.addEventListener('touchcancel', _pinchEnd, { passive: true });
 
+  // Shared by the wheel handler and the +/- toolbar buttons below — both
+  // are "no natural end event" zoom inputs (a continuous trackpad pinch is
+  // just a stream of wheel events; a held-down button could repeat-fire),
+  // unlike touch which has touchend. "Gesture ended" is inferred by
+  // debounce instead: no further step for 150ms before the backend pty is
+  // resized (and its force-redraw triggered) and the size persisted.
+  let zoomSettleTimer = null;
+  const ZOOM_SETTLE_DEBOUNCE_MS = 150;
+  function scheduleZoomSettle(){
+    if (zoomSettleTimer) clearTimeout(zoomSettleTimer);
+    zoomSettleTimer = setTimeout(function(){
+      zoomSettleTimer = null;
+      try { localStorage.setItem(FONT_KEY, String(term.options.fontSize)); } catch(_){}
+      safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
+    }, ZOOM_SETTLE_DEBOUNCE_MS);
+  }
+  // Client-side-only application of a new font size (clamp + fit + clear +
+  // refresh) — mirrors what the pinch handler above does per-frame, minus
+  // the backend resize (deferred to scheduleZoomSettle).
+  function applyFontSize(target){
+    const clamped = Math.max(FONT_MIN, Math.min(FONT_MAX, target));
+    if (clamped === term.options.fontSize) return;
+    term.options.fontSize = clamped;
+    try { fit.fit(); } catch(_){}
+    try { term.write('\x1b[3J'); } catch(_){}
+    try { term.refresh(0, term.rows - 1); } catch(_){}
+    scheduleZoomSettle();
+  }
+
   // Desktop equivalent: trackpad pinch emits a wheel event with
   // ctrlKey: true (browsers synthesize the Ctrl flag — user isn't
   // actually pressing Ctrl). Mouse-wheel + real Ctrl also lands here,
@@ -3613,24 +3645,10 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
   // the browser from page-zooming on top of us.
   let wheelStepPending = false;
   let wheelDeltaAccum = 0;
-  let wheelEndTimer = null;
-  // Same reasoning as the touch pinch handler above: resizing the backend
-  // pty on every single wheel step (a continuous trackpad pinch fires many)
-  // used to queue a staggered force-redraw per step, most landing after a
-  // later step had already superseded them. Wheel has no touchend to hook,
-  // so "gesture ended" is inferred by debounce — no new wheel step for
-  // 150ms.
-  const WHEEL_END_DEBOUNCE_MS = 150;
   termEl.addEventListener('wheel', function(e){
     if (!e.ctrlKey) return;
     e.preventDefault();
     wheelDeltaAccum += e.deltaY;
-    if (wheelEndTimer) clearTimeout(wheelEndTimer);
-    wheelEndTimer = setTimeout(function(){
-      wheelEndTimer = null;
-      try { localStorage.setItem(FONT_KEY, String(term.options.fontSize)); } catch(_){}
-      safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
-    }, WHEEL_END_DEBOUNCE_MS);
     if (wheelStepPending) return;
     wheelStepPending = true;
     requestAnimationFrame(function(){
@@ -3640,15 +3658,17 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
       if (delta === 0) return;
       // deltaY > 0 = scroll down = zoom out; deltaY < 0 = scroll up = zoom in.
       const step = delta > 0 ? -1 : 1;
-      const current = term.options.fontSize;
-      const target = Math.max(FONT_MIN, Math.min(FONT_MAX, current + step));
-      if (target === current) return;
-      term.options.fontSize = target;
-      try { fit.fit(); } catch(_){}
-      try { term.write('\x1b[3J'); } catch(_){}
-      try { term.refresh(0, term.rows - 1); } catch(_){}
+      applyFontSize(term.options.fontSize + step);
     });
   }, { passive: false });
+
+  // ---- Explicit zoom buttons in the key-helper bar (below) — same
+  // client-side step + debounced-settle path as wheel, for anyone who'd
+  // rather tap than pinch/scroll. ----
+  const zoomOutBtn = document.getElementById('zoom-out');
+  const zoomInBtn = document.getElementById('zoom-in');
+  if (zoomOutBtn) zoomOutBtn.addEventListener('click', function(){ applyFontSize(term.options.fontSize - 1); });
+  if (zoomInBtn) zoomInBtn.addEventListener('click', function(){ applyFontSize(term.options.fontSize + 1); });
 
   // ---- Wire toolbar ----
   document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
