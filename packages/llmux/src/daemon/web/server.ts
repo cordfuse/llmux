@@ -3664,11 +3664,22 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
 
   // ---- Explicit zoom buttons in the key-helper bar (below) — same
   // client-side step + debounced-settle path as wheel, for anyone who'd
-  // rather tap than pinch/scroll. ----
-  const zoomOutBtn = document.getElementById('zoom-out');
-  const zoomInBtn = document.getElementById('zoom-in');
-  if (zoomOutBtn) zoomOutBtn.addEventListener('click', function(){ applyFontSize(term.options.fontSize - 1); });
-  if (zoomInBtn) zoomInBtn.addEventListener('click', function(){ applyFontSize(term.options.fontSize + 1); });
+  // rather tap than pinch/scroll. Same pointerdown-preventDefault +
+  // post-click term.focus() pattern as every other button in this bar
+  // (data-key/data-char/data-mod above) — without it, tapping a button
+  // steals focus from xterm's hidden input, which is what the Android
+  // on-screen keyboard is actually anchored to, so it dismisses.
+  function wireZoomBtn(btn, step){
+    if (!btn) return;
+    btn.addEventListener('pointerdown', function(e){ e.preventDefault(); });
+    btn.addEventListener('click', function(e){
+      e.preventDefault();
+      applyFontSize(term.options.fontSize + step);
+      term.focus();
+    });
+  }
+  wireZoomBtn(document.getElementById('zoom-out'), -1);
+  wireZoomBtn(document.getElementById('zoom-in'), 1);
 
   // ---- Wire toolbar ----
   document.querySelectorAll('#topbar button, #bar button, #all-keys button').forEach(function(b){ b.tabIndex = -1; });
