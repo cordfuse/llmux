@@ -2625,6 +2625,8 @@ function chatPage(name: string, agentKey: string): string {
   .prompt-option.answering{border-color:#3fb950}
   .prompt-option-label{font-size:14px;color:#e6e8eb;font-weight:600}
   .prompt-option-desc{font-size:12px;color:#8a919b;margin-top:2px}
+  .prompt-card.resolved{opacity:.85}
+  .prompt-resolved{font-size:13px;color:#7ee787;font-weight:600}
   #bar{position:fixed;bottom:0;left:0;right:0;background:transparent;padding:8px 12px 14px;z-index:20}
   /* #bar itself stays transparent so the composer pill can float free, but
      bubbles scrolling up need somewhere to go before they'd otherwise pass
@@ -2882,18 +2884,37 @@ ${sessionTopbar(name, agentLabel, 'chat')}
   // pane, so this arrives via its own SSE event, not addTurn(). ---
   var pendingPromptEl = null;
   var promptBusy = false;
+  var answeredLabel = null; // set right before sending keys; consumed by the prompt-clear handler to render a resolved state instead of just vanishing
   function sendKeyTo(key){
     return fetch('/api/sessions/'+encodeURIComponent(NAME)+'/key',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key:key})});
   }
+  // Unconditional removal — used when a prompt disappears WITHOUT us having
+  // tapped anything (answered via Terminal instead, cancelled, or simply
+  // changed) — there's no known outcome to show, so nothing is left behind.
   function clearPendingPrompt(){
     if (pendingPromptEl && pendingPromptEl.parentNode) pendingPromptEl.parentNode.removeChild(pendingPromptEl);
     pendingPromptEl = null;
+  }
+  // Turns the live card into a permanent resolved record instead of
+  // removing it — same treatment a real transcript turn gets. Only called
+  // when the resolution followed OUR OWN tap (answeredLabel set); we have
+  // no way to know the outcome otherwise.
+  function resolvePendingPrompt(label){
+    if (pendingPromptEl){
+      var list = pendingPromptEl.querySelector('.prompt-options');
+      if (list) list.remove();
+      var done = document.createElement('div'); done.className='prompt-resolved'; done.textContent='✓ '+label;
+      var card = pendingPromptEl.querySelector('.prompt-card');
+      if (card){ card.classList.add('resolved'); card.appendChild(done); }
+    }
+    pendingPromptEl = null; // detach — a later prompt event must not try to remove/replace this record
   }
   async function answerPrompt(p, targetIdx, btn, allButtons){
     if (promptBusy) return;
     promptBusy = true;
     allButtons.forEach(function(b){ b.disabled = true; });
     btn.classList.add('answering');
+    answeredLabel = (p.options[targetIdx] || {}).label || null;
     try {
       var cur = (typeof p.selectedIndex === 'number') ? p.selectedIndex : 0;
       var delta = targetIdx - cur;
@@ -2903,6 +2924,7 @@ ${sessionTopbar(name, agentLabel, 'chat')}
     } catch(e) {
       allButtons.forEach(function(b){ b.disabled = false; });
       btn.classList.remove('answering');
+      answeredLabel = null;
     }
     promptBusy = false;
     // Left in place until the daemon confirms (via prompt-clear) the pane no
@@ -2910,6 +2932,14 @@ ${sessionTopbar(name, agentLabel, 'chat')}
   }
   function renderPendingPrompt(p){
     clearPendingPrompt();
+    // A pending prompt means the agent is done thinking and parked waiting
+    // on the operator — not "still working". Without this, the Stop
+    // button/typing-dots state (armed by send()) never clears on its own:
+    // bumpInference() only arms the idle timer once a REAL transcript turn
+    // arrives, and a prompt never produces one (confirmed: it's detected
+    // off the raw pane, bypassing addTurn entirely) — so it would otherwise
+    // spin forever until a page reload.
+    endInference();
     var wrap=document.createElement('div'); wrap.className='turn prompt-pending';
     var card=document.createElement('div'); card.className='prompt-card';
     if (p.header){ var h=document.createElement('div'); h.className='prompt-header'; h.textContent=p.header; card.appendChild(h); }
@@ -2940,7 +2970,10 @@ ${sessionTopbar(name, agentLabel, 'chat')}
     es.addEventListener('reset', function(){ clearLog(); });
     es.addEventListener('unsupported', function(){ dot.dataset.state='error'; showNote('This agent has no transcript adapter yet — chat view unavailable. Use the Terminal view.'); });
     es.addEventListener('prompt', function(ev){ try{ renderPendingPrompt(JSON.parse(ev.data)); }catch(e){} });
-    es.addEventListener('prompt-clear', function(){ clearPendingPrompt(); });
+    es.addEventListener('prompt-clear', function(){
+      if (answeredLabel){ resolvePendingPrompt(answeredLabel); answeredLabel = null; }
+      else clearPendingPrompt();
+    });
   }
 
   var barEl = document.getElementById('bar');
