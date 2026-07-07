@@ -3547,11 +3547,13 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
   }
   termEl.addEventListener('touchstart', function(e){
     if (e.touches.length === 2){
-      pinchState = {
-        startDist: _touchDist(e.touches[0], e.touches[1]),
-        startSize: term.options.fontSize,
-        lastApplied: term.options.fontSize,
-      };
+      const dist = _touchDist(e.touches[0], e.touches[1]);
+      // Both must be real, non-zero numbers — a stale/uninitialized
+      // fontSize or two touches reported at the same coordinate would
+      // otherwise poison every ratio computed for this whole gesture.
+      const size = Number.isFinite(term.options.fontSize) && term.options.fontSize > 0 ? term.options.fontSize : 15;
+      if (!Number.isFinite(dist) || dist <= 0) return;
+      pinchState = { startDist: dist, startSize: size, lastApplied: size };
       e.preventDefault();
     }
   }, { passive: false });
@@ -3564,6 +3566,12 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
     const ratio = d / pinchState.startDist;
     const target = Math.round(pinchState.startSize * ratio);
     const clamped = Math.max(FONT_MIN, Math.min(FONT_MAX, target));
+    // NaN can reach here if startSize/startDist was ever invalid (e.g. a
+    // stale/uninitialized fontSize at gesture start) — without this guard,
+    // NaN !== NaN in JS defeats the "already applied" check below forever,
+    // so every frame re-runs the clear+redraw+resize below with an invalid
+    // size: visible jitter with the actual rendered size never changing.
+    if (!Number.isFinite(clamped)) { pinchRafPending = false; return; }
     requestAnimationFrame(function(){
       pinchRafPending = false;
       if (!pinchState) return;
