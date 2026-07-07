@@ -9,12 +9,17 @@
  *
  * Deliberately NOT a full TUI parser — a small set of narrow, content-
  * signature-based shape detectors, each scoped to a real shape verified
- * against a live capture. Two verified so far:
- *   - Gemini CLI's `ask_user` tool (Ink-rendered, numbered, boxed, with
- *     per-option description lines).
+ * against a live capture. Verified so far:
+ *   - Gemini CLI's `ask_user` tool AND its own `/model` picker (Ink-
+ *     rendered, numbered, boxed, ●-marker, per-option description lines —
+ *     same shape, different footer text).
  *   - Antigravity CLI (`agy`)'s `/model` switcher (plain marker list, no
  *     numbering, no box, no descriptions — genuinely different chrome even
  *     though both are Google/Gemini-family CLIs).
+ *   - Codex CLI's AND Claude Code's own `/model` pickers (no box border,
+ *     digit+dot options with the description mashed onto the same line
+ *     after a 2+-space gap, descriptions wrapping onto further indented
+ *     lines — same shape, different marker char and footer text).
  * Extending to another CLI's own option-list chrome needs its own real
  * capture to verify against; an unrecognized shape returns undefined rather
  * than guessing — no raw-text fallback for those yet (see the shipping
@@ -43,7 +48,7 @@ export interface PendingPrompt {
  */
 export function detectPendingPrompt(paneText: string): PendingPrompt | undefined {
   const lines = paneText.split('\n');
-  return detectNumberedList(lines, paneText) ?? detectPlainMarkerList(lines, paneText);
+  return detectNumberedList(lines, paneText) ?? detectPlainMarkerList(lines, paneText) ?? detectInlineOptionList(lines, paneText);
 }
 
 // ---------------------------------------------------------------------------
@@ -219,4 +224,97 @@ function detectPlainMarkerList(lines: string[], paneText: string): PendingPrompt
   if (!question) return undefined;
 
   return { question, options, selectedIndex, raw: paneText };
+}
+
+// ---------------------------------------------------------------------------
+// Shape 3: Codex CLI's and Claude Code's own `/model` pickers — no box
+// border, digit+dot options with the description mashed onto the same line
+// (separated by a 2+-space gap) instead of a separate line, descriptions
+// wrapping onto further plain-indented lines. Genuinely the same shape
+// across both CLIs — different marker char (› vs ❯) and footer wording only.
+// ---------------------------------------------------------------------------
+
+// Verified against real captures of both. Kept as a list, same reasoning as
+// the other shapes' footer patterns — one entry per real capture that
+// justified it, not a looser catch-all.
+const INLINE_FOOTER_PATTERNS: RegExp[] = [/press enter to confirm/i, /enter to set as default/i];
+
+// No box border here (unlike Shape 1), and the label/description share one
+// line separated by a 2+-space gap rather than living on separate lines —
+// group 3 is non-greedy so the optional group 4 gets everything after the
+// FIRST such gap.
+const INLINE_OPTION_RE = /^\s*([❯›])?\s*(\d+)\.\s+(\S.*?)(?:\s{2,}(\S.*?))?\s*$/;
+// A wrapped continuation of the PREVIOUS option's description: indented
+// text with no digit marker. Same ambiguity as Shape 1's description lines
+// (can't be told apart from unrelated indented text by shape alone) — the
+// forward-scan-stop-at-first-blank-after-an-option rule below is what
+// actually excludes non-option content (verified necessary: Claude's own
+// /model has a non-option settings row — "● High effort... ←/→ to adjust"
+// — sitting between the options and the footer, structurally identical to
+// a continuation line otherwise).
+const INLINE_CONTINUATION_RE = /^\s{2,}(\S.*?)\s*$/;
+
+function detectInlineOptionList(lines: string[], paneText: string): PendingPrompt | undefined {
+  let footerIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (INLINE_FOOTER_PATTERNS.some((re) => re.test(lines[i]!))) {
+      footerIdx = i;
+      break;
+    }
+  }
+  if (footerIdx < 0) return undefined;
+
+  // No box border to anchor a top boundary on (unlike Shape 1) — instead,
+  // search a generous bounded window above the footer for the FIRST option
+  // line, which marks where the title/subtitle preamble ends.
+  const windowStart = Math.max(0, footerIdx - 30);
+  let firstOptIdx = -1;
+  for (let i = windowStart; i < footerIdx; i++) {
+    if (INLINE_OPTION_RE.test(lines[i]!)) { firstOptIdx = i; break; }
+  }
+  if (firstOptIdx < 0) return undefined;
+
+  // Title + subtitle: scan backward from the first option, skipping the
+  // blank separator, then collect the contiguous non-blank run above that —
+  // both real captures have a short title immediately followed by a wrapped
+  // instructional subtitle with no blank line between them, so there's no
+  // reliable header/question split here (contrast Shape 1, which uses a
+  // blank line as that signal). A horizontal-rule line (verified: Claude's
+  // own /model opens with one, marking where its output starts) counts as
+  // a separator too, same as blank — otherwise it gets swept into the
+  // preamble along with whatever unrelated conversation sits above it.
+  const isBoundary = (l: string) => l.trim() === '' || /^─+$/.test(l.trim());
+  let i = firstOptIdx - 1;
+  while (i >= windowStart && isBoundary(lines[i]!)) i--;
+  const preambleEnd = i;
+  while (i >= windowStart && !isBoundary(lines[i]!)) i--;
+  const preambleStart = i + 1;
+  if (preambleStart > preambleEnd) return undefined;
+  const preamble = lines
+    .slice(preambleStart, preambleEnd + 1)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .join(' ');
+  if (!preamble) return undefined;
+
+  const options: PendingPromptOption[] = [];
+  let selectedIndex: number | undefined;
+  for (let i = firstOptIdx; i < footerIdx; i++) {
+    const raw = lines[i]!;
+    const optMatch = raw.match(INLINE_OPTION_RE);
+    if (optMatch) {
+      options.push({ label: optMatch[3]!.trim(), description: optMatch[4]?.trim() });
+      if (optMatch[1]) selectedIndex = options.length - 1;
+      continue;
+    }
+    if (raw.trim() === '') break; // see INLINE_CONTINUATION_RE docstring — this is what excludes trailing non-option content
+    const contMatch = raw.match(INLINE_CONTINUATION_RE);
+    if (contMatch && options.length > 0) {
+      const last = options[options.length - 1]!;
+      last.description = last.description ? `${last.description} ${contMatch[1]!.trim()}` : contMatch[1]!.trim();
+    }
+  }
+  if (options.length === 0) return undefined;
+
+  return { question: preamble, options, selectedIndex, raw: paneText };
 }
