@@ -50,10 +50,13 @@ export function detectPendingPrompt(paneText: string): PendingPrompt | undefined
 // Shape 1: Gemini CLI's `ask_user` — numbered, boxed, per-option description.
 // ---------------------------------------------------------------------------
 
-// Verified against a live Gemini CLI `ask_user` capture. Match loosely
-// (just "to select") so minor wording drift across CLI versions doesn't
-// silently stop matching.
-const NUMBERED_FOOTER_RE = /to select/i;
+// Verified against two real, distinct Gemini CLI dialogs that share this
+// same boxed/numbered/●-marker/description shape: the `ask_user` tool
+// ("Enter to select · ↑/↓ to navigate · Esc to cancel") and the CLI's own
+// `/model` picker, which has no "to select" text at all — it closes with
+// "(Press Esc to close)" instead. Kept as a list (not one looser regex) so
+// each addition stays traceable to the real capture that justified it.
+const NUMBERED_FOOTER_PATTERNS: RegExp[] = [/to select/i, /press esc/i];
 
 // A numbered option line, allowing for a leading box-drawing border (│) and/or
 // a selection marker (●, •, ❯, >) before the digit. \s+ (not a fixed count)
@@ -67,82 +70,92 @@ function stripBorder(line: string): string {
   return line.replace(/^[│\s]+/, '').replace(/[│\s]+$/, '');
 }
 
-/** Skip blank/border-only lines walking upward from `from`; returns the index of the first non-blank line, or -1. */
-function skipBorderUp(lines: string[], from: number): number {
-  let i = from;
-  while (i >= 0 && BORDER_ONLY_RE.test(lines[i]!)) i--;
-  return i;
-}
+const TOP_BORDER_RE = /^╭─+╮?\s*$/;
+const BOTTOM_BORDER_RE = /^╰─+╯?\s*$/;
 
+/**
+ * Forward-scan from the box's top border, not backward from the footer.
+ * Verified necessary against a real capture: Gemini's `/model` picker has
+ * freeform hint text ("Remember model for future sessions...", "> To use a
+ * specific...") sitting BETWEEN the option list and the footer — content
+ * `ask_user`'s simpler shape doesn't have. A backward scan from the footer
+ * has no way to tell that hint text apart from a real option description
+ * (both are just indented text); scanning forward and stopping the option
+ * block at the first blank/border-only line after collecting ≥1 option
+ * sidesteps the ambiguity entirely, and still correctly excludes anything
+ * after that gap regardless of what it looks like.
+ */
 function detectNumberedList(lines: string[], paneText: string): PendingPrompt | undefined {
   let footerIdx = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (NUMBERED_FOOTER_RE.test(lines[i]!)) {
+    if (NUMBERED_FOOTER_PATTERNS.some((re) => re.test(lines[i]!))) {
       footerIdx = i;
       break;
     }
   }
   if (footerIdx < 0) return undefined;
 
-  // Find the option block's bounds by walking upward from the footer: skip
-  // the bottom border, then keep consuming option/description/blank lines
-  // until we hit something that's neither — that's blockStart (exclusive).
-  //
-  // DESCRIPTION_LINE_RE alone can't tell an option's description apart from
-  // the question line above the block — both are just "indented text". Gate
-  // it on `sawOptionish`: only accept a description/border line while we're
-  // still inside (or at the top edge of) a run that started at a real
-  // option line; once a border-only line appears with nothing option-ish
-  // below it, that flag drops so the NEXT indented text line (the question)
-  // correctly stops the scan instead of being swallowed as a description.
-  const blockEnd = skipBorderUp(lines, footerIdx - 1); // last content line of the block
-  let cursor = blockEnd;
-  let sawOptionish = true; // blockEnd is already real block content (skipBorderUp landed past the ▼ spacer)
-  while (cursor >= 0) {
-    const raw = lines[cursor]!;
-    if (OPTION_LINE_RE.test(raw)) {
-      sawOptionish = true;
-      cursor--;
-      continue;
-    }
-    if (sawOptionish && DESCRIPTION_LINE_RE.test(raw)) {
-      cursor--;
-      continue;
-    }
-    if (sawOptionish && BORDER_ONLY_RE.test(raw)) {
-      sawOptionish = false; // consume one spacer run (e.g. the ▲ line), but don't keep assuming past it
-      cursor--;
-      continue;
-    }
-    break;
+  // The footer is inside the box; find its bottom border at/after it, then
+  // the matching top border above that (bounded — a real dialog is never
+  // hundreds of lines tall, and an unbounded backward scan risks running
+  // into an unrelated older box further up the scrollback).
+  let bottomIdx = -1;
+  for (let i = footerIdx; i < Math.min(lines.length, footerIdx + 6); i++) {
+    if (BOTTOM_BORDER_RE.test(lines[i]!)) { bottomIdx = i; break; }
   }
-  const blockStart = cursor + 1;
-  if (blockStart > blockEnd) return undefined;
+  if (bottomIdx < 0) return undefined;
+  let topIdx = -1;
+  for (let i = bottomIdx - 1; i >= Math.max(0, bottomIdx - 80); i--) {
+    if (TOP_BORDER_RE.test(lines[i]!)) { topIdx = i; break; }
+  }
+  if (topIdx < 0) return undefined;
 
+  // First non-blank content line is the title. If a SECOND distinct
+  // non-blank, non-option line follows before any option appears, the first
+  // is a header and the second is the real question (ask_user's shape);
+  // otherwise there's just one title line and it fills `question` alone
+  // (the /model picker's shape — no separate header/question split).
+  let i = topIdx + 1;
+  while (i < bottomIdx && BORDER_ONLY_RE.test(lines[i]!)) i++;
+  if (i >= bottomIdx) return undefined;
+  let header: string | undefined;
+  let question = stripBorder(lines[i]!);
+  i++;
+  while (i < bottomIdx && BORDER_ONLY_RE.test(lines[i]!)) i++;
+  if (i < bottomIdx && !OPTION_LINE_RE.test(lines[i]!)) {
+    header = question;
+    question = stripBorder(lines[i]!);
+    i++;
+    while (i < bottomIdx && BORDER_ONLY_RE.test(lines[i]!)) i++;
+  }
+  if (!question) return undefined;
+
+  // Collect options forward from here; stop at the first blank/border-only
+  // line once at least one option has been found (see function docstring —
+  // this is what correctly excludes the /model picker's trailing hint text
+  // without needing to recognize it specifically).
   const options: PendingPromptOption[] = [];
   let selectedIndex: number | undefined;
-  for (let j = blockStart; j <= blockEnd; j++) {
-    const raw = lines[j]!;
+  for (; i < bottomIdx; i++) {
+    const raw = lines[i]!;
     const optMatch = raw.match(OPTION_LINE_RE);
     if (optMatch) {
       options.push({ label: optMatch[3]!.trim() });
       if (optMatch[1]) selectedIndex = options.length - 1;
       continue;
     }
+    if (options.length > 0 && (BORDER_ONLY_RE.test(raw) || raw.trim() === '')) break;
     if (BORDER_ONLY_RE.test(raw)) continue;
+    // A continuation/description line — some dialogs wrap an option's
+    // description across more than one line (verified: Gemini's /model
+    // "Auto" option), so append rather than overwrite.
     const descMatch = raw.match(DESCRIPTION_LINE_RE);
     if (descMatch && options.length > 0) {
-      options[options.length - 1]!.description = descMatch[1]!.trim();
+      const last = options[options.length - 1]!;
+      last.description = last.description ? `${last.description} ${descMatch[1]!.trim()}` : descMatch[1]!.trim();
     }
   }
   if (options.length === 0) return undefined;
-
-  const questionIdx = skipBorderUp(lines, blockStart - 1);
-  const question = questionIdx >= 0 ? stripBorder(lines[questionIdx]!) : '';
-  if (!question) return undefined;
-
-  const headerIdx = skipBorderUp(lines, questionIdx - 1);
-  const header = headerIdx >= 0 ? stripBorder(lines[headerIdx]!) || undefined : undefined;
 
   return { header, question, options, selectedIndex, raw: paneText };
 }
