@@ -2609,6 +2609,7 @@ function chatPage(name: string, agentKey: string): string {
   .prompt-option-desc{font-size:12px;color:#8a919b;margin-top:2px}
   .prompt-card.resolved{opacity:.85}
   .prompt-resolved{font-size:13px;color:#7ee787;font-weight:600}
+  .prompt-note{font-size:11px;color:#8a919b;font-style:italic;margin-top:2px}
   #bar{position:fixed;bottom:0;left:0;right:0;background:transparent;padding:8px 12px 14px;z-index:20}
   /* #bar itself stays transparent so the composer pill can float free, but
      bubbles scrolling up need somewhere to go before they'd otherwise pass
@@ -2937,6 +2938,7 @@ ${sessionTopbar(name, agentLabel, 'chat')}
       list.appendChild(btn);
     });
     card.appendChild(list);
+    if (p.note){ var note=document.createElement('div'); note.className='prompt-note'; note.textContent=p.note; card.appendChild(note); }
     wrap.appendChild(card);
     var stick = atBottom();
     if (typingEl && typingEl.parentNode) innerEl.insertBefore(wrap, typingEl); else innerEl.appendChild(wrap);

@@ -20,6 +20,16 @@
  *     digit+dot options with the description mashed onto the same line
  *     after a 2+-space gap, descriptions wrapping onto further indented
  *     lines — same shape, different marker char and footer text).
+ *   - OpenCode's shared "Select X" picker (used by both `/model` and
+ *     `/agent`, confirmed by directly testing both live — a "Select
+ *     <noun> ... esc" title line, a "Search" box, plain ●-marker options
+ *     with no numbering). Genuinely harder than the other shapes: `/model`
+ *     alone spans 50+ entries across provider groups, confirmed by two
+ *     live captures showing entirely different visible entries — there's
+ *     no ▲/▼ scroll indicator or any other reliable signal for whether a
+ *     given capture shows the complete list or a scrolled slice, so this
+ *     one ALWAYS attaches PendingPrompt.note advising the operator that
+ *     more options may exist beyond what's shown, rather than guessing.
  * Extending to another CLI's own option-list chrome needs its own real
  * capture to verify against; an unrecognized shape returns undefined rather
  * than guessing — no raw-text fallback for those yet (see the shipping
@@ -37,6 +47,12 @@ export interface PendingPrompt {
   options: PendingPromptOption[];
   /** 0-based index of the option currently marked selected in the pane, if determinable. */
   selectedIndex?: number | undefined;
+  /**
+   * Free-text advisory shown alongside the options in the chat UI — e.g. a
+   * caveat that this shape may be a scrolled/searchable list whose full
+   * contents don't fit in one capture (see detectOpencodeSelectList).
+   */
+  note?: string | undefined;
   /** Raw captured pane text this was derived from — used for the client's raw-text fallback and change-detection. */
   raw: string;
 }
@@ -48,7 +64,12 @@ export interface PendingPrompt {
  */
 export function detectPendingPrompt(paneText: string): PendingPrompt | undefined {
   const lines = paneText.split('\n');
-  return detectNumberedList(lines, paneText) ?? detectPlainMarkerList(lines, paneText) ?? detectInlineOptionList(lines, paneText);
+  return (
+    detectNumberedList(lines, paneText) ??
+    detectPlainMarkerList(lines, paneText) ??
+    detectInlineOptionList(lines, paneText) ??
+    detectOpencodeSelectList(lines, paneText)
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -317,4 +338,107 @@ function detectInlineOptionList(lines: string[], paneText: string): PendingPromp
   if (options.length === 0) return undefined;
 
   return { question: preamble, options, selectedIndex, raw: paneText };
+}
+
+// ---------------------------------------------------------------------------
+// Shape 4: OpenCode's shared "Select X" picker — used by both `/model` and
+// `/agent` (confirmed by directly testing both live). Title line anchors
+// this one (not a footer — the footer text differs per command, e.g.
+// `/model`'s "Connect provider ctrl+a  Favorite ctrl+f" doesn't apply to
+// `/agent`). Plain ●-marker options, no numbering, category-grouped for
+// `/model` with blank-line separators BETWEEN groups (not just at the
+// block's edges like every other shape here) — so a blank line can NOT be
+// used to end the scan the way it does elsewhere; see OPENCODE_STOP_RE.
+//
+// OpenCode also renders a persistent tooltip/hint overlay (confirmed real
+// and reproducible on a live capture, not a transient glitch) that bleeds
+// "┃"/box-drawing fragments and stray text into the LEFT edge of several
+// rows — including genuinely valid option rows, corrupting them if read as
+// whole lines. The fix: every row in this picker — title, "Search" label,
+// and every option — is left-padded to the SAME column (verified: "Select"
+// and both real option labels "build native"/"plan native" all start at
+// the identical column in a real capture). So every line gets sliced from
+// the title's own content column onward before matching anything, which
+// cleanly discards the overlay regardless of what it contains, rather than
+// trying to pattern-match around it.
+// ---------------------------------------------------------------------------
+
+// Verified against real captures of both "Select model" and "Select agent".
+const OPENCODE_TITLE_RE = /^(\s*)(Select\s+\S+)\s+esc\s*$/i;
+const OPENCODE_SEARCH_RE = /^\s*Search\s*$/i;
+// Marks the end of the option block: a keyboard-shortcut footer hint.
+// Varies per command, but real examples all use "ctrl+X" — verified
+// unlikely to collide with an actual model/agent name. Deliberately NOT
+// also matching box-drawing chars here (an earlier version did, and broke
+// on a real capture: the tooltip overlay's right edge trails "▀" onto
+// otherwise-valid option rows, e.g. "Hy3 Free ... Free    ▀▀▀▀▀▀▀▀", which
+// isn't the end of the list at all — see the trailing-strip below instead.
+const OPENCODE_STOP_RE = /ctrl\+/;
+// The overlay also contaminates the right edge of some rows with trailing
+// box-drawing fragments or stray text bleeding in from the idle-mode
+// footer (verified real: "...Free    commands"). Strip from the first
+// box-drawing char onward — real labels don't contain these.
+const OPENCODE_TRAILING_JUNK_RE = /[┃╹▀╭╮╰╯│].*$/;
+// Bound the scan generously — this list can be long (verified: `/model`
+// spans 50+ entries) — but still finite, as a safety backstop.
+const OPENCODE_MAX_ROWS = 100;
+
+function detectOpencodeSelectList(lines: string[], paneText: string): PendingPrompt | undefined {
+  let titleIdx = -1;
+  let question = '';
+  let contentCol = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = lines[i]!.match(OPENCODE_TITLE_RE);
+    if (m) {
+      titleIdx = i;
+      contentCol = m[1]!.length;
+      question = m[2]!.trim();
+      break;
+    }
+  }
+  if (titleIdx < 0) return undefined;
+
+  const sliceContent = (line: string): string => (line.length > contentCol ? line.slice(contentCol) : '');
+  // The ● marker sits in a narrow "gutter" just BEFORE the content column,
+  // not inside it (verified: on a real capture, contentCol landed one
+  // column after the marker's own position) — slicing at contentCol alone
+  // would cleanly extract the label but silently drop the marker. Checked
+  // separately, in a small window ending right at contentCol.
+  const OPENCODE_GUTTER_WIDTH = 4;
+  const hasMarker = (line: string): boolean =>
+    line.slice(Math.max(0, contentCol - OPENCODE_GUTTER_WIDTH), contentCol).includes('●');
+
+  let i = titleIdx + 1;
+  // Skip blank lines and the "Search" box label between the title and the
+  // first real row.
+  while (i < lines.length) {
+    const sliced = sliceContent(lines[i]!);
+    if (sliced.trim() === '' || OPENCODE_SEARCH_RE.test(sliced)) { i++; continue; }
+    break;
+  }
+
+  const options: PendingPromptOption[] = [];
+  let selectedIndex: number | undefined;
+  for (; i < lines.length && options.length < OPENCODE_MAX_ROWS; i++) {
+    const raw = lines[i]!;
+    const sliced = sliceContent(raw);
+    if (OPENCODE_STOP_RE.test(sliced)) break;
+    // Real rows right-pad a pricing badge far out with runs of spaces
+    // (verified: "Hy3 Free                                        Free" —
+    // model name, then a separate "Free"-tier badge) — collapse for
+    // display rather than showing a huge internal gap.
+    const label = sliced.replace(OPENCODE_TRAILING_JUNK_RE, '').trim().replace(/\s+/g, ' ');
+    if (!label) continue; // blank, or a row fully consumed by the overlay — either way, not a real row
+    options.push({ label });
+    if (hasMarker(raw)) selectedIndex = options.length - 1;
+  }
+  if (options.length === 0) return undefined;
+
+  return {
+    question,
+    options,
+    selectedIndex,
+    note: 'More options may be available in Terminal — this list can scroll and supports typing to search.',
+    raw: paneText,
+  };
 }
