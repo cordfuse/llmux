@@ -206,8 +206,20 @@ function extractClaudeToolResultText(content: unknown): string {
  * the human-visible conversation. A `user` event can split into a `tool` turn
  * (tool_result blocks) plus a `user` turn (a real typed prompt).
  */
+/**
+ * A `local_command`'s content wraps the slash command in an XML-ish stub:
+ * `<command-name>/exit</command-name>\n<command-message>exit</command-message>\n<command-args></command-args>`.
+ * Pull just the name back out for display.
+ */
+function extractClaudeLocalCommandName(content: string): string {
+  const m = content.match(/<command-name>([^<]*)<\/command-name>/);
+  return m?.[1]?.trim() || 'command';
+}
+
 function normalizeClaudeEvent(evt: {
   type?: string;
+  subtype?: string;
+  content?: unknown;
   timestamp?: string;
   uuid?: string;
   isSidechain?: boolean;
@@ -219,6 +231,34 @@ function normalizeClaudeEvent(evt: {
   const uuid = evt.uuid ?? `${evt.type}-${ts ?? ''}`;
   const msg = evt.message;
   const content = (typeof msg === 'object' && msg !== null) ? (msg as { content?: unknown }).content : undefined;
+
+  if (evt.type === 'system') {
+    // `turn_duration` is pure telemetry (durationMs/messageCount, no
+    // user-facing text) — the only subtype with nothing to show. Every
+    // other subtype (informational, away_summary, bridge_status,
+    // compact_boundary, scheduled_task_fire, and anything future) carries a
+    // real `content` string worth surfacing — rendered as a tool-shaped
+    // card (bare, non-bubble) rather than a chat bubble, since these
+    // aren't conversational turns.
+    if (evt.subtype === 'turn_duration') return [];
+    const text = typeof evt.content === 'string' ? evt.content.trim() : '';
+    if (evt.subtype === 'local_command') {
+      // Two on-disk shapes observed across Claude Code versions: older
+      // clients (verified against a 2.1.131 session) put <command-name>
+      // directly on THIS event; newer ones (2.1.202) move it to a
+      // preceding user-role event instead (see the `<command-name>`
+      // branch above) and this event only ever carries stdout, wrapped in
+      // <local-command-stdout> — empty for most commands (/clear, /exit).
+      if (text.includes('<command-name>')) {
+        return [{ id: uuid, role: 'system', ts, parts: [{ kind: 'tool_use', name: extractClaudeLocalCommandName(text), input: undefined }] }];
+      }
+      const m = text.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
+      const stdout = m?.[1]?.trim() ?? '';
+      return stdout ? [{ id: uuid, role: 'system', ts, parts: [{ kind: 'tool_result', forId: uuid, text: stdout }] }] : [];
+    }
+    if (!text) return [];
+    return [{ id: uuid, role: 'system', ts, parts: [{ kind: 'tool_use', name: (evt.subtype ?? 'system').replace(/_/g, ' '), input: text }] }];
+  }
 
   if (evt.type === 'assistant') {
     const parts: TranscriptPart[] = [];
@@ -241,6 +281,13 @@ function normalizeClaudeEvent(evt: {
 
   if (evt.type === 'user') {
     if (typeof content === 'string') {
+      // The slash command's NAME lives here (a synthetic user-role event),
+      // not on the system/local_command event that follows it — that one
+      // only carries the command's stdout (often empty). Surface this as
+      // the "a command ran" signal instead of dropping it as synthetic.
+      if (content.startsWith('<command-name>')) {
+        return [{ id: uuid, role: 'system', ts, parts: [{ kind: 'tool_use', name: extractClaudeLocalCommandName(content), input: undefined }] }];
+      }
       return looksLikeRealUserMessage(content)
         ? [{ id: uuid, role: 'user', ts, parts: [{ kind: 'text', text: content }] }]
         : [];
@@ -1227,7 +1274,19 @@ function normalizeGeminiChatEvent(evt: GeminiChatEvent, lineId: string): Transcr
     return [{ id: lineId, role: 'tool', ts, parts: [{ kind: 'tool_result', forId: lineId, text, isError: true }] }];
   }
 
-  return []; // 'info' and any future type — UI chrome, not conversation.
+  if (type === 'info') {
+    // Neither gemini nor qwen log a distinct "slash command ran" event —
+    // verified against real sessions, genuinely absent (unlike Claude,
+    // where it's a real system/local_command event). `info` is the
+    // closest useful signal that exists: auth-flow prompts, update
+    // notices, request-cancelled — worth surfacing, especially for a
+    // remote/mobile operator who can't see the terminal.
+    const text = typeof evt.content === 'string' ? evt.content.trim() : '';
+    if (!text) return [];
+    return [{ id: lineId, role: 'system', ts, parts: [{ kind: 'tool_use', name: 'info', input: text }] }];
+  }
+
+  return []; // any future type — UI chrome, not conversation.
 }
 
 function makeGeminiLikeAdapter(opts: {
