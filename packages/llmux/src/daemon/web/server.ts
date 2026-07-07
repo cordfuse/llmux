@@ -2606,7 +2606,7 @@ function chatPage(name: string, agentKey: string): string {
   .md table{border-collapse:collapse;display:block;overflow-x:auto}
   .md th,.md td{border:1px solid #262c34;padding:4px 8px}
   .md img{display:block;max-width:220px;max-height:220px;width:auto;height:auto;object-fit:cover;border-radius:8px;border:1px solid #262c34;cursor:zoom-in;margin:4px 0}
-  details.tool{background:#12151c;border:1px solid #2b323d;border-radius:8px;margin:0;font-size:12.5px;max-width:82%;width:100%}
+  details.tool{position:relative;background:#12151c;border:1px solid #2b323d;border-radius:8px;margin:0;font-size:12.5px;max-width:82%;width:100%}
   details.tool.err{background:#1a1214;border-color:#5a2f2f}
   details.tool summary{cursor:pointer;padding:7px 11px;color:#7cc4ff;font-family:ui-monospace,monospace;user-select:none;list-style:none}
   details.tool summary::-webkit-details-marker{display:none}
@@ -2819,13 +2819,17 @@ ${sessionTopbar(name, agentLabel, 'chat')}
       var det=document.createElement('details'); det.className='tool';
       var sum=document.createElement('summary'); sum.textContent='⚙ '+(p.name||'tool'); det.appendChild(sum);
       var pre=document.createElement('pre'); pre.className='tool-body';
-      pre.textContent = p.input==null ? '' : (typeof p.input==='string'? p.input : JSON.stringify(p.input,null,2));
-      det.appendChild(pre); return det;
+      var useText = p.input==null ? '' : (typeof p.input==='string'? p.input : JSON.stringify(p.input,null,2));
+      pre.textContent = useText;
+      det.appendChild(pre);
+      det.appendChild(mkCopyBtn('code-copy', function(){ return useText; }));
+      return det;
     }
     if (p.kind === 'tool_result'){
       var det2=document.createElement('details'); det2.className='tool'+(p.isError?' err':'');
       var sum2=document.createElement('summary'); sum2.textContent=(p.isError?'⚠ result':'↩ result'); det2.appendChild(sum2);
       var pre2=document.createElement('pre'); pre2.className='tool-body'; pre2.textContent=p.text||''; det2.appendChild(pre2);
+      det2.appendChild(mkCopyBtn('code-copy', function(){ return p.text||''; }));
       return det2;
     }
     return document.createTextNode('');
