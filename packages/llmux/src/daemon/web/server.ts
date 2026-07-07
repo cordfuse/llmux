@@ -3578,15 +3578,29 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
       if (clamped === pinchState.lastApplied) return;
       pinchState.lastApplied = clamped;
       term.options.fontSize = clamped;
+      // Client-side only — resizes the canvas/cell grid for live visual
+      // feedback as the gesture progresses. Deliberately does NOT send a
+      // resize to the backend here: the pty only needs to know the FINAL
+      // cols/rows once the gesture settles (_pinchEnd), not on every
+      // intermediate frame. Sending one per frame used to mean the
+      // server's force-redraw-100ms-after-resize (see the ws 'resize'
+      // handler) fired dozens of staggered times per gesture, most of
+      // them landing after a LATER resize had already superseded them —
+      // the redraw sent the inner TUI a Ctrl+L into a geometry that was
+      // already stale again by the time it arrived. Reported as "jitter
+      // that stays unwieldy until a full browser refresh."
       try { fit.fit(); } catch(_){}
       try { term.write('\x1b[3J'); } catch(_){}
       try { term.refresh(0, term.rows - 1); } catch(_){}
-      safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
     });
   }, { passive: false });
   function _pinchEnd(){
     if (!pinchState) return;
     try { localStorage.setItem(FONT_KEY, String(term.options.fontSize)); } catch(_){}
+    // One resize now that the gesture has settled — the server force-
+    // redraws (Ctrl+L) ~100ms after this lands, landing cleanly into the
+    // final geometry instead of a moving target.
+    safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
     pinchState = null;
   }
   termEl.addEventListener('touchend',    function(e){ if (e.touches.length < 2) _pinchEnd(); }, { passive: true });
@@ -3599,10 +3613,24 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
   // the browser from page-zooming on top of us.
   let wheelStepPending = false;
   let wheelDeltaAccum = 0;
+  let wheelEndTimer = null;
+  // Same reasoning as the touch pinch handler above: resizing the backend
+  // pty on every single wheel step (a continuous trackpad pinch fires many)
+  // used to queue a staggered force-redraw per step, most landing after a
+  // later step had already superseded them. Wheel has no touchend to hook,
+  // so "gesture ended" is inferred by debounce — no new wheel step for
+  // 150ms.
+  const WHEEL_END_DEBOUNCE_MS = 150;
   termEl.addEventListener('wheel', function(e){
     if (!e.ctrlKey) return;
     e.preventDefault();
     wheelDeltaAccum += e.deltaY;
+    if (wheelEndTimer) clearTimeout(wheelEndTimer);
+    wheelEndTimer = setTimeout(function(){
+      wheelEndTimer = null;
+      try { localStorage.setItem(FONT_KEY, String(term.options.fontSize)); } catch(_){}
+      safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
+    }, WHEEL_END_DEBOUNCE_MS);
     if (wheelStepPending) return;
     wheelStepPending = true;
     requestAnimationFrame(function(){
@@ -3619,8 +3647,6 @@ ${sessionTopbar(name, agentLabel, 'terminal')}
       try { fit.fit(); } catch(_){}
       try { term.write('\x1b[3J'); } catch(_){}
       try { term.refresh(0, term.rows - 1); } catch(_){}
-      safeSend(JSON.stringify({type:'resize', cols:term.cols, rows:term.rows}));
-      try { localStorage.setItem(FONT_KEY, String(target)); } catch(_){}
     });
   }, { passive: false });
 
