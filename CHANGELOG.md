@@ -5,6 +5,69 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-07-07
+
+### Added — Chat GUI: a mobile-friendly second view alongside Terminal
+
+A new `/chat/<name>` view renders a normalized, per-agent-agnostic
+conversation feed (text/tool_use/tool_result turns) instead of a raw
+PTY passthrough — built for checking in on a running session from a
+phone without needing full terminal control.
+
+- **Live chat-view adapters for all 6 canonical CLIs**: Claude Code,
+  Codex, Gemini CLI, Antigravity CLI (agy), Qwen Code, and OpenCode.
+  Each normalizes that CLI's own on-disk conversation storage (JSONL
+  for most; OpenCode uses SQLite in WAL mode, which can't be
+  byte-tailed like a growing text file, so it's handled with a
+  poll-and-resend fallback instead) into the same turn shape, streamed
+  live over SSE.
+- **Pending interactive prompts now surface in chat, not just
+  Terminal.** Confirmations, option lists, and slash-command menus
+  never reach a CLI's structured transcript until after they're
+  resolved — previously invisible in chat until the operator switched
+  to Terminal to answer. Four real UI shapes are now detected directly
+  off the raw pane (Gemini's `ask_user` tool and its own `/model`
+  picker; agy's `/model` picker; Codex's and Claude Code's own
+  `/model` pickers; OpenCode's shared "Select X" picker used by both
+  `/model` and `/agent`) and rendered as tappable cards — answering
+  computes the arrow-key delta and sends it through a new, narrowly
+  allowlisted `POST /api/sessions/:name/key` endpoint. Every card also
+  gets a Cancel button (sends Escape) regardless of shape or agent.
+  OpenCode's `/model` picker can exceed one viewport with no reliable
+  way to detect a scrolled slice from a complete list, so that shape
+  always attaches an advisory note instead of guessing.
+- Slash-command execution and other system notices (compact boundary,
+  scheduled-task fire, etc.) surface as their own turns in chat for
+  Claude Code, Gemini, and Qwen — the CLIs confirmed to log them at all.
+- Image output (e.g. a generated picture) renders as a tappable
+  thumbnail + lightbox instead of full-size inline.
+- Copy buttons on message bubbles, code blocks, and tool_use/
+  tool_result cards.
+- Composer restyled to match chatframe's pill input, with attach/MCP/
+  model-picker controls, a Stop button during inference, and bouncing
+  typing-dots while an agent is working.
+
+### Fixed
+
+- **Claude Code chat sessions could silently render a different,
+  unrelated Claude Code session's content** when two sessions shared a
+  cwd — `currentTranscript`'s mtime-based file-picking had no actual
+  correlation to which tmux session it was for. Fixed by generating and
+  pinning a `--session-id` at spawn time (Claude Code only), persisted
+  in session state and threaded through transcript lookups instead of
+  guessing by file modification time.
+- agy's chat view could resolve to a stale, weeks-old conversation
+  instead of the live one — its `history.jsonl` cwd→conversationId join
+  is unreliable for recent prompts. Now picks the globally-newest
+  transcript file instead of filtering by cwd.
+- The typing-dots indicator could get stuck forever (until a page
+  reload) after a pending-prompt was answered — `endInference()` was
+  only ever armed by real transcript turns, and a resolved prompt
+  doesn't produce one.
+- Removed the session-list's per-row quick-send button — redundant
+  with the two existing chat modes (Terminal passthrough and the new
+  Chat GUI); it served no distinct purpose.
+
 ## [0.38.0] — 2026-07-01
 
 ### Security
