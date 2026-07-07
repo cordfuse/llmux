@@ -42,6 +42,24 @@ export function hasSession(name: string): boolean {
   return r.status === 0;
 }
 
+/**
+ * Verify that a live, name-matched tmux session was actually spawned by
+ * llmux — not just an unrelated session the operator created by hand that
+ * happens to collide with a (possibly stale) registry entry. Every session
+ * llmux spawns gets `LLMUX_SESSION=<name>` injected via `new-session -e`
+ * (see `newSession()` above); a foreign session never has it set, and
+ * `renameSession()` keeps it in sync with the current name on rename.
+ *
+ * Fails closed: any lookup failure (var unset, session gone, tmux error)
+ * is treated as "not owned" rather than risk attaching/sending to someone
+ * else's pane.
+ */
+export function isOwnedSession(name: string): boolean {
+  const r = spawnSync('tmux', ['show-environment', '-t', name, 'LLMUX_SESSION'], { stdio: 'pipe' });
+  if (r.status !== 0) return false;
+  return r.stdout.toString().trim() === `LLMUX_SESSION=${name}`;
+}
+
 export interface NewSessionOptions {
   name: string;
   command: string;
@@ -90,6 +108,9 @@ export function sendKeys(name: string, text: string, opts: { enter?: boolean } =
   if (!hasSession(name)) {
     throw new Error(`tmux session "${name}" not found`);
   }
+  if (!isOwnedSession(name)) {
+    throw new Error(`tmux session "${name}" exists but was not spawned by llmux (foreign session) — refusing to send keys`);
+  }
   const literal = spawnSync('tmux', ['send-keys', '-t', name, '-l', text], { stdio: 'pipe' });
   if (literal.status !== 0) {
     throw new Error(`tmux send-keys failed: ${literal.stderr.toString().trim() || `exit ${literal.status}`}`);
@@ -109,6 +130,24 @@ export function sendKeys(name: string, text: string, opts: { enter?: boolean } =
     if (enter.status !== 0) {
       throw new Error(`tmux send-keys Enter failed: ${enter.stderr.toString().trim() || `exit ${enter.status}`}`);
     }
+  }
+}
+
+/**
+ * Send a single named tmux key (e.g. `Escape`, `C-c`) to the session — NOT
+ * literal text (no `-l`), so tmux interprets the key name. Used by the chat
+ * view's Stop button to interrupt an in-flight agent turn with Escape.
+ */
+export function sendKey(name: string, key: string): void {
+  if (!hasSession(name)) {
+    throw new Error(`tmux session "${name}" not found`);
+  }
+  if (!isOwnedSession(name)) {
+    throw new Error(`tmux session "${name}" exists but was not spawned by llmux (foreign session) — refusing to send key`);
+  }
+  const r = spawnSync('tmux', ['send-keys', '-t', name, key], { stdio: 'pipe' });
+  if (r.status !== 0) {
+    throw new Error(`tmux send-keys ${key} failed: ${r.stderr.toString().trim() || `exit ${r.status}`}`);
   }
 }
 
@@ -203,6 +242,14 @@ export function renameSession(oldName: string, newName: string): void {
   if (r.status !== 0) {
     throw new Error(`tmux rename-session failed: ${r.stderr.toString().trim() || `exit ${r.status}`}`);
   }
+  // isOwnedSession() compares LLMUX_SESSION against the session's current
+  // name, so the marker has to be refreshed here too — otherwise a
+  // legitimately-renamed llmux session would carry the stale oldName value
+  // and look "foreign" on the very next status/attach/send-keys check.
+  const e = spawnSync('tmux', ['set-environment', '-t', newName, 'LLMUX_SESSION', newName], { stdio: 'pipe' });
+  if (e.status !== 0) {
+    throw new Error(`tmux set-environment failed after rename: ${e.stderr.toString().trim() || `exit ${e.status}`}`);
+  }
 }
 
 /**
@@ -233,6 +280,9 @@ export function capturePane(name: string, lines = 10): string {
 export function attachOrSwitch(name: string): void {
   if (!hasSession(name)) {
     throw new Error(`tmux session "${name}" not found`);
+  }
+  if (!isOwnedSession(name)) {
+    throw new Error(`tmux session "${name}" exists but was not spawned by llmux (foreign session) — refusing to attach`);
   }
   const inTmux = Boolean(process.env.TMUX);
   const verb = inTmux ? 'switch-client' : 'attach-session';

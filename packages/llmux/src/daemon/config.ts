@@ -22,6 +22,14 @@ export interface AgentOverrides {
   cmd?: string;
   flags?: string;
   readyPrompt?: string;
+  /**
+   * Operator-defined model list for the chat view's model picker. Deliberately
+   * NOT hardcoded in the product — each operator lists the models they actually
+   * use for this agent in `.llmux.yaml` (agents.<key>.models). Selecting one in
+   * the chat GUI sends the agent's `/model <name>` command via send-keys. Empty
+   * / absent → the picker is hidden and the agent uses its own default.
+   */
+  models?: string[];
 }
 
 /**

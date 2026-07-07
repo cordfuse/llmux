@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { tryV2Route, initV2Routes, getV2User, getV2Stores } from '../v2-routes.ts';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, watch, writeFileSync, mkdirSync, type FSWatcher } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, resolve, join, basename } from 'node:path';
 import { hostname } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import * as pty from 'node-pty';
@@ -55,6 +55,8 @@ export interface ServeOptions {
 const XTERM_CSS = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css';
 const XTERM_JS = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js';
 const XTERM_FIT_JS = 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js';
+// Markdown renderer for the chat view — same CDN pattern as xterm above.
+const MARKED_JS = 'https://cdn.jsdelivr.net/npm/marked@14.1.3/lib/marked.umd.min.js';
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -112,7 +114,12 @@ function expandTilde(p: string): string {
 
 function listSessionViews(): SessionView[] {
   const tracked = state.list();
-  const live = new Set(tmux.listSessions().map((s) => s.name));
+  // Name matching alone isn't enough — a foreign tmux session (created by
+  // hand, colliding with a stale registry entry) must not be reported as
+  // "running". Filter to sessions llmux actually spawned.
+  const live = new Set(
+    tmux.listSessions().map((s) => s.name).filter((n) => tmux.isOwnedSession(n)),
+  );
   return tracked
     .map((s) => viewOf(s, live.has(s.name)))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -2515,8 +2522,468 @@ function deadSessionPage(s: SessionView): string {
 </body></html>`;
 }
 
-function sessionPage(name: string): string {
+/**
+ * Shared top nav for the session views (terminal + chat) so the two can't
+ * drift. Same markup + CSS on both; only the live-state dot driver and the
+ * cross-link (Terminal <-> Chat) differ. `#title-dot` is set by each page's
+ * own connection logic.
+ */
+function sessionTopbarCss(): string {
+  return `
+  #topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:#11141a;border-bottom:1px solid #1f2329;display:flex;align-items:center;gap:8px;padding:0 10px;z-index:21;box-sizing:border-box}
+  #topbar #back{flex:0 0 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;height:26px;width:36px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font:16px ui-monospace,monospace;text-decoration:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
+  #topbar #back:active{background:#252b34;border-color:#3a414b}
+  #title-block{flex:1 1 auto;display:flex;align-items:center;gap:8px;color:#c9d1d9;font-size:12px;min-width:0}
+  #title-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s,box-shadow .2s}
+  #title-dot[data-state="live"]{background:#7ee787;box-shadow:0 0 6px #7ee78766}
+  #title-dot[data-state="error"],#title-dot[data-state="closed"],#title-dot[data-state="reconnecting"]{background:#f85149}
+  #title-dot[data-state="reconnecting"]{animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #title-agent{flex:0 0 auto;color:#a371f7;font-size:11px}
+  #topbar .xlink{flex:0 0 auto;background:#1c2128;color:#7cc4ff;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:600 11px/1 ui-monospace,monospace;display:inline-flex;align-items:center;text-decoration:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
+  #topbar .xlink:active{background:#252b34;border-color:#3a414b}
+  `;
+}
+
+/** Shared topbar markup. mode picks the cross-link target/label. */
+function sessionTopbar(name: string, agentLabel: string, mode: 'chat' | 'terminal'): string {
+  const cross = mode === 'chat'
+    ? `<a class="xlink" href="/session/${encodeURIComponent(name)}" title="Terminal view">Terminal</a>`
+    : `<a class="xlink" href="/chat/${encodeURIComponent(name)}" title="Chat view">Chat</a>`;
+  return `<div id="topbar">
+  <a id="back" href="/" title="Session list">⌂</a>
+  <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapeHtml(name)}</span><span id="title-agent">${escapeHtml(agentLabel)}</span></span>
+  ${cross}
+</div>`;
+}
+
+/**
+ * Chat GUI view. Renders a session's conversation from the agent's on-disk
+ * transcript (streamed as normalized turns via SSE) and sends operator input
+ * through the existing /send send-keys route. Structure lifted from chatframe;
+ * plain vanilla JS + a CDN markdown lib to fit llmux's zero-build web idiom.
+ */
+function chatPage(name: string, agentKey: string): string {
   const escapedName = escapeHtml(name);
+  const jsonName = JSON.stringify(name);
+  const agentLabel = escapeHtml(DEFAULT_AGENTS[agentKey]?.displayName ?? agentKey);
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<title>${escapedName} — chat — llmux</title>
+<link rel="icon" href="${FAVICON_DATA_URL}">
+<link rel="apple-touch-icon" href="${FAVICON_DATA_URL}">
+<style>
+  :root{--topbar-h:38px;color-scheme:dark}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100dvh;background:#0b0c10;color:#eee;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overscroll-behavior:none}
+  ${sessionTopbarCss()}
+  #note{display:none;position:fixed;top:var(--topbar-h);left:0;right:0;background:#3a2a12;color:#f0c674;border-bottom:1px solid #5a4522;padding:8px 14px;font-size:13px;z-index:20}
+  #log{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:84px;overflow-y:auto;padding:12px 0}
+  #log-inner{max-width:820px;margin:0 auto}
+  .turn{display:flex;margin:10px 14px}
+  .turn.user{justify-content:flex-end}
+  .turn.assistant,.turn.toolrow{justify-content:flex-start}
+  .turn.toolrow{margin:5px 14px}
+  .bubble{position:relative;max-width:82%;border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.55;word-wrap:break-word;overflow-wrap:anywhere}
+  .bubble-copy{display:flex;margin:4px 0 0 auto;align-items:center;justify-content:center;width:24px;height:24px;background:rgba(11,12,16,.7);color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.5;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
+  .bubble-copy:hover,.bubble-copy:active{opacity:1;color:#c9d1d9}
+  .pre-wrap{position:relative}
+  .code-copy{position:absolute;top:6px;right:6px;z-index:2;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#1c2128;color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.75;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
+  .code-copy:hover,.code-copy:active{opacity:1;color:#c9d1d9}
+  .typing-dots{display:inline-flex;align-items:center;gap:5px;padding:3px 2px}
+  .typing-dots span{width:7px;height:7px;border-radius:50%;background:#8a919b;display:inline-block;animation:tbounce 1.25s infinite ease-in-out}
+  .typing-dots span:nth-child(2){animation-delay:.16s}
+  .typing-dots span:nth-child(3){animation-delay:.32s}
+  @keyframes tbounce{0%,65%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-5px);opacity:1}}
+  .turn.user .bubble{background:#1e3a52;color:#e6f0fa;border:1px solid #2d5a85}
+  .turn.assistant .bubble{background:#161b22;border:1px solid #262c34;color:#e6e8eb}
+  .md>*:first-child{margin-top:0}.md>*:last-child{margin-bottom:0}
+  .md pre{position:relative;background:#0b0c10;border:1px solid #1f2329;border-radius:6px;padding:8px;overflow-x:auto}
+  .md code{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12.5px}
+  .md :not(pre)>code{background:#0b0c10;border:1px solid #1f2329;border-radius:4px;padding:1px 4px}
+  .md a{color:#7cc4ff}
+  .md table{border-collapse:collapse;display:block;overflow-x:auto}
+  .md th,.md td{border:1px solid #262c34;padding:4px 8px}
+  .md img{display:block;max-width:220px;max-height:220px;width:auto;height:auto;object-fit:cover;border-radius:8px;border:1px solid #262c34;cursor:zoom-in;margin:4px 0}
+  details.tool{background:#12151c;border:1px solid #2b323d;border-radius:8px;margin:0;font-size:12.5px;max-width:82%;width:100%}
+  details.tool.err{background:#1a1214;border-color:#5a2f2f}
+  details.tool summary{cursor:pointer;padding:7px 11px;color:#7cc4ff;font-family:ui-monospace,monospace;user-select:none;list-style:none}
+  details.tool summary::-webkit-details-marker{display:none}
+  details.tool.err summary{color:#f85149}
+  .tool-body{margin:0;padding:8px 11px;border-top:1px solid #20252e;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;color:#c9d1d9}
+  #bar{position:fixed;bottom:0;left:0;right:0;background:transparent;padding:8px 12px 14px;z-index:20}
+  /* #bar itself stays transparent so the composer pill can float free, but
+     bubbles scrolling up need somewhere to go before they'd otherwise pass
+     directly behind the input — this bleeds a fade above #bar's own box
+     (negative top, no clipping on #bar) so content eases into the page
+     background instead of hitting the composer with a hard edge. */
+  #bar::before{content:"";position:absolute;top:-32px;left:0;right:0;height:32px;background:linear-gradient(to bottom,transparent 0%,#0b0c10 100%);pointer-events:none}
+  /* chatframe-style composer pill: textarea on top, icon send button beneath,
+     rounded container whose border lifts to the accent on focus-within. */
+  #composer{max-width:820px;margin:0 auto;background:transparent;border:none;border-radius:22px;overflow:hidden}
+  #input{display:block;width:100%;resize:none;min-height:24px;max-height:180px;background:transparent;color:#e6e8eb;border:none;outline:none;padding:12px 16px 4px;font:14px ui-monospace,monospace;line-height:1.45;scrollbar-width:none;-ms-overflow-style:none}
+  #input::-webkit-scrollbar{display:none;width:0;height:0}
+  #input::placeholder{color:#5a6068}
+  #composer-actions{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:2px 8px 8px}
+  #composer-left{display:flex;align-items:center;gap:2px;min-width:0}
+  #composer-left button{display:flex;align-items:center;justify-content:center;height:30px;min-width:30px;padding:0 7px;border:none;border-radius:9px;background:transparent;color:#8a919b;cursor:pointer;transition:background .12s,color .12s}
+  #composer-left button:hover{background:#1a1e27;color:#c9d1d9}
+  #model-wrap{position:relative;display:none}
+  #model-btn{gap:5px;font:600 12px ui-monospace,monospace;max-width:150px}
+  #model-btn #model-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #model-btn .caret{font-size:9px;opacity:.7;flex:0 0 auto}
+  /* position:fixed so it escapes the composer's overflow:hidden clip and sits
+     above everything (z-index over #bar / #log / #note). JS sets left/bottom. */
+  #model-menu{display:none;position:fixed;min-width:170px;max-height:260px;overflow:auto;background:#12151c;border:1px solid #262c34;border-radius:10px;padding:4px;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+  #model-menu.open{display:block}
+  #model-menu button{display:block;width:100%;min-width:0;height:auto;text-align:left;padding:7px 10px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px ui-monospace,monospace}
+  #model-menu button:hover{background:#1a1e27;color:#c9d1d9}
+  #model-menu button.sel{color:#7cc4ff}
+  #attach-wrap{position:relative}
+  #attach-menu{display:none;position:fixed;min-width:158px;background:#12151c;border:1px solid #262c34;border-radius:10px;padding:4px;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+  #attach-menu.open{display:block}
+  #attach-menu button{display:flex;align-items:center;justify-content:flex-start;gap:10px;width:100%;min-width:0;height:auto;padding:9px 11px;border-radius:7px;background:transparent;color:#c9d1d9;font:13px ui-monospace,monospace;text-align:left}
+  #attach-menu button:hover{background:#1a1e27;color:#c9d1d9}
+  #attach-menu button svg{flex:0 0 auto;color:#8a919b}
+  #send{display:flex;align-items:center;justify-content:center;height:32px;width:32px;flex:0 0 auto;border:1px solid #2d5a85;border-radius:12px;background:#1e3a52;color:#e6f0fa;cursor:pointer;transition:opacity .15s}
+  #send:hover{opacity:.9}
+  #send:disabled{opacity:.4;cursor:default}
+  #send.stop{background:#b62324;border-color:#d64545}
+  #send.stop:hover{opacity:.9}
+  #empty{color:#5a6068;text-align:center;padding:40px 20px;font-size:13px}
+  #lightbox{position:fixed;inset:0;background:rgba(11,12,16,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:80;opacity:0;visibility:hidden;transition:opacity 160ms ease,visibility 0s 160ms;padding:24px;box-sizing:border-box}
+  #lightbox.open{opacity:1;visibility:visible;transition:opacity 160ms ease}
+  #lightbox img{max-width:100%;max-height:calc(100% - 54px);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+  #lightbox .lightbox-bar{display:flex;gap:8px;margin-top:14px}
+  #lightbox .lightbox-bar a,#lightbox .lightbox-bar button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 16px;font:13px ui-monospace,monospace;cursor:pointer;text-decoration:none}
+  #lightbox .lightbox-bar a:hover,#lightbox .lightbox-bar button:hover{background:#262c34}
+</style></head>
+<body>
+${sessionTopbar(name, agentLabel, 'chat')}
+<div id="note"></div>
+<div id="log"><div id="log-inner"><div id="empty">No messages yet. Type below to send input to this agent.</div></div></div>
+<div id="bar"><div id="composer">
+  <textarea id="input" rows="1" placeholder="Send a message…"></textarea>
+  <div id="composer-actions">
+    <div id="composer-left">
+      <div id="attach-wrap">
+        <button id="attach" type="button" title="Attach" aria-label="Attach file">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49"/></svg>
+        </button>
+        <div id="attach-menu">
+          <button type="button" id="att-camera"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Camera</button>
+          <button type="button" id="att-photo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>Photos</button>
+          <button type="button" id="att-doc"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Documents</button>
+        </div>
+      </div>
+      <div id="model-wrap">
+        <button id="model-btn" type="button" title="Model"><span id="model-label">model</span><span class="caret">▾</span></button>
+        <div id="model-menu"></div>
+      </div>
+    </div>
+    <input id="file-camera" type="file" accept="image/*" capture="environment" style="display:none">
+    <input id="file-photo" type="file" accept="image/*" style="display:none">
+    <input id="file-doc" type="file" style="display:none">
+    <button id="send" type="button" title="Send" aria-label="Send" disabled>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+    </button>
+  </div>
+</div></div>
+<div id="lightbox" aria-hidden="true">
+  <img id="lightbox-img" src="" alt="">
+  <div class="lightbox-bar">
+    <a id="lightbox-download" href="" download>Download</a>
+    <button type="button" id="lightbox-close">Close</button>
+  </div>
+</div>
+<script src="${MARKED_JS}"></script>
+<script>
+(function(){
+  var NAME = ${jsonName};
+  var seen = Object.create(null);
+  var logEl = document.getElementById('log');
+  var innerEl = document.getElementById('log-inner');
+  var emptyEl = document.getElementById('empty');
+  var dot = document.getElementById('title-dot');
+  var ta = document.getElementById('input');
+  var sendBtn = document.getElementById('send');
+  var noteEl = document.getElementById('note');
+
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function md(t){ try { return window.marked ? marked.parse(t,{breaks:true,gfm:true}) : esc(t); } catch(e){ return esc(t); } }
+  function atBottom(){ return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 90; }
+  function scrollDown(){ logEl.scrollTop = logEl.scrollHeight; }
+  function showNote(m){ noteEl.textContent = m; noteEl.style.display = 'block'; }
+
+  // --- copy affordances (chat bubbles + code blocks) ---
+  var SEND_SVG = sendBtn.innerHTML; // capture original paper-plane markup
+  var STOP_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>';
+  var COPY_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  var CHECK_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+  function copyText(text, btn){
+    function ok(){ if(!btn) return; var prev=btn.innerHTML; btn.innerHTML=CHECK_SVG; btn.classList.add('ok'); setTimeout(function(){ btn.innerHTML=prev; btn.classList.remove('ok'); }, 1100); }
+    function fallback(){ try{ var t=document.createElement('textarea'); t.value=text; t.style.position='fixed'; t.style.opacity='0'; document.body.appendChild(t); t.focus(); t.select(); document.execCommand('copy'); document.body.removeChild(t); ok(); }catch(e){} }
+    if (navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(ok).catch(fallback); }
+    else fallback();
+  }
+  function mkCopyBtn(cls, getText){
+    var b=document.createElement('button'); b.type='button'; b.className=cls; b.title='Copy'; b.setAttribute('aria-label','Copy'); b.innerHTML=COPY_SVG;
+    b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); copyText(getText(), b); });
+    return b;
+  }
+  function enhanceCode(container){
+    Array.prototype.forEach.call(container.querySelectorAll('pre'), function(pre){
+      var parent=pre.parentNode;
+      if (!parent || parent.className==='pre-wrap') return; // already wrapped
+      var code=pre.querySelector('code'); var text=(code?code.innerText:pre.innerText)||'';
+      // Wrap the (horizontally-scrolling) pre in a static container and anchor
+      // the copy button to THAT, so it stays pinned in the corner instead of
+      // scrolling away with the code content.
+      var wrap=document.createElement('div'); wrap.className='pre-wrap';
+      parent.insertBefore(wrap, pre);
+      wrap.appendChild(pre);
+      wrap.appendChild(mkCopyBtn('code-copy', function(){ return text; }));
+    });
+  }
+  function addBubbleCopy(bub, parts){
+    var text=parts.map(function(p){ return p.text||''; }).join('\\n\\n');
+    bub.appendChild(mkCopyBtn('bubble-copy', function(){ return text; }));
+  }
+
+  // --- inference state: while the agent produces, the send button becomes a
+  //     Stop button that sends Escape into the pane. No explicit "done" event
+  //     exists in the transcript, so: Stop shows on send and holds through the
+  //     agent's think window; once agent output has begun, a quiet gap (no new
+  //     turns for IDLE_MS) flips it back to Send. Stop-click ends it at once. ---
+  var stopMode=false, inferencing=false, sawOutput=false, idleTimer=null;
+  var IDLE_MS=6000;
+  function setStopMode(on){
+    stopMode=on;
+    if (on){ sendBtn.innerHTML=STOP_SVG; sendBtn.title='Stop'; sendBtn.setAttribute('aria-label','Stop'); sendBtn.classList.add('stop'); sendBtn.disabled=false; }
+    else { sendBtn.innerHTML=SEND_SVG; sendBtn.title='Send'; sendBtn.setAttribute('aria-label','Send'); sendBtn.classList.remove('stop'); syncComposer(); }
+  }
+  // bouncing "…" typing indicator, shown for the whole inference window
+  var typingEl=null;
+  function showTyping(){
+    if (emptyEl){ emptyEl.remove(); emptyEl=null; }
+    if (!typingEl){
+      typingEl=document.createElement('div'); typingEl.className='turn assistant typing-row';
+      var b=document.createElement('div'); b.className='bubble';
+      var d=document.createElement('div'); d.className='typing-dots';
+      d.innerHTML='<span></span><span></span><span></span>';
+      b.appendChild(d); typingEl.appendChild(b);
+    }
+    var stick=atBottom();
+    innerEl.appendChild(typingEl); // (re)attach at the very end
+    if (stick) scrollDown();
+  }
+  function hideTyping(){ if (typingEl && typingEl.parentNode) typingEl.parentNode.removeChild(typingEl); }
+  function startInference(){ inferencing=true; sawOutput=false; if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} setStopMode(true); showTyping(); }
+  function endInference(){ inferencing=false; sawOutput=false; if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} setStopMode(false); hideTyping(); }
+  function bumpInference(role){
+    if (!inferencing) return;
+    if (role && role!=='user') sawOutput=true;
+    if (!sawOutput) return; // still in the initial think window — hold Stop, no timer yet
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer=setTimeout(endInference, IDLE_MS);
+  }
+  function doStop(){
+    fetch('/api/sessions/'+encodeURIComponent(NAME)+'/interrupt',{method:'POST'})
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(j){ if(j&&j.ok===false) showNote('stop failed: '+(j.error||'unknown')); })
+      .catch(function(){ showNote('stop failed (network)'); });
+    endInference();
+  }
+
+  var lightbox = document.getElementById('lightbox');
+  var lightboxImg = document.getElementById('lightbox-img');
+  var lightboxDownload = document.getElementById('lightbox-download');
+  function openLightbox(src, alt){
+    lightboxImg.src = src; lightboxImg.alt = alt || '';
+    lightboxDownload.href = src;
+    lightboxDownload.download = (alt || 'image').replace(/[^a-z0-9_.-]+/gi,'_') || 'image';
+    lightbox.classList.add('open'); lightbox.setAttribute('aria-hidden','false');
+  }
+  function closeLightbox(){ lightbox.classList.remove('open'); lightbox.setAttribute('aria-hidden','true'); lightboxImg.src=''; }
+  document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+  lightbox.addEventListener('click', function(e){ if (e.target === lightbox) closeLightbox(); });
+  innerEl.addEventListener('click', function(e){
+    var img = e.target.closest && e.target.closest('.md img');
+    if (img) openLightbox(img.currentSrc || img.src, img.alt);
+  });
+
+  function renderPart(p){
+    if (p.kind === 'text'){ var d=document.createElement('div'); d.className='md'; d.innerHTML=md(p.text); return d; }
+    if (p.kind === 'tool_use'){
+      var det=document.createElement('details'); det.className='tool';
+      var sum=document.createElement('summary'); sum.textContent='⚙ '+(p.name||'tool'); det.appendChild(sum);
+      var pre=document.createElement('pre'); pre.className='tool-body';
+      pre.textContent = p.input==null ? '' : (typeof p.input==='string'? p.input : JSON.stringify(p.input,null,2));
+      det.appendChild(pre); return det;
+    }
+    if (p.kind === 'tool_result'){
+      var det2=document.createElement('details'); det2.className='tool'+(p.isError?' err':'');
+      var sum2=document.createElement('summary'); sum2.textContent=(p.isError?'⚠ result':'↩ result'); det2.appendChild(sum2);
+      var pre2=document.createElement('pre'); pre2.className='tool-body'; pre2.textContent=p.text||''; det2.appendChild(pre2);
+      return det2;
+    }
+    return document.createTextNode('');
+  }
+
+  function addTurn(t){
+    if (!t || !t.id || seen[t.id]) return;
+    seen[t.id]=1;
+    if (emptyEl){ emptyEl.remove(); emptyEl=null; }
+    var stick = atBottom();
+    var role = t.role || 'assistant';
+    var bubbleParts = (t.parts||[]).filter(function(p){ return p.kind==='text'; });
+    var toolParts = (t.parts||[]).filter(function(p){ return p.kind!=='text'; });
+    // Text goes in a role-aligned bubble; tool_use / tool_result render as
+    // standalone bare cards (never nested in a bubble → no double border).
+    if (bubbleParts.length){
+      var row=document.createElement('div'); row.className='turn '+role;
+      var bub=document.createElement('div'); bub.className='bubble';
+      bubbleParts.forEach(function(p){ bub.appendChild(renderPart(p)); });
+      enhanceCode(bub);
+      addBubbleCopy(bub, bubbleParts);
+      row.appendChild(bub); innerEl.appendChild(row);
+    }
+    toolParts.forEach(function(p){
+      var trow=document.createElement('div'); trow.className='turn toolrow';
+      trow.appendChild(renderPart(p)); innerEl.appendChild(trow);
+    });
+    bumpInference(role);
+    if (typingEl && typingEl.parentNode) innerEl.appendChild(typingEl); // keep dots pinned to the bottom
+    if (stick) scrollDown();
+  }
+
+  function clearLog(){ innerEl.innerHTML=''; seen=Object.create(null); }
+
+  function connect(){
+    var es = new EventSource('/api/sessions/'+encodeURIComponent(NAME)+'/transcript/stream');
+    es.onopen = function(){ dot.dataset.state='live'; dot.title='live'; };
+    es.onerror = function(){ dot.dataset.state='error'; dot.title='reconnecting…'; };
+    es.onmessage = function(ev){ try{ addTurn(JSON.parse(ev.data)); }catch(e){} };
+    es.addEventListener('reset', function(){ clearLog(); });
+    es.addEventListener('unsupported', function(){ dot.dataset.state='error'; showNote('This agent has no transcript adapter yet — chat view unavailable. Use the Terminal view.'); });
+  }
+
+  var barEl = document.getElementById('bar');
+  function syncComposer(){
+    ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,180)+'px';
+    if (!stopMode) sendBtn.disabled = !ta.value.trim(); // Stop button stays enabled in stop mode
+    logEl.style.bottom = barEl.offsetHeight + 'px'; // keep last message above the pill as it grows
+  }
+  function send(){
+    var v = ta.value;
+    if (!v.trim()) return;
+    ta.value=''; syncComposer();
+    startInference();
+    fetch('/api/sessions/'+encodeURIComponent(NAME)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:v})})
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(j){ if (j && j.ok===false){ showNote('send failed: '+(j.error||'unknown')); endInference(); } })
+      .catch(function(){ showNote('send failed (network)'); endInference(); })
+      .finally(function(){ ta.focus(); });
+  }
+
+  // --- composer controls: attach (file picker) + model picker ---
+  function insertAtCursor(text){
+    var s=ta.selectionStart||0, e=ta.selectionEnd||0, v=ta.value;
+    ta.value = v.slice(0,s)+text+v.slice(e);
+    var pos=s+text.length; ta.selectionStart=ta.selectionEnd=pos;
+    ta.focus(); syncComposer();
+  }
+  // Fixed-position popovers so they escape the composer's overflow:hidden clip
+  // and stack above everything (see #attach-menu / #model-menu z-index).
+  function openMenuAbove(menu, btn){
+    var r=btn.getBoundingClientRect();
+    menu.style.left = r.left+'px';
+    menu.style.bottom = (window.innerHeight - r.top + 6)+'px';
+    menu.classList.add('open');
+  }
+  function closeMenus(){ attachMenu.classList.remove('open'); modelMenu.classList.remove('open'); }
+
+  // attach: native file picker (camera / photos / documents) → upload → insert path
+  var attachBtn=document.getElementById('attach');
+  var attachMenu=document.getElementById('attach-menu');
+  var fileCamera=document.getElementById('file-camera');
+  var filePhoto=document.getElementById('file-photo');
+  var fileDoc=document.getElementById('file-doc');
+  attachBtn.addEventListener('click', function(e){ e.stopPropagation(); var wasOpen=attachMenu.classList.contains('open'); closeMenus(); if(!wasOpen) openMenuAbove(attachMenu, attachBtn); });
+  document.getElementById('att-camera').addEventListener('click', function(){ closeMenus(); fileCamera.click(); });
+  document.getElementById('att-photo').addEventListener('click', function(){ closeMenus(); filePhoto.click(); });
+  document.getElementById('att-doc').addEventListener('click', function(){ closeMenus(); fileDoc.click(); });
+  function uploadFile(f){
+    if(!f) return;
+    var reader=new FileReader();
+    reader.onload=function(){
+      var b64=String(reader.result||'').split(',')[1]||'';
+      showNote('uploading '+f.name+'…');
+      fetch('/api/sessions/'+encodeURIComponent(NAME)+'/upload',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({filename:f.name,dataBase64:b64})})
+        .then(function(r){ return r.json().catch(function(){ return {}; }); })
+        .then(function(j){ if(j&&j.ok&&j.path){ noteEl.style.display='none'; insertAtCursor(j.path+' '); } else { showNote('upload failed: '+((j&&j.error)||'unknown')); } })
+        .catch(function(){ showNote('upload failed (network)'); });
+    };
+    reader.readAsDataURL(f);
+  }
+  [fileCamera,filePhoto,fileDoc].forEach(function(inp){ inp.addEventListener('change', function(){ if(inp.files&&inp.files[0]) uploadFile(inp.files[0]); inp.value=''; }); });
+
+  // model picker
+  var modelWrap=document.getElementById('model-wrap');
+  var modelBtn=document.getElementById('model-btn');
+  var modelLabel=document.getElementById('model-label');
+  var modelMenu=document.getElementById('model-menu');
+  var currentModel=null;
+  function selectModel(mname){
+    closeMenus();
+    fetch('/api/sessions/'+encodeURIComponent(NAME)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:'/model '+mname})})
+      .then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(res){
+        if (res && res.ok===false){ showNote('model switch failed: '+(res.error||'unknown')); return; }
+        currentModel=mname; modelLabel.textContent=mname;
+        Array.prototype.forEach.call(modelMenu.children,function(c){ c.className = c.textContent===mname ? 'sel' : ''; });
+      })
+      .catch(function(){ showNote('model switch failed (network)'); });
+  }
+  function loadModels(){
+    fetch('/api/sessions/'+encodeURIComponent(NAME)+'/models',{cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var models=(j&&j.models)||[];
+        if (!models.length) return; // no operator-configured models → picker stays hidden
+        currentModel = j.current || null;
+        modelLabel.textContent = currentModel || 'model';
+        modelMenu.innerHTML='';
+        models.forEach(function(mname){
+          var b=document.createElement('button'); b.type='button'; b.textContent=mname;
+          if (mname===currentModel) b.className='sel';
+          b.addEventListener('click', function(){ selectModel(mname); });
+          modelMenu.appendChild(b);
+        });
+        modelWrap.style.display='block';
+        syncComposer();
+      })
+      .catch(function(){});
+  }
+  modelBtn.addEventListener('click', function(e){ e.stopPropagation(); var wasOpen=modelMenu.classList.contains('open'); closeMenus(); if(!wasOpen) openMenuAbove(modelMenu, modelBtn); });
+  document.addEventListener('click', closeMenus);
+
+  ta.addEventListener('input', syncComposer);
+  ta.addEventListener('keydown', function(e){ if (e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
+  sendBtn.addEventListener('click', function(){ if (stopMode) doStop(); else send(); });
+  window.addEventListener('resize', syncComposer);
+  syncComposer();
+  loadModels();
+  connect();
+})();
+</script>
+</body></html>`;
+}
+
+function sessionPage(name: string, agentKey: string): string {
+  const escapedName = escapeHtml(name);
+  const agentLabel = DEFAULT_AGENTS[agentKey]?.displayName ?? agentKey;
   const jsonName = JSON.stringify(name);
   const jsonVersion = JSON.stringify(DAEMON_VERSION);
   return `<!doctype html><html lang="en"><head>
@@ -2530,22 +2997,7 @@ function sessionPage(name: string): string {
   html,body{margin:0;background:#0b0c10;color:#eee;font-family:ui-monospace,monospace;overscroll-behavior:none}
   html{height:100dvh}
   body{height:100dvh;min-height:100dvh}
-  #topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:#11141a;border-bottom:1px solid #1f2329;display:flex;align-items:center;gap:8px;padding:0 10px;z-index:21;box-sizing:border-box}
-  #topbar #back{flex:0 0 auto;background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;height:26px;width:36px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-family:system-ui,sans-serif;font-size:16px;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
-  #topbar #back:active{background:#252b34;border-color:#3a414b}
-  #title-block{flex:1 1 auto;display:flex;align-items:center;gap:8px;color:#c9d1d9;font-size:12px;min-width:0}
-  #title-dot{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#9aa0a6;transition:background .2s,box-shadow .2s;cursor:pointer}
-  #title-dot[data-state="live"]{background:#7ee787;box-shadow:0 0 6px #7ee78766}
-  #title-dot[data-state="error"],#title-dot[data-state="closed"],#title-dot[data-state="reconnecting"]{background:#f85149}
-  #title-dot[data-state="reconnecting"]{animation:pulse 1s ease-in-out infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-  #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #title-brand{flex:0 0 auto;color:#7cc4ff;font-size:11px;font-weight:600;letter-spacing:.08em;padding-left:8px}
-  #title-version{flex:0 0 auto;color:#7a7f87;font-size:10px;padding-left:6px}
-  #copy-buf,#copy-all{flex:0 0 auto;background:#1c2128;color:#7ee787;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:500 11px/1 ui-monospace,monospace;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none;margin-right:4px;transition:background .12s,border-color .12s,color .12s}
-  #copy-buf{margin-left:auto}
-  #copy-buf:active,#copy-all:active{background:#252b34;border-color:#3a414b}
-  #copy-buf.copied,#copy-all.copied{color:#0b0c10;background:#7ee787;border-color:#7ee787}
+  ${sessionTopbarCss()}
   #bar{position:fixed;bottom:0;left:0;right:0;height:var(--bar-h);background:#11141a;border-top:1px solid #1f2329;display:flex;flex-direction:column;gap:8px;padding:6px 0 14px;z-index:20;box-sizing:border-box}
   #bar .row{display:flex;align-items:center;gap:6px;padding:0 6px;flex:0 0 auto;height:32px}
   #bar .row.arrows{justify-content:center}
@@ -2600,14 +3052,7 @@ function sessionPage(name: string): string {
   }
 </style></head>
 <body>
-<div id="topbar">
-  <button id="back" title="Back to chat list">⌂</button>
-  <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapedName}</span></span>
-  <button id="copy-buf" title="Copy visible terminal text" aria-label="copy visible">Copy</button>
-  <button id="copy-all" title="Copy full scrollback" aria-label="copy all">All</button>
-  <span id="title-brand">LLMUX</span>
-  <span id="title-version">v${escapeHtml(DAEMON_VERSION)}</span>
-</div>
+${sessionTopbar(name, agentLabel, 'terminal')}
 <div id="bar">
   <div class="row arrows">
     <button data-mod="shift" title="Shift (next char uppercase; double-tap to lock)">Shift</button>
@@ -3118,26 +3563,8 @@ function sessionPage(name: string): string {
     btn.classList.add('copied');
     setTimeout(function(){ btn.classList.remove('copied'); }, 600);
   }
-  const copyBufBtn = document.getElementById('copy-buf');
-  copyBufBtn.addEventListener('click', function(e){
-    e.preventDefault();
-    if (!term.buffer || !term.buffer.active){ return; }
-    const top = term.buffer.active.viewportY;
-    const text = _readBufferRange(top, top + term.rows);
-    if (!text){ _showCopyToast('nothing to copy'); return; }
-    _writeClipboard(text);
-    _flashButton(copyBufBtn);
-  });
-  const copyAllBtn = document.getElementById('copy-all');
-  copyAllBtn.addEventListener('click', function(e){
-    e.preventDefault();
-    if (!term.buffer || !term.buffer.active){ return; }
-    const total = term.buffer.active.length;
-    const text = _readBufferRange(0, total);
-    if (!text){ _showCopyToast('nothing to copy'); return; }
-    _writeClipboard(text);
-    _flashButton(copyAllBtn);
-  });
+  // (Copy / All topbar buttons removed — desktop auto-copy on selection below
+  //  still handles clipboard.)
 
   // --- Desktop: auto-copy on xterm selection change (ttyd's pattern). ---
   //     On desktop, mouse-drag triggers xterm's internal selection, which
@@ -3838,7 +4265,7 @@ export function editSession(
     }
   }
 
-  const live = tmux.listSessions().some((s) => s.name === updated.name);
+  const live = tmux.listSessions().some((s) => s.name === updated.name) && tmux.isOwnedSession(updated.name);
   return { ok: true, session: viewOf(updated, live) };
 }
 
@@ -3885,7 +4312,17 @@ const KILL_RE = /^\/api\/sessions\/([^/]+)\/kill$/;
 const RESUME_RE = /^\/api\/sessions\/([^/]+)\/resume$/;
 const SEND_RE = /^\/api\/sessions\/([^/]+)\/send$/;
 const CONVERSATIONS_RE = /^\/api\/sessions\/([^/]+)\/conversations$/;
+const TRANSCRIPT_RE = /^\/api\/sessions\/([^/]+)\/transcript$/;
+const TRANSCRIPT_STREAM_RE = /^\/api\/sessions\/([^/]+)\/transcript\/stream$/;
+const MODELS_RE = /^\/api\/sessions\/([^/]+)\/models$/;
+const UPLOAD_RE = /^\/api\/sessions\/([^/]+)\/upload$/;
+const INTERRUPT_RE = /^\/api\/sessions\/([^/]+)\/interrupt$/;
 const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
+
+// Cap the initial chat-view snapshot — a long-running Claude Code transcript
+// can be hundreds of MB; we never ship the whole history to the browser, just
+// the tail. Live turns stream in after.
+const TRANSCRIPT_SNAPSHOT_MAX = 300;
 
 export function startServer(opts: ServeOptions): ServerHandle {
   // Boot snapshot — refreshed in-place by the PUT /api/settings/* handlers
@@ -4331,6 +4768,43 @@ export function startServer(opts: ServeOptions): ServerHandle {
       }
     }
     if (method === 'POST') {
+      // ---- Chat view: file attachment upload ----
+      // Saves an uploaded file (base64 JSON) into <cwd>/.llmux-uploads/ and
+      // returns its path so the composer can reference it to the agent (CLI
+      // agents like Claude Code read image/doc files by path).
+      const mUpload = url.pathname.match(UPLOAD_RE);
+      if (mUpload) {
+        const name = decodeURIComponent(mUpload[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: 'session not found' }, 404);
+        try {
+          const body = (await readJsonBody(req, 12 * 1024 * 1024)) as { filename?: unknown; dataBase64?: unknown };
+          if (typeof body.filename !== 'string' || typeof body.dataBase64 !== 'string') {
+            return sendJson(res, { ok: false, error: 'filename and dataBase64 required' }, 400);
+          }
+          const safe = basename(body.filename).replace(/[^\w.\-]+/g, '_').slice(0, 120) || 'upload';
+          const dir = join(session.cwd, '.llmux-uploads');
+          mkdirSync(dir, { recursive: true });
+          const dest = join(dir, safe);
+          writeFileSync(dest, Buffer.from(body.dataBase64, 'base64'));
+          return sendJson(res, { ok: true, path: dest });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'upload failed' }, 400);
+        }
+      }
+      // ---- Chat view: interrupt (Stop button → Escape into the pane) ----
+      const mInterrupt = url.pathname.match(INTERRUPT_RE);
+      if (mInterrupt) {
+        const name = decodeURIComponent(mInterrupt[1]!);
+        if (!state.get(name)) return sendJson(res, { ok: false, error: `no tracked session "${name}"` }, 404);
+        if (!tmux.hasSession(name)) return sendJson(res, { ok: false, error: `session "${name}" is not running` }, 409);
+        try {
+          tmux.sendKey(name, 'Escape');
+          return sendJson(res, { ok: true });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'interrupt failed' }, 500);
+        }
+      }
       const mRespawn = url.pathname.match(RESPAWN_RE);
       if (mRespawn) {
         const name = decodeURIComponent(mRespawn[1]!);
@@ -4391,6 +4865,152 @@ export function startServer(opts: ServeOptions): ServerHandle {
       }
     }
     if (method === 'GET') {
+      // ---- Chat view: transcript snapshot + live SSE tail ----
+      // The chat GUI renders a session's conversation by reading the agent's
+      // on-disk transcript (never the PTY byte stream — so it sidesteps the
+      // turnq display-filter freeze class entirely). Input goes through the
+      // existing /send send-keys route.
+      const mTStream = url.pathname.match(TRANSCRIPT_STREAM_RE);
+      if (mTStream) {
+        const name = decodeURIComponent(mTStream[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: 'session not found' }, 404);
+        const agent = DEFAULT_AGENTS[session.agent];
+        const hist = agent?.history;
+        const cwd = session.cwd;
+
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache, no-transform',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        });
+        res.write(': stream open\n\n');
+
+        if (!hist?.currentTranscript || !hist.readTranscript || !hist.parseTranscriptLine) {
+          res.write('event: unsupported\ndata: {}\n\n');
+          res.end();
+          return;
+        }
+
+        let activePath: string | undefined;
+        let offset = 0;
+        let leftover = '';
+        let fileWatcher: FSWatcher | undefined;
+
+        const sendTurn = (t: unknown) => {
+          try { res.write(`data: ${JSON.stringify(t)}\n\n`); } catch {}
+        };
+
+        // Read appended bytes from the active file and emit each complete line
+        // as normalized turns. Offset-based so we never re-parse the whole file.
+        const drain = () => {
+          if (!activePath) return;
+          try {
+            const size = statSync(activePath).size;
+            if (size < offset) { offset = 0; leftover = ''; } // truncated / rotated
+            if (size <= offset) return;
+            const fd = openSync(activePath, 'r');
+            const buf = Buffer.alloc(size - offset);
+            readSync(fd, buf, 0, size - offset, offset);
+            closeSync(fd);
+            offset = size;
+            leftover += buf.toString('utf8');
+            let idx: number;
+            while ((idx = leftover.indexOf('\n')) >= 0) {
+              const line = leftover.slice(0, idx);
+              leftover = leftover.slice(idx + 1);
+              if (line) for (const turn of hist.parseTranscriptLine!(line)) sendTurn(turn);
+            }
+          } catch {}
+        };
+
+        const watchActive = () => {
+          if (fileWatcher) { try { fileWatcher.close(); } catch {} fileWatcher = undefined; }
+          if (!activePath) return;
+          try { fileWatcher = watch(activePath, () => drain()); } catch {}
+        };
+
+        // Attach to a transcript file: emit its tail as the initial snapshot,
+        // then park the offset at EOF so the tailer only ships new lines.
+        const attach = (path: string) => {
+          activePath = path;
+          offset = 0;
+          leftover = '';
+          try {
+            const all = hist.readTranscript!(path);
+            const init = all.length > TRANSCRIPT_SNAPSHOT_MAX ? all.slice(-TRANSCRIPT_SNAPSHOT_MAX) : all;
+            for (const turn of init) sendTurn(turn);
+          } catch {}
+          try { offset = statSync(path).size; } catch { offset = 0; }
+          watchActive();
+        };
+
+        const initial = hist.currentTranscript(cwd);
+        if (initial) attach(initial);
+
+        // Poll for the active file switching (fresh spawn writes a new file) and
+        // as a drain fallback on platforms where fs.watch is flaky.
+        const poll = setInterval(() => {
+          try {
+            const p = hist.currentTranscript!(cwd);
+            if (p && p !== activePath) {
+              try { res.write('event: reset\ndata: {}\n\n'); } catch {}
+              attach(p);
+            } else if (p && p === activePath) {
+              drain();
+            }
+          } catch {}
+        }, 2000);
+
+        const heartbeat = setInterval(() => {
+          try { res.write(': heartbeat\n\n'); } catch {}
+        }, 30000);
+
+        req.on('close', () => {
+          clearInterval(poll);
+          clearInterval(heartbeat);
+          if (fileWatcher) { try { fileWatcher.close(); } catch {} }
+          try { res.end(); } catch {}
+        });
+        return;
+      }
+
+      const mTranscript = url.pathname.match(TRANSCRIPT_RE);
+      if (mTranscript) {
+        const name = decodeURIComponent(mTranscript[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: 'session not found' }, 404);
+        const agent = DEFAULT_AGENTS[session.agent];
+        const hist = agent?.history;
+        if (!hist?.currentTranscript || !hist.readTranscript) {
+          return sendJson(res, { supported: false, path: null, turns: [] });
+        }
+        const path = hist.currentTranscript(session.cwd);
+        if (!path) return sendJson(res, { supported: true, path: null, turns: [] });
+        try {
+          const all = hist.readTranscript(path);
+          const turns = all.length > TRANSCRIPT_SNAPSHOT_MAX ? all.slice(-TRANSCRIPT_SNAPSHOT_MAX) : all;
+          return sendJson(res, { supported: true, path, truncated: all.length > turns.length, turns });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'transcript read failed' }, 500);
+        }
+      }
+
+      // ---- Chat view: model picker options (operator-configured, not hardcoded) ----
+      const mModels = url.pathname.match(MODELS_RE);
+      if (mModels) {
+        const name = decodeURIComponent(mModels[1]!);
+        const session = state.get(name);
+        if (!session) return sendJson(res, { ok: false, error: 'session not found' }, 404);
+        const models = currentConfig?.agents?.[session.agent]?.models ?? [];
+        // Best-effort current model: parse a --model flag out of the effective
+        // launch flags (per-session override, else the agent default).
+        const flags = session.flags ?? DEFAULT_AGENTS[session.agent]?.flags ?? '';
+        const m = flags.match(/--model[ =]([^\s]+)/);
+        return sendJson(res, { models, current: m ? m[1] : null });
+      }
+
       const mConvs = url.pathname.match(CONVERSATIONS_RE);
       if (mConvs) {
         const name = decodeURIComponent(mConvs[1]!);
@@ -4461,12 +5081,21 @@ export function startServer(opts: ServeOptions): ServerHandle {
       const name = decodeURIComponent(url.pathname.slice('/session/'.length));
       const session = state.get(name);
       if (!session) return sendText(res, 'session not found', 404);
-      // If tmux doesn't have it, serve the dead-session page instead of the chat
+      // If tmux doesn't have it (or it's a foreign session that merely collides
+      // with our tracked name), serve the dead-session page instead of the chat
       // (which would immediately disconnect when pty.spawn('tmux attach …') fails).
-      if (!tmux.hasSession(name)) {
+      if (!tmux.hasSession(name) || !tmux.isOwnedSession(name)) {
         return sendHtml(res, deadSessionPage(viewOf(session, false)));
       }
-      return sendHtml(res, sessionPage(name));
+      return sendHtml(res, sessionPage(name, session.agent));
+    }
+    if (url.pathname.startsWith('/chat/')) {
+      const name = decodeURIComponent(url.pathname.slice('/chat/'.length));
+      const session = state.get(name);
+      if (!session) return sendText(res, 'session not found', 404);
+      // The chat view reads the on-disk transcript, so unlike the terminal it
+      // works even when tmux has no live pane (shows the last conversation).
+      return sendHtml(res, chatPage(name, session.agent));
     }
     return sendText(res, 'not found', 404);
   });
@@ -4491,7 +5120,10 @@ export function startServer(opts: ServeOptions): ServerHandle {
         socket.destroy();
         return;
       }
-      if (!tmux.hasSession(name)) {
+      // Reject not just "no live session" but also "live session that isn't
+      // ours" — a same-named tmux session the operator created independently
+      // must never be attached to and driven by llmux.
+      if (!tmux.hasSession(name) || !tmux.isOwnedSession(name)) {
         socket.write('HTTP/1.1 409 Conflict\r\n\r\n');
         socket.destroy();
         return;
@@ -4519,6 +5151,13 @@ export function startServer(opts: ServeOptions): ServerHandle {
 }
 
 function attachSession(ws: WebSocket, sessionName: string): void {
+  // Defense-in-depth: the upgrade handler already gates on isOwnedSession,
+  // but re-check here too so this function is never safe to call with an
+  // un-owned name, even if a future call site skips the handler's gate.
+  if (!tmux.isOwnedSession(sessionName)) {
+    ws.close(4040, `session "${sessionName}" is not an llmux session (foreign tmux session)`);
+    return;
+  }
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
