@@ -167,6 +167,21 @@ export interface AgentDefinition {
    * unrelated.
    */
   sessionIdFlag?: (id: string) => string;
+  /**
+   * Fallback for agents with NO sessionIdFlag equivalent (no way to choose
+   * an id ahead of time) — discovers the id of a just-spawned FRESH
+   * session by watching for its conversation-history file to appear,
+   * instead of guessing by mtime later. Called fire-and-forget right after
+   * a non-resumed spawn; resolves once the new file is found (or undefined
+   * on timeout), so the caller can persist it as `externalSessionId`
+   * exactly like a sessionIdFlag-generated id.
+   *
+   * Only meaningful together with `history` — this exists specifically to
+   * close the fresh-spawn half of the same cross-session-shadowing risk
+   * sessionIdFlag closes for the resumed half, for CLIs that can't be
+   * given an id upfront (e.g. Codex has no --session-id equivalent).
+   */
+  detectFreshSessionId?: (ctx: { cwd: string }) => Promise<string | undefined>;
 }
 
 /**
@@ -585,6 +600,37 @@ function codexSessionCwd(fpath: string): string | undefined {
     }
   } catch {
     // not parseable
+  }
+  return undefined;
+}
+
+/**
+ * Codex has no --session-id-equivalent flag, so a fresh spawn's id can't be
+ * chosen ahead of time the way Claude Code's sessionIdFlag does. Instead:
+ * snapshot the existing rollout files right before spawn, then poll for a
+ * NEW one to appear whose session_meta.cwd matches — that new file's id is
+ * the just-spawned session's id, discovered instead of guessed. Codex
+ * writes session_meta as the very first line as soon as the file is
+ * created, so this doesn't need to wait for any real conversation content.
+ */
+async function codexDetectFreshSessionId(ctx: { cwd: string }): Promise<string | undefined> {
+  const before = new Set(walkCodexSessionFiles());
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    for (const fpath of walkCodexSessionFiles()) {
+      if (before.has(fpath)) continue;
+      const first = readFirstNonEmptyLine(fpath);
+      if (!first) continue;
+      try {
+        const evt = JSON.parse(first) as { type?: string; payload?: { cwd?: string; id?: string } };
+        if (evt.type === 'session_meta' && evt.payload?.cwd === ctx.cwd && typeof evt.payload.id === 'string') {
+          return evt.payload.id;
+        }
+      } catch {
+        // not parseable yet (file created but first line not fully written) — try again next poll
+      }
+    }
   }
   return undefined;
 }
@@ -1842,7 +1888,7 @@ const claudeInstalled = (): boolean => {
 
 export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   claude:   { key: 'claude',   displayName: 'Claude Code',         cmd: 'claude',       flags: '--dangerously-skip-permissions',     readyPrompt: '^>', detectInstalled: claudeInstalled, installHint: 'curl -fsSL https://claude.ai/install.sh | bash', docsUrl: 'https://docs.claude.com/en/docs/claude-code/overview', history: claudeHistory, sessionIdFlag: (id) => `--session-id ${id}` },
-  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory, preSpawn: codexPreSpawnTrust },
+  codex:    { key: 'codex',    displayName: 'Codex CLI',           cmd: 'codex',        flags: '--dangerously-bypass-approvals-and-sandbox',     readyPrompt: '^>', installHint: 'npm install -g @openai/codex',                    docsUrl: 'https://github.com/openai/codex', history: codexHistory, preSpawn: codexPreSpawnTrust, detectFreshSessionId: codexDetectFreshSessionId },
   agy:      { key: 'agy',      displayName: 'Antigravity CLI',     cmd: 'agy',          flags: '--dangerously-skip-permissions',  readyPrompt: '^agy>', installHint: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docsUrl: 'https://antigravity.google/docs/cli-install', history: agyHistory },
   gemini:   { key: 'gemini',   displayName: 'Gemini CLI',          cmd: 'gemini',       flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @google/gemini-cli',               docsUrl: 'https://github.com/google-gemini/gemini-cli', history: geminiHistory },
   qwen:     { key: 'qwen',     displayName: 'Qwen Code',           cmd: 'qwen',         flags: '--yolo',     readyPrompt: '^>', installHint: 'npm install -g @qwen-code/qwen-code',             docsUrl: 'https://github.com/QwenLM/qwen-code', history: qwenHistory },

@@ -596,6 +596,42 @@ async function dispatchLogs(verb: string | undefined, args: string[], env: Globa
   }
 }
 
+/**
+ * Undocumented — not in printRootHelp, not a real user-facing command.
+ * Re-invoked as a DETACHED background process by handlers.ts right after a
+ * fresh (non-resumed) spawn, for agents with detectFreshSessionId (only
+ * Codex, currently — no --session-id-equivalent flag to pin an id upfront).
+ *
+ * Why a whole separate process instead of just awaiting the promise
+ * in-process: `session start`/`session prompt` are short interactive CLI
+ * invocations, not a long-lived daemon — detection can take up to 15s
+ * (polling for a new rollout file to appear), and blocking the parent on
+ * that turned `llmux session start codex` into a command that hangs for up
+ * to 15 extra seconds every time, even when there's no actual collision to
+ * resolve (confirmed live: a fire-and-forget promise in-process still kept
+ * the whole node process alive via its pending timers, so the shell
+ * prompt didn't return until the poll settled). Detaching lets the parent
+ * return immediately like it always did; this process outlives it,
+ * finishes the poll on its own, and exits.
+ */
+async function dispatchInternalDetectFreshSessionId(args: string[]): Promise<void> {
+  const [agentKey, sessionName, cwd, resumeFrom] = args;
+  if (!agentKey || !sessionName || !cwd) return;
+  if (resumeFrom) return; // already deterministic — nothing to detect
+  const agent = DEFAULT_AGENTS[agentKey];
+  if (!agent?.detectFreshSessionId) return;
+  let id: string | undefined;
+  try {
+    id = await agent.detectFreshSessionId({ cwd });
+  } catch {
+    return;
+  }
+  if (!id) return;
+  const current = state.get(sessionName);
+  if (!current || current.resumeFrom || current.cwd !== cwd) return;
+  state.record({ ...current, externalSessionId: id });
+}
+
 async function dispatchSettings(verb: string | undefined, args: string[]): Promise<void> {
   if (!verb) {
     printVerbHelp('settings', verb);
@@ -657,6 +693,17 @@ async function main(): Promise<void> {
       case 'auth':
         await dispatchAuth(verb, remainder, env);
         return;
+      // Hidden — not in printRootHelp. Internal re-invocation point for
+      // detached background helper processes (see
+      // dispatchInternalDetectFreshSessionId's docstring).
+      case 'internal':
+        switch (verb) {
+          case 'detect-fresh-session-id':
+            await dispatchInternalDetectFreshSessionId(remainder);
+            return;
+          default:
+            return;
+        }
       // Backward-compat shorthand — some shells will already have `llmuxd serve`
       // wired up. These verbs sit at noun-position so all of rest.slice(1) is
       // their args, not just slice(2).

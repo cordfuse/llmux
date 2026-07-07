@@ -4116,6 +4116,43 @@ export function buildAgentCommand(
   return externalSessionId !== undefined ? { command, externalSessionId } : { command };
 }
 
+/**
+ * Fresh-spawn counterpart to sessionIdFlag, for agents that can't be given
+ * an id upfront (currently only Codex). Split into two calls, deliberately:
+ * detectFreshSessionId takes its "existing files" snapshot SYNCHRONOUSLY as
+ * the first thing it does (before its first await) — calling it must
+ * happen BEFORE tmux.newSession spawns the process, or the just-created
+ * file can already be in that snapshot if the CLI writes it fast enough,
+ * permanently hiding it from the "what's new" diff. Confirmed live: with
+ * the single-call version (armed AFTER tmux.newSession), a real spawn's
+ * rollout file already existed by the time the snapshot was taken and
+ * never got detected.
+ */
+export function startFreshSessionIdDetection(agent: AgentDefinition, cwd: string, resumeFrom: string | undefined): Promise<string | undefined> | undefined {
+  if (resumeFrom || !agent.detectFreshSessionId) return undefined;
+  return agent.detectFreshSessionId({ cwd });
+}
+
+/**
+ * Attaches the persist step to a promise started by startFreshSessionIdDetection
+ * — call once spawn has actually succeeded and the session is recorded.
+ * Re-reads the CURRENT session record (not a captured reference — avoids
+ * clobbering any edits/respawns during the up-to-15s detection window) and
+ * persists the discovered id, provided the session hasn't since been
+ * resumed (already has its own deterministic id), renamed away, or — if
+ * spawn itself failed after detection was already started — never
+ * recorded at all.
+ */
+export function armFreshSessionIdDetection(name: string, pending: Promise<string | undefined> | undefined): void {
+  if (!pending) return;
+  pending.then((id) => {
+    if (!id) return;
+    const current = state.get(name);
+    if (!current || current.resumeFrom) return;
+    state.record({ ...current, externalSessionId: id });
+  }).catch(() => { /* best-effort — chat view falls back to the mtime guess */ });
+}
+
 function viewOf(s: state.SessionState, live: boolean): SessionView {
   const agentDef = DEFAULT_AGENTS[s.agent];
   let conversationCount = 0;
@@ -4233,6 +4270,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
 
   const llmuxEnv: Record<string, string> = { LLMUX_SESSION: name, LLMUX_AGENT: agentDef.key };
   if (input.orchAlias) llmuxEnv['LLMUX_ORCH_ALIAS'] = input.orchAlias;
+  const freshIdPending = startFreshSessionIdDetection(agentDef, cwd, resumeFrom);
   agentDef.preSpawn?.({ cwd });
   const built = buildAgentCommand(agentDef, flagsOverride, resumeFrom);
   try {
@@ -4261,6 +4299,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
     restart: 'on-failure',
   };
   state.record(session);
+  armFreshSessionIdDetection(name, freshIdPending);
 
   return { ok: true, session: viewOf(session, true) };
 }
@@ -4281,6 +4320,7 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
     }
   }
   let built: BuiltAgentCommand;
+  const freshIdPending = startFreshSessionIdDetection(agent, session.cwd, session.resumeFrom);
   try {
     agent.preSpawn?.({ cwd: session.cwd });
     built = buildAgentCommand(agent, session.flags, session.resumeFrom);
@@ -4303,6 +4343,7 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
     createdAt: new Date().toISOString(),
   };
   state.record(refreshed);
+  armFreshSessionIdDetection(session.name, freshIdPending);
   return { ok: true, session: viewOf(refreshed, true) };
 }
 
@@ -4444,6 +4485,7 @@ export function editSession(
   if ((cwdChanged || resumeChanged) && tmux.hasSession(updated.name)) {
     const agent = DEFAULT_AGENTS[updated.agent];
     if (agent && isAgentInstalled(agent)) {
+      const freshIdPending = startFreshSessionIdDetection(agent, updated.cwd, updated.resumeFrom);
       try {
         tmux.killSession(updated.name);
         agent.preSpawn?.({ cwd: updated.cwd });
@@ -4466,6 +4508,7 @@ export function editSession(
           createdAt: new Date().toISOString(),
         };
         state.record(refreshed);
+        armFreshSessionIdDetection(updated.name, freshIdPending);
         return { ok: true, session: viewOf(refreshed, true) };
       } catch (err) {
         const what = cwdChanged && resumeChanged ? 'cwd + resumeFrom' : (cwdChanged ? 'cwd' : 'resumeFrom');

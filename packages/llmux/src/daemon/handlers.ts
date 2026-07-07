@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
+import { spawn as spawnProcess } from 'node:child_process';
 import qrcodeTerminal from 'qrcode-terminal';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition } from './agents.ts';
 import { loadConfig } from './config.ts';
@@ -17,6 +18,31 @@ import * as turnqIntegration from './turnq-integration.ts';
 import { hostname } from 'node:os';
 import { getAddresses } from './net.ts';
 import type { ParsedArgs } from '../cli.ts';
+
+/**
+ * Fresh-spawn id detection (see AgentDefinition.detectFreshSessionId) needs
+ * up to 15s of polling — fine for the daemon (long-lived, doesn't block the
+ * HTTP response), but these are short interactive CLI invocations: blocking
+ * in-process on the same promise kept the whole node process alive via its
+ * pending timers, turning `llmux session start codex` into a command that
+ * hangs for up to 15 extra seconds every time. Re-invokes this SAME binary
+ * as a detached, unref'd child running the hidden `internal
+ * detect-fresh-session-id` command instead — the parent returns
+ * immediately, the child outlives it and finishes the poll on its own.
+ */
+function spawnFreshSessionIdDetector(agentKey: string, sessionName: string, cwd: string, resumeFrom: string | undefined): void {
+  if (resumeFrom || !DEFAULT_AGENTS[agentKey]?.detectFreshSessionId) return;
+  try {
+    const child = spawnProcess(
+      process.execPath,
+      [process.argv[1]!, 'internal', 'detect-fresh-session-id', agentKey, sessionName, cwd],
+      { detached: true, stdio: 'ignore' },
+    );
+    child.unref();
+  } catch {
+    // best-effort — chat view falls back to the mtime guess
+  }
+}
 
 // ---------- v2 token store (CLI-local access) ----------
 // CLI handlers talk directly to the v2 store on disk. There's no
@@ -235,6 +261,11 @@ export async function handleSpawn(args: ParsedArgs): Promise<void> {
       : operatorPrompts;
     const llmuxEnv: Record<string, string> = { LLMUX_SESSION: sessionName, LLMUX_AGENT: agent.key };
     if (orchAlias) llmuxEnv['LLMUX_ORCH_ALIAS'] = orchAlias;
+    // Before newSession — the detached child takes its own "existing files"
+    // snapshot as soon as it starts, so it needs a head start over the CLI
+    // the agent is about to create, same reasoning as sessionIdFlag's
+    // ordering (see spawnFreshSessionIdDetector's docstring).
+    spawnFreshSessionIdDetector(agent.key, sessionName, cwd, effectiveResume);
     agent.preSpawn?.({ cwd });
     const built = buildAgentCommand(agent, flagsOverride, effectiveResume);
     tmux.newSession({
@@ -800,6 +831,7 @@ async function respawnOne(target: string, opts: { skipInit?: boolean } = {}): Pr
     tmux.killSession(target);
   }
 
+  spawnFreshSessionIdDetector(agent.key, target, session.cwd, session.resumeFrom);
   agent.preSpawn?.({ cwd: session.cwd });
   const built = buildAgentCommand(agent, session.flags, session.resumeFrom);
   tmux.newSession({
