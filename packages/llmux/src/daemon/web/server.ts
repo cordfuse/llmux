@@ -13,6 +13,7 @@ import type { IPty } from 'node-pty';
 import { DEFAULT_AGENTS, isAgentInstalled, type AgentDefinition, type Conversation } from '../agents.ts';
 import * as state from '../state.ts';
 import * as tmux from '../tmux.ts';
+import { detectPendingPrompt } from '../prompt-detect.ts';
 import * as authStore from '../auth-store.ts';
 import { getAddresses } from '../net.ts';
 import { loadConfig, loadOverride, overridePath, saveOverride, type LlmuxConfig, type TurnqConfig } from '../config.ts';
@@ -2612,6 +2613,18 @@ function chatPage(name: string, agentKey: string): string {
   details.tool summary::-webkit-details-marker{display:none}
   details.tool.err summary{color:#f85149}
   .tool-body{margin:0;padding:8px 11px;border-top:1px solid #20252e;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;color:#c9d1d9}
+  .turn.prompt-pending{justify-content:flex-start}
+  .prompt-card{background:#12151c;border:1px solid #2b323d;border-radius:10px;padding:10px 12px;max-width:82%;width:100%;display:flex;flex-direction:column;gap:8px}
+  .prompt-header{font-size:11px;color:#7cc4ff;text-transform:uppercase;letter-spacing:.04em}
+  .prompt-question{font-size:14px;color:#e6e8eb;font-weight:600}
+  .prompt-options{display:flex;flex-direction:column;gap:6px}
+  .prompt-option{display:block;width:100%;text-align:left;background:#161b22;border:1px solid #262c34;border-radius:8px;padding:8px 10px;cursor:pointer;transition:background .12s,border-color .12s;font:inherit;color:inherit}
+  .prompt-option:hover{background:#1a1e27}
+  .prompt-option.sel{border-color:#2d5a85;background:#152230}
+  .prompt-option:disabled{opacity:.5;cursor:default}
+  .prompt-option.answering{border-color:#3fb950}
+  .prompt-option-label{font-size:14px;color:#e6e8eb;font-weight:600}
+  .prompt-option-desc{font-size:12px;color:#8a919b;margin-top:2px}
   #bar{position:fixed;bottom:0;left:0;right:0;background:transparent;padding:8px 12px 14px;z-index:20}
   /* #bar itself stays transparent so the composer pill can float free, but
      bubbles scrolling up need somewhere to go before they'd otherwise pass
@@ -2864,6 +2877,61 @@ ${sessionTopbar(name, agentLabel, 'chat')}
 
   function clearLog(){ innerEl.innerHTML=''; seen=Object.create(null); }
 
+  // --- pending-prompt card: option lists (e.g. Gemini's ask_user) that
+  // never reach a transcript event until answered — detected off the raw
+  // pane, so this arrives via its own SSE event, not addTurn(). ---
+  var pendingPromptEl = null;
+  var promptBusy = false;
+  function sendKeyTo(key){
+    return fetch('/api/sessions/'+encodeURIComponent(NAME)+'/key',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({key:key})});
+  }
+  function clearPendingPrompt(){
+    if (pendingPromptEl && pendingPromptEl.parentNode) pendingPromptEl.parentNode.removeChild(pendingPromptEl);
+    pendingPromptEl = null;
+  }
+  async function answerPrompt(p, targetIdx, btn, allButtons){
+    if (promptBusy) return;
+    promptBusy = true;
+    allButtons.forEach(function(b){ b.disabled = true; });
+    btn.classList.add('answering');
+    try {
+      var cur = (typeof p.selectedIndex === 'number') ? p.selectedIndex : 0;
+      var delta = targetIdx - cur;
+      var key = delta < 0 ? 'Up' : 'Down';
+      for (var i=0; i<Math.abs(delta); i++){ await sendKeyTo(key); }
+      await sendKeyTo('Enter');
+    } catch(e) {
+      allButtons.forEach(function(b){ b.disabled = false; });
+      btn.classList.remove('answering');
+    }
+    promptBusy = false;
+    // Left in place until the daemon confirms (via prompt-clear) the pane no
+    // longer shows it — avoids a flash if the keys didn't actually land.
+  }
+  function renderPendingPrompt(p){
+    clearPendingPrompt();
+    var wrap=document.createElement('div'); wrap.className='turn prompt-pending';
+    var card=document.createElement('div'); card.className='prompt-card';
+    if (p.header){ var h=document.createElement('div'); h.className='prompt-header'; h.textContent=p.header; card.appendChild(h); }
+    var q=document.createElement('div'); q.className='prompt-question'; q.textContent=p.question; card.appendChild(q);
+    var list=document.createElement('div'); list.className='prompt-options';
+    var buttons=[];
+    (p.options||[]).forEach(function(opt, idx){
+      var btn=document.createElement('button'); btn.type='button'; btn.className='prompt-option'+(idx===p.selectedIndex?' sel':'');
+      var lbl=document.createElement('div'); lbl.className='prompt-option-label'; lbl.textContent=opt.label; btn.appendChild(lbl);
+      if (opt.description){ var d=document.createElement('div'); d.className='prompt-option-desc'; d.textContent=opt.description; btn.appendChild(d); }
+      btn.addEventListener('click', function(){ answerPrompt(p, idx, btn, buttons); });
+      buttons.push(btn);
+      list.appendChild(btn);
+    });
+    card.appendChild(list);
+    wrap.appendChild(card);
+    var stick = atBottom();
+    if (typingEl && typingEl.parentNode) innerEl.insertBefore(wrap, typingEl); else innerEl.appendChild(wrap);
+    pendingPromptEl = wrap;
+    if (stick) scrollDown();
+  }
+
   function connect(){
     var es = new EventSource('/api/sessions/'+encodeURIComponent(NAME)+'/transcript/stream');
     es.onopen = function(){ dot.dataset.state='live'; dot.title='live'; };
@@ -2871,6 +2939,8 @@ ${sessionTopbar(name, agentLabel, 'chat')}
     es.onmessage = function(ev){ try{ addTurn(JSON.parse(ev.data)); }catch(e){} };
     es.addEventListener('reset', function(){ clearLog(); });
     es.addEventListener('unsupported', function(){ dot.dataset.state='error'; showNote('This agent has no transcript adapter yet — chat view unavailable. Use the Terminal view.'); });
+    es.addEventListener('prompt', function(ev){ try{ renderPendingPrompt(JSON.parse(ev.data)); }catch(e){} });
+    es.addEventListener('prompt-clear', function(){ clearPendingPrompt(); });
   }
 
   var barEl = document.getElementById('bar');
@@ -4321,6 +4391,10 @@ const TRANSCRIPT_STREAM_RE = /^\/api\/sessions\/([^/]+)\/transcript\/stream$/;
 const MODELS_RE = /^\/api\/sessions\/([^/]+)\/models$/;
 const UPLOAD_RE = /^\/api\/sessions\/([^/]+)\/upload$/;
 const INTERRUPT_RE = /^\/api\/sessions\/([^/]+)\/interrupt$/;
+const KEY_RE = /^\/api\/sessions\/([^/]+)\/key$/;
+// Allowlist for the chat view's pending-prompt answer flow (arrow-navigate +
+// Enter/Escape) — deliberately narrow, not a general "send any tmux key" API.
+const ALLOWED_KEYS = new Set(['Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab']);
 const EDIT_RE = /^\/api\/sessions\/([^/]+)$/;
 
 // Cap the initial chat-view snapshot — a long-running Claude Code transcript
@@ -4809,6 +4883,23 @@ export function startServer(opts: ServeOptions): ServerHandle {
           return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'interrupt failed' }, 500);
         }
       }
+      // ---- Chat view: answer a detected pending prompt (arrow-navigate + Enter) ----
+      const mKey = url.pathname.match(KEY_RE);
+      if (mKey) {
+        const name = decodeURIComponent(mKey[1]!);
+        if (!state.get(name)) return sendJson(res, { ok: false, error: `no tracked session "${name}"` }, 404);
+        if (!tmux.hasSession(name)) return sendJson(res, { ok: false, error: `session "${name}" is not running` }, 409);
+        try {
+          const body = (await readJsonBody(req)) as { key?: unknown };
+          if (typeof body.key !== 'string' || !ALLOWED_KEYS.has(body.key)) {
+            return sendJson(res, { ok: false, error: `key must be one of: ${[...ALLOWED_KEYS].join(', ')}` }, 400);
+          }
+          tmux.sendKey(name, body.key);
+          return sendJson(res, { ok: true });
+        } catch (err) {
+          return sendJson(res, { ok: false, error: err instanceof Error ? err.message : 'key send failed' }, 500);
+        }
+      }
       const mRespawn = url.pathname.match(RESPAWN_RE);
       if (mRespawn) {
         const name = decodeURIComponent(mRespawn[1]!);
@@ -4891,9 +4982,41 @@ export function startServer(opts: ServeOptions): ServerHandle {
         });
         res.write(': stream open\n\n');
 
+        // ---- Pending-prompt detection (option lists / questions that never
+        // reach a transcript event until resolved — see prompt-detect.ts).
+        // Works off the raw tmux pane directly, no per-agent adapter needed,
+        // so this runs regardless of transcript support below. ----
+        let lastPromptRaw: string | undefined;
+        const checkPrompt = () => {
+          try {
+            const pane = tmux.capturePane(name, 40);
+            const prompt = detectPendingPrompt(pane);
+            if (prompt && prompt.raw !== lastPromptRaw) {
+              lastPromptRaw = prompt.raw;
+              res.write(`event: prompt\ndata: ${JSON.stringify(prompt)}\n\n`);
+            } else if (!prompt && lastPromptRaw !== undefined) {
+              lastPromptRaw = undefined;
+              res.write('event: prompt-clear\ndata: {}\n\n');
+            }
+          } catch {}
+        };
+        checkPrompt();
+
+        // Transcript-based turn streaming needs a per-agent JSONL adapter —
+        // an agent without one still gets prompt detection above, so the
+        // stream stays open (just with its own poll/heartbeat/close) instead
+        // of ending here.
         if (!hist?.currentTranscript || !hist.readTranscript || !hist.parseTranscriptLine) {
           res.write('event: unsupported\ndata: {}\n\n');
-          res.end();
+          const promptOnlyPoll = setInterval(checkPrompt, 2000);
+          const heartbeat = setInterval(() => {
+            try { res.write(': heartbeat\n\n'); } catch {}
+          }, 30000);
+          req.on('close', () => {
+            clearInterval(promptOnlyPoll);
+            clearInterval(heartbeat);
+            try { res.end(); } catch {}
+          });
           return;
         }
 
@@ -4954,7 +5077,8 @@ export function startServer(opts: ServeOptions): ServerHandle {
         if (initial) attach(initial);
 
         // Poll for the active file switching (fresh spawn writes a new file) and
-        // as a drain fallback on platforms where fs.watch is flaky.
+        // as a drain fallback on platforms where fs.watch is flaky. Also
+        // carries the pending-prompt check (same cadence, one timer).
         const poll = setInterval(() => {
           try {
             const p = hist.currentTranscript!(cwd);
@@ -4965,6 +5089,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
               drain();
             }
           } catch {}
+          checkPrompt();
         }, 2000);
 
         const heartbeat = setInterval(() => {
