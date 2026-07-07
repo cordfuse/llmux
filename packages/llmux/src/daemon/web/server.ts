@@ -2607,6 +2607,12 @@ function chatPage(name: string, agentKey: string): string {
   details.tool.err summary{color:#f85149}
   .tool-body{margin:0;padding:8px 11px;border-top:1px solid #20252e;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;color:#c9d1d9}
   #bar{position:fixed;bottom:0;left:0;right:0;background:transparent;padding:8px 12px 14px;z-index:20}
+  /* #bar itself stays transparent so the composer pill can float free, but
+     bubbles scrolling up need somewhere to go before they'd otherwise pass
+     directly behind the input — this bleeds a fade above #bar's own box
+     (negative top, no clipping on #bar) so content eases into the page
+     background instead of hitting the composer with a hard edge. */
+  #bar::before{content:"";position:absolute;top:-32px;left:0;right:0;height:32px;background:linear-gradient(to bottom,transparent 0%,#0b0c10 100%);pointer-events:none}
   /* chatframe-style composer pill: textarea on top, icon send button beneath,
      rounded container whose border lifts to the accent on focus-within. */
   #composer{max-width:820px;margin:0 auto;background:transparent;border:none;border-radius:22px;overflow:hidden}
