@@ -886,6 +886,23 @@ function agyTranscriptPath(conversationId: string): string {
   return join(homedir(), '.gemini', 'antigravity-cli', 'brain', conversationId, '.system_generated', 'logs', 'transcript.jsonl');
 }
 
+function walkAgyBrainTranscripts(): string[] {
+  const root = join(homedir(), '.gemini', 'antigravity-cli', 'brain');
+  if (!existsSync(root)) return [];
+  let ids: string[];
+  try {
+    ids = readdirSync(root);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const id of ids) {
+    const p = agyTranscriptPath(id);
+    if (existsSync(p)) out.push(p);
+  }
+  return out;
+}
+
 function normalizeAgyTranscriptEvent(evt: AgyTranscriptEvent, lineId: string): TranscriptTurn[] {
   const type = evt.type;
   if (!type || AGY_SKIP_TRANSCRIPT_TYPES.has(type)) return [];
@@ -981,20 +998,22 @@ const agyHistory: AgentHistoryAdapter = {
   resumeFlag(id: string): string {
     return `--conversation ${id}`;
   },
-  currentTranscript(cwd: string): string | undefined {
-    // history.jsonl maps workspace -> conversationId; the transcript file
-    // itself carries no workspace field, so cwd resolution has to go
-    // through this join. Pick the candidate transcript with the newest
-    // mtime (the actively-written one), same selection rule as codex.
-    const lines = readAgyHistory();
-    const ids = new Set<string>();
-    for (const line of lines) {
-      if (line.workspace === cwd && line.conversationId) ids.add(line.conversationId);
-    }
+  currentTranscript(_cwd: string): string | undefined {
+    // Deliberately ignores cwd. history.jsonl's workspace->conversationId
+    // mapping (and agy's own cache/last_conversations.json) both turned out
+    // to be unreliable for THIS: verified live against a real running agy
+    // session where neither had recorded the conversationId actually in
+    // use (confirmed by cross-checking the process's own inotify-watched
+    // directory via /proc/<pid>/fdinfo). What IS reliable: the file agy is
+    // actively appending to is unambiguously the newest by mtime — in a
+    // real comparison the live transcript's mtime was ~11 days newer than
+    // the next-newest candidate. So: newest-mtime-wins, globally, no cwd
+    // filter. Known limitation: if two agy sessions in different cwds are
+    // both live at once, both chat views resolve to the same (most recent)
+    // one until the older session produces new output of its own.
     let best: string | undefined;
     let bestMtime = -1;
-    for (const id of ids) {
-      const p = agyTranscriptPath(id);
+    for (const p of walkAgyBrainTranscripts()) {
       try {
         const m = statSync(p).mtimeMs;
         if (m > bestMtime) {
@@ -1002,7 +1021,7 @@ const agyHistory: AgentHistoryAdapter = {
           best = p;
         }
       } catch {
-        // no transcript file for this conversation (yet, or ever)
+        // skip unreadable
       }
     }
     return best;
