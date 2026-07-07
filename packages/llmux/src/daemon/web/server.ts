@@ -114,7 +114,12 @@ function expandTilde(p: string): string {
 
 function listSessionViews(): SessionView[] {
   const tracked = state.list();
-  const live = new Set(tmux.listSessions().map((s) => s.name));
+  // Name matching alone isn't enough — a foreign tmux session (created by
+  // hand, colliding with a stale registry entry) must not be reported as
+  // "running". Filter to sessions llmux actually spawned.
+  const live = new Set(
+    tmux.listSessions().map((s) => s.name).filter((n) => tmux.isOwnedSession(n)),
+  );
   return tracked
     .map((s) => viewOf(s, live.has(s.name)))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -2581,7 +2586,7 @@ function chatPage(name: string, agentKey: string): string {
   .turn.assistant,.turn.toolrow{justify-content:flex-start}
   .turn.toolrow{margin:5px 14px}
   .bubble{position:relative;max-width:82%;border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.55;word-wrap:break-word;overflow-wrap:anywhere}
-  .bubble-copy{position:absolute;bottom:4px;right:4px;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:rgba(11,12,16,.7);color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.5;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
+  .bubble-copy{display:flex;margin:4px 0 0 auto;align-items:center;justify-content:center;width:24px;height:24px;background:rgba(11,12,16,.7);color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.5;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
   .bubble-copy:hover,.bubble-copy:active{opacity:1;color:#c9d1d9}
   .pre-wrap{position:relative}
   .code-copy{position:absolute;top:6px;right:6px;z-index:2;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#1c2128;color:#8a919b;border:1px solid #262c34;border-radius:6px;cursor:pointer;opacity:.75;transition:opacity .12s,color .12s;-webkit-tap-highlight-color:transparent}
@@ -2600,6 +2605,7 @@ function chatPage(name: string, agentKey: string): string {
   .md a{color:#7cc4ff}
   .md table{border-collapse:collapse;display:block;overflow-x:auto}
   .md th,.md td{border:1px solid #262c34;padding:4px 8px}
+  .md img{display:block;max-width:220px;max-height:220px;width:auto;height:auto;object-fit:cover;border-radius:8px;border:1px solid #262c34;cursor:zoom-in;margin:4px 0}
   details.tool{background:#12151c;border:1px solid #2b323d;border-radius:8px;margin:0;font-size:12.5px;max-width:82%;width:100%}
   details.tool.err{background:#1a1214;border-color:#5a2f2f}
   details.tool summary{cursor:pointer;padding:7px 11px;color:#7cc4ff;font-family:ui-monospace,monospace;user-select:none;list-style:none}
@@ -2646,6 +2652,12 @@ function chatPage(name: string, agentKey: string): string {
   #send.stop{background:#b62324;border-color:#d64545}
   #send.stop:hover{opacity:.9}
   #empty{color:#5a6068;text-align:center;padding:40px 20px;font-size:13px}
+  #lightbox{position:fixed;inset:0;background:rgba(11,12,16,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:80;opacity:0;visibility:hidden;transition:opacity 160ms ease,visibility 0s 160ms;padding:24px;box-sizing:border-box}
+  #lightbox.open{opacity:1;visibility:visible;transition:opacity 160ms ease}
+  #lightbox img{max-width:100%;max-height:calc(100% - 54px);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+  #lightbox .lightbox-bar{display:flex;gap:8px;margin-top:14px}
+  #lightbox .lightbox-bar a,#lightbox .lightbox-bar button{background:#1c2128;color:#e6e8eb;border:1px solid #262c34;border-radius:6px;padding:8px 16px;font:13px ui-monospace,monospace;cursor:pointer;text-decoration:none}
+  #lightbox .lightbox-bar a:hover,#lightbox .lightbox-bar button:hover{background:#262c34}
 </style></head>
 <body>
 ${sessionTopbar(name, agentLabel, 'chat')}
@@ -2678,6 +2690,13 @@ ${sessionTopbar(name, agentLabel, 'chat')}
     </button>
   </div>
 </div></div>
+<div id="lightbox" aria-hidden="true">
+  <img id="lightbox-img" src="" alt="">
+  <div class="lightbox-bar">
+    <a id="lightbox-download" href="" download>Download</a>
+    <button type="button" id="lightbox-close">Close</button>
+  </div>
+</div>
 <script src="${MARKED_JS}"></script>
 <script>
 (function(){
@@ -2776,6 +2795,23 @@ ${sessionTopbar(name, agentLabel, 'chat')}
       .catch(function(){ showNote('stop failed (network)'); });
     endInference();
   }
+
+  var lightbox = document.getElementById('lightbox');
+  var lightboxImg = document.getElementById('lightbox-img');
+  var lightboxDownload = document.getElementById('lightbox-download');
+  function openLightbox(src, alt){
+    lightboxImg.src = src; lightboxImg.alt = alt || '';
+    lightboxDownload.href = src;
+    lightboxDownload.download = (alt || 'image').replace(/[^a-z0-9_.-]+/gi,'_') || 'image';
+    lightbox.classList.add('open'); lightbox.setAttribute('aria-hidden','false');
+  }
+  function closeLightbox(){ lightbox.classList.remove('open'); lightbox.setAttribute('aria-hidden','true'); lightboxImg.src=''; }
+  document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+  lightbox.addEventListener('click', function(e){ if (e.target === lightbox) closeLightbox(); });
+  innerEl.addEventListener('click', function(e){
+    var img = e.target.closest && e.target.closest('.md img');
+    if (img) openLightbox(img.currentSrc || img.src, img.alt);
+  });
 
   function renderPart(p){
     if (p.kind === 'text'){ var d=document.createElement('div'); d.className='md'; d.innerHTML=md(p.text); return d; }
@@ -4229,7 +4265,7 @@ export function editSession(
     }
   }
 
-  const live = tmux.listSessions().some((s) => s.name === updated.name);
+  const live = tmux.listSessions().some((s) => s.name === updated.name) && tmux.isOwnedSession(updated.name);
   return { ok: true, session: viewOf(updated, live) };
 }
 
@@ -5045,9 +5081,10 @@ export function startServer(opts: ServeOptions): ServerHandle {
       const name = decodeURIComponent(url.pathname.slice('/session/'.length));
       const session = state.get(name);
       if (!session) return sendText(res, 'session not found', 404);
-      // If tmux doesn't have it, serve the dead-session page instead of the chat
+      // If tmux doesn't have it (or it's a foreign session that merely collides
+      // with our tracked name), serve the dead-session page instead of the chat
       // (which would immediately disconnect when pty.spawn('tmux attach …') fails).
-      if (!tmux.hasSession(name)) {
+      if (!tmux.hasSession(name) || !tmux.isOwnedSession(name)) {
         return sendHtml(res, deadSessionPage(viewOf(session, false)));
       }
       return sendHtml(res, sessionPage(name, session.agent));
@@ -5083,7 +5120,10 @@ export function startServer(opts: ServeOptions): ServerHandle {
         socket.destroy();
         return;
       }
-      if (!tmux.hasSession(name)) {
+      // Reject not just "no live session" but also "live session that isn't
+      // ours" — a same-named tmux session the operator created independently
+      // must never be attached to and driven by llmux.
+      if (!tmux.hasSession(name) || !tmux.isOwnedSession(name)) {
         socket.write('HTTP/1.1 409 Conflict\r\n\r\n');
         socket.destroy();
         return;
@@ -5111,6 +5151,13 @@ export function startServer(opts: ServeOptions): ServerHandle {
 }
 
 function attachSession(ws: WebSocket, sessionName: string): void {
+  // Defense-in-depth: the upgrade handler already gates on isOwnedSession,
+  // but re-check here too so this function is never safe to call with an
+  // un-owned name, even if a future call site skips the handler's gate.
+  if (!tmux.isOwnedSession(sessionName)) {
+    ws.close(4040, `session "${sessionName}" is not an llmux session (foreign tmux session)`);
+    return;
+  }
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
