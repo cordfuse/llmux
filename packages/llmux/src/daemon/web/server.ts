@@ -2607,6 +2607,8 @@ function chatPage(name: string, agentKey: string): string {
   .prompt-option.answering{border-color:#3fb950}
   .prompt-option-label{font-size:14px;color:#e6e8eb;font-weight:600}
   .prompt-option-desc{font-size:12px;color:#8a919b;margin-top:2px}
+  .prompt-cancel{margin-top:4px;border-style:dashed;text-align:center;color:#8a919b;font-size:13px;padding:6px 10px}
+  .prompt-cancel:hover{background:#1a1e27;color:#e6e8eb}
   .prompt-card.resolved{opacity:.85}
   .prompt-resolved{font-size:13px;color:#7ee787;font-weight:600}
   .prompt-note{font-size:11px;color:#8a919b;font-style:italic;margin-top:2px}
@@ -2913,6 +2915,24 @@ ${sessionTopbar(name, agentLabel, 'chat')}
     // Left in place until the daemon confirms (via prompt-clear) the pane no
     // longer shows it — avoids a flash if the keys didn't actually land.
   }
+  // Escape, not a selection — deliberately does NOT set answeredLabel, so
+  // the prompt-clear handler falls through to clearPendingPrompt() and the
+  // card just disappears, same as if the operator had cancelled from
+  // Terminal themselves. A "✓ Cancelled" resolved record would be more
+  // confusing than no record at all.
+  async function cancelPrompt(allButtons, btn){
+    if (promptBusy) return;
+    promptBusy = true;
+    allButtons.forEach(function(b){ b.disabled = true; });
+    btn.classList.add('answering');
+    try {
+      await sendKeyTo('Escape');
+    } catch(e) {
+      allButtons.forEach(function(b){ b.disabled = false; });
+      btn.classList.remove('answering');
+    }
+    promptBusy = false;
+  }
   function renderPendingPrompt(p){
     clearPendingPrompt();
     // A pending prompt means the agent is done thinking and parked waiting
@@ -2937,6 +2957,10 @@ ${sessionTopbar(name, agentLabel, 'chat')}
       buttons.push(btn);
       list.appendChild(btn);
     });
+    var cancelBtn=document.createElement('button'); cancelBtn.type='button'; cancelBtn.className='prompt-option prompt-cancel'; cancelBtn.textContent='Cancel';
+    cancelBtn.addEventListener('click', function(){ cancelPrompt(buttons, cancelBtn); });
+    buttons.push(cancelBtn);
+    list.appendChild(cancelBtn);
     card.appendChild(list);
     if (p.note){ var note=document.createElement('div'); note.className='prompt-note'; note.textContent=p.note; card.appendChild(note); }
     wrap.appendChild(card);
