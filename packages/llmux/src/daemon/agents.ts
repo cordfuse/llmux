@@ -522,6 +522,121 @@ function isCodexSyntheticUserText(text: string): boolean {
          text.startsWith('# AGENTS.md instructions');
 }
 
+/**
+ * Deterministic per-line id for codex response_item events that carry no
+ * uuid of their own (unlike Claude's per-event uuid). Must be a pure
+ * function of the line's own bytes so readTranscript's snapshot and
+ * parseTranscriptLine's live tail produce the SAME id for the same event —
+ * that's what lets the client de-dup the overlap where the tail catches up
+ * to the snapshot.
+ */
+function codexLineId(line: string): string {
+  return createHash('sha1').update(line).digest('hex').slice(0, 16);
+}
+
+/**
+ * Flatten a codex function_call_output's `output` string. Shape varies by
+ * tool: exec_command emits a plain "Chunk ID / Wall time / Output:" string;
+ * MCP-backed tools emit a JSON-encoded content-block array
+ * (`[{"type":"text","text":"..."}]`, the OpenAI tool-output convention).
+ */
+function extractCodexFunctionOutputText(output: unknown): string {
+  if (typeof output !== 'string') return output == null ? '' : String(output);
+  const trimmed = output.trim();
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        const texts = parsed
+          .map((block) => (typeof block === 'object' && block !== null && typeof (block as { text?: unknown }).text === 'string'
+            ? (block as { text: string }).text
+            : undefined))
+          .filter((t): t is string => t !== undefined);
+        if (texts.length) return texts.join('\n');
+      }
+    } catch {
+      // not JSON — fall through to the raw string
+    }
+  }
+  return output;
+}
+
+/**
+ * exec_command results carry no explicit success flag, just a trailing
+ * "Process exited with code N" line — a nonzero N is the only error signal
+ * available. MCP-backed tool outputs have no equivalent convention, so they
+ * default to not-an-error (matches Claude tool_results with no is_error set).
+ */
+function codexOutputIsError(output: unknown): boolean {
+  if (typeof output !== 'string') return false;
+  const m = output.match(/Process exited with code (\d+)/);
+  return m ? m[1] !== '0' : false;
+}
+
+/**
+ * Map one parsed codex response_item event to 0..1 normalized chat turns.
+ * `reasoning` and `web_search_call` payloads are intentionally dropped —
+ * same convention as claudeHistory dropping thinking/redacted_thinking
+ * blocks. `developer`-role messages (permissions/collaboration-mode system
+ * text) are dropped too; only user/assistant `message` payloads and
+ * function_call/function_call_output pairs render in the chat view.
+ */
+function normalizeCodexEvent(
+  evt: {
+    type?: string;
+    timestamp?: string;
+    payload?: {
+      type?: string;
+      role?: string;
+      content?: unknown;
+      name?: string;
+      arguments?: string;
+      call_id?: string;
+      output?: unknown;
+    };
+  },
+  lineId: string,
+): TranscriptTurn[] {
+  if (evt.type !== 'response_item' || !evt.payload) return [];
+  const p = evt.payload;
+  const ts = evt.timestamp;
+
+  if (p.type === 'message') {
+    if (p.role !== 'user' && p.role !== 'assistant') return []; // developer / system — not shown
+    const wantBlockType = p.role === 'user' ? 'input_text' : 'output_text';
+    const blocks = Array.isArray(p.content) ? p.content : [];
+    const texts: string[] = [];
+    for (const block of blocks) {
+      if (typeof block !== 'object' || block === null) continue;
+      const b = block as { type?: string; text?: string };
+      if (b.type !== wantBlockType || typeof b.text !== 'string') continue;
+      if (p.role === 'user' && isCodexSyntheticUserText(b.text)) continue;
+      if (b.text.trim()) texts.push(b.text);
+    }
+    if (!texts.length) return [];
+    return [{ id: `${lineId}:${p.role}`, role: p.role, ts, parts: [{ kind: 'text', text: texts.join('\n\n') }] }];
+  }
+
+  if (p.type === 'function_call' && typeof p.name === 'string' && typeof p.call_id === 'string') {
+    let input: unknown = p.arguments;
+    if (typeof p.arguments === 'string') {
+      try { input = JSON.parse(p.arguments); } catch { input = p.arguments; }
+    }
+    return [{ id: `call:${p.call_id}`, role: 'tool', ts, parts: [{ kind: 'tool_use', id: p.call_id, name: p.name, input }] }];
+  }
+
+  if (p.type === 'function_call_output' && typeof p.call_id === 'string') {
+    return [{
+      id: `output:${p.call_id}`,
+      role: 'tool',
+      ts,
+      parts: [{ kind: 'tool_result', forId: p.call_id, text: extractCodexFunctionOutputText(p.output), isError: codexOutputIsError(p.output) }],
+    }];
+  }
+
+  return [];
+}
+
 const codexHistory: AgentHistoryAdapter = {
   listConversations(cwd: string): Conversation[] {
     const files = walkCodexSessionFiles();
@@ -633,6 +748,56 @@ const codexHistory: AgentHistoryAdapter = {
   },
   resumeFlag(id: string): string {
     return `resume ${id}`;
+  },
+  currentTranscript(cwd: string): string | undefined {
+    const files = walkCodexSessionFiles();
+    let best: string | undefined;
+    let bestMtime = -1;
+    for (const fpath of files) {
+      if (codexSessionCwd(fpath) !== cwd) continue;
+      try {
+        const m = statSync(fpath).mtimeMs;
+        if (m > bestMtime) {
+          bestMtime = m;
+          best = fpath;
+        }
+      } catch {
+        // skip
+      }
+    }
+    return best;
+  },
+  readTranscript(path: string): TranscriptTurn[] {
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch {
+      return [];
+    }
+    const turns: TranscriptTurn[] = [];
+    for (const rawLine of raw.split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      let evt: Parameters<typeof normalizeCodexEvent>[0];
+      try {
+        evt = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      for (const t of normalizeCodexEvent(evt, codexLineId(line))) turns.push(t);
+    }
+    return turns;
+  },
+  parseTranscriptLine(line: string): TranscriptTurn[] {
+    const trimmed = line.trim();
+    if (!trimmed) return [];
+    let evt: Parameters<typeof normalizeCodexEvent>[0];
+    try {
+      evt = JSON.parse(trimmed);
+    } catch {
+      return [];
+    }
+    return normalizeCodexEvent(evt, codexLineId(trimmed));
   },
 };
 
