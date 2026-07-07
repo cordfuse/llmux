@@ -1586,6 +1586,68 @@ function openOpencodeDb(): InstanceType<typeof Database> | undefined {
   }
 }
 
+// Never a real filesystem path — a marker the SSE handler checks for to
+// pick the poll-only branch (see currentTranscript's docstring below).
+const OPENCODE_SYNTHETIC_PREFIX = 'opencode-session:';
+
+function opencodeSyntheticPath(sessionId: string): string {
+  return `${OPENCODE_SYNTHETIC_PREFIX}${sessionId}`;
+}
+
+function opencodeSessionIdFromPath(path: string): string | undefined {
+  return path.startsWith(OPENCODE_SYNTHETIC_PREFIX) ? path.slice(OPENCODE_SYNTHETIC_PREFIX.length) : undefined;
+}
+
+interface OpencodeMessagePartRow {
+  message_id: string;
+  message_data: string;
+  part_id: string;
+  part_data: string;
+}
+
+interface OpencodeToolState {
+  status?: string;
+  input?: unknown;
+  output?: unknown;
+  error?: unknown;
+}
+
+function opencodeToolResultText(state: OpencodeToolState): string {
+  if (typeof state.output === 'string') return state.output;
+  if (state.output != null) return JSON.stringify(state.output);
+  if (typeof state.error === 'string') return state.error;
+  if (state.error != null) return JSON.stringify(state.error);
+  return '';
+}
+
+/**
+ * Map one `part` row to 0..1 normalized turns. `reasoning` (thinking
+ * equivalent), `step-start`/`step-finish` (turn bookkeeping), and `patch`
+ * (file-diff snapshot marker for /undo — verified real: {hash, files}, no
+ * conversational content) are all intentionally dropped, same convention
+ * as every other adapter's non-content event types.
+ */
+function normalizeOpencodePart(part: unknown, role: 'user' | 'assistant', id: string): TranscriptTurn[] {
+  if (typeof part !== 'object' || part === null) return [];
+  const p = part as { type?: string; text?: string; tool?: string; callID?: string; state?: OpencodeToolState };
+  if (p.type === 'text' && typeof p.text === 'string' && p.text.trim()) {
+    return [{ id, role, parts: [{ kind: 'text', text: p.text }] }];
+  }
+  if (p.type === 'tool') {
+    const name = typeof p.tool === 'string' ? p.tool : 'tool';
+    const state = p.state ?? {};
+    return [{
+      id,
+      role: 'tool',
+      parts: [
+        { kind: 'tool_use', id: p.callID, name, input: state.input },
+        { kind: 'tool_result', forId: p.callID, text: opencodeToolResultText(state), isError: state.status === 'error' },
+      ],
+    }];
+  }
+  return [];
+}
+
 const opencodeHistory: AgentHistoryAdapter = {
   listConversations(cwd: string): Conversation[] {
     const db = openOpencodeDb();
@@ -1642,6 +1704,68 @@ const opencodeHistory: AgentHistoryAdapter = {
   },
   resumeFlag(id: string): string {
     return `--session ${id}`;
+  },
+  // OpenCode stores conversations in SQLite (WAL mode, confirmed via the
+  // .db-wal/.db-shm files present alongside opencode.db) — the existing
+  // file-tailing SSE mechanism (byte-offset draining + fs.watch on a
+  // growing text file) fundamentally doesn't apply: WAL writes often don't
+  // touch the main .db file's size at all, and even when they do, new bytes
+  // are B-tree page data, not JSON-per-line. So there's no parseTranscriptLine
+  // here at all (intentionally omitted, not stubbed) — the chat GUI's SSE
+  // handler treats an adapter with currentTranscript+readTranscript but no
+  // parseTranscriptLine as "poll-only": it just re-runs readTranscript on
+  // the existing 2s interval and resends the tail, relying on the client's
+  // own per-turn-id dedup (already in place for the file-tailing case) to
+  // skip anything already rendered. currentTranscript returns a synthetic
+  // `opencode-session:<id>` identifier (never a real path) precisely so
+  // that branch can detect this case instead of trying to fs.watch it.
+  currentTranscript(cwd: string): string | undefined {
+    const db = openOpencodeDb();
+    if (!db) return undefined;
+    try {
+      const row = db.prepare(
+        `SELECT id FROM session
+         WHERE directory = ? AND time_archived IS NULL AND parent_id IS NULL
+         ORDER BY time_updated DESC LIMIT 1`
+      ).get(cwd) as { id: string } | undefined;
+      return row ? opencodeSyntheticPath(row.id) : undefined;
+    } catch {
+      return undefined;
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  },
+  readTranscript(path: string): TranscriptTurn[] {
+    const sessionId = opencodeSessionIdFromPath(path);
+    if (!sessionId) return [];
+    const db = openOpencodeDb();
+    if (!db) return [];
+    try {
+      const rows = db.prepare(
+        `SELECT m.id AS message_id, m.data AS message_data, p.id AS part_id, p.data AS part_data
+         FROM message m JOIN part p ON p.message_id = m.id
+         WHERE m.session_id = ?
+         ORDER BY m.time_created ASC, p.id ASC`
+      ).all(sessionId) as unknown as OpencodeMessagePartRow[];
+      const turns: TranscriptTurn[] = [];
+      for (const row of rows) {
+        let msg: { role?: string };
+        let part: unknown;
+        try {
+          msg = JSON.parse(row.message_data) as { role?: string };
+          part = JSON.parse(row.part_data);
+        } catch {
+          continue;
+        }
+        const role: 'user' | 'assistant' = msg.role === 'user' ? 'user' : 'assistant';
+        for (const t of normalizeOpencodePart(part, role, `${row.message_id}:${row.part_id}`)) turns.push(t);
+      }
+      return turns;
+    } catch {
+      return [];
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
   },
 };
 

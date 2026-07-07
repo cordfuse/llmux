@@ -5050,11 +5050,15 @@ export function startServer(opts: ServeOptions): ServerHandle {
         };
         checkPrompt();
 
-        // Transcript-based turn streaming needs a per-agent JSONL adapter —
-        // an agent without one still gets prompt detection above, so the
-        // stream stays open (just with its own poll/heartbeat/close) instead
-        // of ending here.
-        if (!hist?.currentTranscript || !hist.readTranscript || !hist.parseTranscriptLine) {
+        const sendTurn = (t: unknown) => {
+          try { res.write(`data: ${JSON.stringify(t)}\n\n`); } catch {}
+        };
+
+        // Transcript-based turn streaming needs at least currentTranscript +
+        // readTranscript — an agent without either still gets prompt
+        // detection above, so the stream stays open (just with its own
+        // poll/heartbeat/close) instead of ending here.
+        if (!hist?.currentTranscript || !hist.readTranscript) {
           res.write('event: unsupported\ndata: {}\n\n');
           const promptOnlyPoll = setInterval(checkPrompt, 2000);
           const heartbeat = setInterval(() => {
@@ -5068,14 +5072,50 @@ export function startServer(opts: ServeOptions): ServerHandle {
           return;
         }
 
+        // Some stores (OpenCode's SQLite, WAL mode) can't be tailed the way
+        // a growing JSONL file can — new writes don't reliably land as
+        // appended bytes at a stable offset, and even when they do they're
+        // B-tree page data, not JSON-per-line. Those adapters implement
+        // currentTranscript + readTranscript but deliberately omit
+        // parseTranscriptLine (not a stub — genuinely not implementable for
+        // this kind of store). Detected here and handled by just re-running
+        // readTranscript on the existing poll cadence and resending
+        // whatever's new — the client already dedupes by turn id (`seen` in
+        // addTurn), so a full re-send of the tail is safe, just a little
+        // more bandwidth than true line-tailing.
+        if (!hist.parseTranscriptLine) {
+          const sentIds = new Set<string>();
+          const pollOnce = () => {
+            try {
+              const path = hist.currentTranscript!(cwd, pinnedSessionId);
+              if (!path) return;
+              const all = hist.readTranscript!(path);
+              const tail = all.length > TRANSCRIPT_SNAPSHOT_MAX ? all.slice(-TRANSCRIPT_SNAPSHOT_MAX) : all;
+              for (const t of tail) {
+                const id = (t as { id?: string }).id;
+                if (id !== undefined && sentIds.has(id)) continue;
+                if (id !== undefined) sentIds.add(id);
+                sendTurn(t);
+              }
+            } catch {}
+          };
+          pollOnce();
+          const pollOnlyTimer = setInterval(() => { pollOnce(); checkPrompt(); }, 2000);
+          const heartbeat = setInterval(() => {
+            try { res.write(': heartbeat\n\n'); } catch {}
+          }, 30000);
+          req.on('close', () => {
+            clearInterval(pollOnlyTimer);
+            clearInterval(heartbeat);
+            try { res.end(); } catch {}
+          });
+          return;
+        }
+
         let activePath: string | undefined;
         let offset = 0;
         let leftover = '';
         let fileWatcher: FSWatcher | undefined;
-
-        const sendTurn = (t: unknown) => {
-          try { res.write(`data: ${JSON.stringify(t)}\n\n`); } catch {}
-        };
 
         // Read appended bytes from the active file and emit each complete line
         // as normalized turns. Offset-based so we never re-parse the whole file.
