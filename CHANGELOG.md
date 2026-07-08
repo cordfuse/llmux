@@ -5,6 +5,63 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-07-08
+
+### Added
+
+- **"+ New" button in the Chat GUI's topbar (all 6 CLIs)** — starts a
+  fresh conversation on the underlying agent without leaving llmux or
+  dropping to the Terminal view. Confirms first, clears the composer,
+  sends the agent's own new-chat command (`/clear` or `/new`,
+  whichever the agent actually uses), and resets the Chat view
+  immediately so there's no wait or extra step to see it worked.
+
+### Fixed
+
+- **New Chat could concatenate garbage into the composer** if it
+  already had unsent text sitting in it (e.g. `/clearnew`, `//clear`)
+  — the command is now typed into a freshly-cleared composer instead
+  of on top of whatever was already there.
+- **New Chat's command could silently fail to register at all** on
+  real, long-running sessions — confirmed live that a too-fast
+  clear→type→Enter sequence (~150-300ms gaps) could be swallowed
+  entirely, the same class of ink paste-mode-debounce issue already
+  known elsewhere in this codebase. Re-paced with ~1s gaps between
+  steps, which resolved it reliably.
+- **Chat view could keep showing the pre-New-Chat conversation
+  indefinitely** on Codex, agy, and OpenCode specifically (Gemini and
+  Claude were unaffected) — root-caused to four stacked bugs: a
+  persist guard that discarded detection results for any session
+  originally spawned via resume; a pinned-id priority order that
+  preferred the session's original (and by then stale) resume id over
+  the freshly detected one; an already-open Chat tab never re-reading
+  session state after connecting, so even a correctly persisted id
+  went unnoticed without a full page reload; and OpenCode's
+  poll-only transcript branch (its SQLite store can't be tailed like a
+  growing file) never had any concept of "the conversation changed" at
+  all, so switching conversations just appended the new one's turns
+  after the old one's instead of clearing first.
+- **The real fix for the above: Chat view no longer waits on any of
+  that background detection just to give visible feedback.** All four
+  bugs above are legitimate fixes for background id-detection, which
+  still matters for correctness on a future page reload — but
+  detection itself can't even start until the operator's next real
+  message on some agents, so relying on it for the *visible* reset
+  meant clicking "+ New" alone changed nothing on screen. Confirmed
+  with matching before/after screenshots. The button now clears the
+  Chat view the moment its command send succeeds, independent of
+  whenever (or whether) detection completes.
+- **Fresh-session-id detection's background timeout raised from 60s to
+  10 minutes** — confirmed live that a real person's pace (reading,
+  composing a reply on a phone keyboard) can exceed even a generous
+  60s window. Fire-and-forget either way, so there's no cost to being
+  more patient.
+- **Composer's squircle background/border was invisible** against the
+  page's pure-black background, left fully transparent/borderless by
+  an earlier styling pass. Restored a visible dark-card fill and
+  subtle border, matching the tone already used for tool cards
+  elsewhere in this view.
+
 ## [0.39.1] — 2026-07-07
 
 ### Added
