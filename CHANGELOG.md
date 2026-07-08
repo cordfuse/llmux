@@ -5,6 +5,27 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.41.1] — 2026-07-08
+
+### Fixed
+
+- **Copilot's `/model` picker was never recognized in the Chat GUI —
+  reported live.** It fell through into the shape detector built for
+  agy's plain marker list (their footer text both happen to contain
+  "navigate" and "select") and got garbage-parsed: the column-header
+  row and horizontal rules included as fake options, real labels
+  mangled with the reasoning-effort value and a trailing border
+  character stuck on, and the selection cursor position never
+  detected at all. Copilot's `/model` is a genuinely different shape
+  — a two-column table (model, reasoning effort) with the cursor at a
+  fixed column rather than a per-option marker — and needed its own
+  detector, added ahead of the one it was colliding with. Verified
+  live end-to-end, not just the parsing: opened the real picker,
+  simulated exactly what a Chat GUI button click does (arrow-key
+  delta + Enter) targeting a specific option, and confirmed Copilot
+  itself reported the correct model switch and the status bar updated
+  to match.
+
 ## [0.41.0] — 2026-07-08
 
 ### Added

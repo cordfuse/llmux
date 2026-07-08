@@ -66,6 +66,13 @@ export function detectPendingPrompt(paneText: string): PendingPrompt | undefined
   const lines = paneText.split('\n');
   return (
     detectNumberedList(lines, paneText) ??
+    // Must run before detectPlainMarkerList — confirmed live that Shape 2's
+    // footer check (just "navigate" + "select", both present in this
+    // shape's own footer text too) accidentally matches Copilot's /model
+    // picker first and garbage-parses it (column headers and horizontal
+    // rules included as fake options, real labels mangled, selectedIndex
+    // never set) unless this shape claims it first.
+    detectCopilotModelList(lines, paneText) ??
     detectPlainMarkerList(lines, paneText) ??
     detectInlineOptionList(lines, paneText) ??
     detectOpencodeSelectList(lines, paneText)
@@ -441,4 +448,92 @@ function detectOpencodeSelectList(lines: string[], paneText: string): PendingPro
     note: 'More options may be available in Terminal — this list can scroll and supports typing to search.',
     raw: paneText,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Shape 5: GitHub Copilot CLI's `/model` picker — a two-column table (model
+// name, reasoning effort), cursor marked with a leading ❯ at column 1 (NOT
+// a per-option ● like Shape 2 — this is a moving cursor over a fixed list,
+// same as OpenCode's), the currently-ACTIVE model marked separately with a
+// trailing ✓ that's redundant with an already-present "(default)" text
+// suffix (verified live — dropped rather than modeled as a field, since the
+// interface has nowhere to put a second kind of "selected"). Confirmed real
+// and reproducible: without this shape, the picker fell through into Shape
+// 2 (agy's plain marker list) by accident — its footer text contains both
+// "navigate" and "select", which is all Shape 2 requires — and matched
+// garbage: the column-header row and both horizontal rules included as fake
+// "options", the real option labels mangled with the reasoning value and
+// trailing "┃" border char stuck on, and selectedIndex never set at all
+// (Shape 2's marker regex requires the marker at column 0, but this shape's
+// ❯ sits at column 1 after a leading space — see CONTENT_COL below).
+// ---------------------------------------------------------------------------
+
+// Distinctive combination — "reasoning effort" doesn't appear in any other
+// agent's footer, so this alone would do, but matching the file's existing
+// convention of requiring 2 signals rather than 1 in case wording drifts.
+const COPILOT_MODEL_FOOTER_RE = (line: string): boolean =>
+  /navigate/i.test(line) && /reasoning effort/i.test(line);
+const COPILOT_HEADER_RE = /^\s*Model\s+Reasoning\s*$/;
+const COPILOT_SEARCH_RE = /Search\s+models/i;
+// Verified against a real capture (see column-index check in the shipping
+// commit): content — the model name — always starts at column 3, whether
+// or not a ❯ cursor is present. The ❯ itself, when present, sits at column
+// 1 (replacing what's otherwise a space there), never inside the content.
+const COPILOT_CONTENT_COL = 3;
+const COPILOT_MARKER_COL = 1;
+// Model name and reasoning value share one line, separated by a 2+-space
+// gap — same convention as Shape 3's INLINE_OPTION_RE, chosen over a fixed
+// second column index because it tolerates model-name length varying
+// without the reasoning value's start column drifting out of a fixed
+// slice. Trailing "┃" (this shape's own right-edge border, distinct from
+// Shape 1/4's box-drawing chars) and a bare "—" (no reasoning tier for
+// that model) are both stripped/dropped rather than shown as content.
+const COPILOT_ROW_RE = /^(\S.*?)(?:\s{2,}(\S.*?))?\s*┃?\s*$/;
+
+function detectCopilotModelList(lines: string[], paneText: string): PendingPrompt | undefined {
+  let footerIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (COPILOT_MODEL_FOOTER_RE(lines[i]!)) { footerIdx = i; break; }
+  }
+  if (footerIdx < 0) return undefined;
+
+  let searchIdx = -1;
+  for (let i = footerIdx - 1; i >= 0; i--) {
+    if (COPILOT_SEARCH_RE.test(lines[i]!)) { searchIdx = i; break; }
+  }
+  if (searchIdx < 0) return undefined;
+
+  let headerIdx = -1;
+  for (let i = searchIdx - 1; i >= 0; i--) {
+    if (COPILOT_HEADER_RE.test(lines[i]!)) { headerIdx = i; break; }
+  }
+  if (headerIdx < 0) return undefined;
+
+  const options: PendingPromptOption[] = [];
+  let selectedIndex: number | undefined;
+  for (let i = headerIdx + 1; i < searchIdx; i++) {
+    const raw = lines[i]!;
+    if (raw.trim() === '') continue;
+    // The horizontal rule between the option block and the Search box
+    // (verified: sits right above searchIdx in the real capture) — matches
+    // COPILOT_ROW_RE's own group 1 just fine otherwise, since a run of ─
+    // is still "a non-space char followed by anything."
+    if (/^─+$/.test(raw.trim())) continue;
+    if (raw.length <= COPILOT_CONTENT_COL) continue;
+    const content = raw.slice(COPILOT_CONTENT_COL);
+    const m = content.match(COPILOT_ROW_RE);
+    if (!m) continue;
+    const label = m[1]!.trim().replace(/\s*✓\s*$/, '');
+    if (!label) continue;
+    const reasoning = m[2]?.trim();
+    options.push({ label, description: reasoning && reasoning !== '—' ? reasoning : undefined });
+    if (raw[COPILOT_MARKER_COL] === '❯') selectedIndex = options.length - 1;
+  }
+  if (options.length === 0) return undefined;
+
+  // No free-text title in this shape's own chrome (a header row of column
+  // labels, not a question) — "Select model" mirrors the command that
+  // opens it and OpenCode's own title wording for the same underlying
+  // action, rather than leaving this blank.
+  return { question: 'Select model', options, selectedIndex, raw: paneText };
 }
