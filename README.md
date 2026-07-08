@@ -48,16 +48,39 @@ llmux just adds the unified surface on top.)
 > See [CHANGELOG.md](./CHANGELOG.md) for the per-version detail.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/cli.gif" width="85%" alt="CLI tour — version, installed agents, session list, JSON output">
+<table>
+<tr>
+<td align="center" width="33%">
+<img src="docs/screenshots/chat.png" width="100%" alt="Chat GUI — a conversation with an agent rendered as cards in the browser">
+<br><sub>Chat GUI</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/screenshots/terminal.png" width="100%" alt="Terminal view — the same session's raw TUI, xterm.js in the browser">
+<br><sub>Terminal / TUI</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/screenshots/edit.png" width="100%" alt="Edit session — agent, cwd, flags, env vars, resume-from picker, init prompts">
+<br><sub>Edit session</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="33%">
+<img src="docs/screenshots/agents.png" width="100%" alt="Agents dashboard — installed status and running count per supported CLI">
+<br><sub>Agents dashboard</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/screenshots/settings.png" width="100%" alt="Settings — discovery, listen address, turnq config, daemon init prompts, live YAML overlay">
+<br><sub>Settings</sub>
+</td>
+<td align="center" width="33%">
+<img src="docs/screenshots/about.png" width="100%" alt="About — daemon host, version, session count, web UI connection info">
+<br><sub>About</sub>
+</td>
+</tr>
+</table>
 </p>
 
-<p align="center"><em>CLI tour against a live daemon — version, agent catalog, session list, JSON surface, then a real tmux attach into a running Codex session and a clean detach.</em></p>
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/mobile.gif" width="30%" alt="Mobile picker, attach into an opencode session, soft-keyboard toolbar visible">
-</p>
-
-<p align="center"><em>Phone — picker → tap session → attached xterm with soft-keyboard toolbar (Esc / Tab / Ctrl / arrows / shell chars). Blue rings mark each tap. Pixel 7 emulation.</em></p>
+<p align="center"><em>Mobile web UI (Pixel 7) — Chat GUI and Terminal views of the same live session, edit form, agent catalog, settings, and daemon info. Every screen also works full-width on desktop.</em></p>
 
 ### One persistent process per agent
 
@@ -88,10 +111,14 @@ re-attaches forever.
 
 ### One addressable surface, many use cases
 
-Because each session is reachable by name from any client, llmux is the
-substrate higher-level patterns sit on — spec-driven development (SDD)
-pipelines, multi-agent chains, scheduled jobs, evals harnessed against
-live agents.
+Because each session is reachable by name from any client, llmux is a
+substrate higher-level patterns can sit on — spec-driven development
+(SDD) pipelines, multi-agent chains, scheduled jobs, evals harnessed
+against live agents. The part of the surface this is true for is spawn
+once + `session prompt` in a loop, reading responses back off the
+transcript — a thin, low-surface-area primitive that doesn't touch
+anything below. See [Conversation resume](#conversation-resume) for
+where that stops being true.
 
 ## Multiple senders, one session
 
@@ -145,7 +172,7 @@ llmux session start claude --name sdd \
 ```
 
 **Spawn timing.** The daemon polls the tmux pane for each agent's
-`readyPrompt` regex (e.g. `^>` for Claude, `Goose❯` for Goose). Once
+`readyPrompt` regex (e.g. `^>` for Claude, `^agy>` for Antigravity CLI). Once
 the regex matches the bottom of the pane the prompts fire in order
 with a 500ms gap between. Timeout is 10s — if the regex never matches
 (agent hung at OAuth, etc.) llmux warns and fires anyway. For agents
@@ -323,19 +350,11 @@ Node, and attaching to tmux through node-pty under Bun caused immediate SIGHUP.
 | `gemini`   | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `--yolo` |
 | `qwen`     | [Qwen Code](https://github.com/QwenLM/qwen-code) | `--yolo` |
 | `opencode` | [OpenCode](https://opencode.ai) | env: `OPENCODE_YOLO=1` (TUI lacks a flag) |
-| `amp`      | [Sourcegraph Amp](https://ampcode.com) | `--dangerously-allow-all` |
-| `grok`     | [Grok Build CLI](https://x.ai/cli) | `--always-approve` |
-| `aider`    | [Aider](https://aider.chat) | `--yes-always` |
-| `continue` | [Continue CLI](https://docs.continue.dev/guides/cli) (`cn`) | `--auto` |
-| `kiro`     | [Kiro CLI](https://kiro.dev/cli/) | `--trust-all-tools` |
-| `cursor`   | [Cursor CLI](https://cursor.com/docs/cli/installation) (`cursor-agent`) | (config-based) |
-| `plandex`  | [Plandex](https://plandex.ai) | (interactive `set-auto`) |
-| `goose`    | [Goose](https://block.github.io/goose) | env: `GOOSE_MODE=auto` |
-| `copilot`  | [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/use-copilot-in-the-cli) (`gh copilot`) | n/a |
 
-Only installed agents appear in `llmux agent list` and the picker dropdown.
-Detection uses a pure-Node PATH walk for most; `copilot` checks the gh-managed
-binary directory.
+These six are the fully-supported set — spawn, Chat GUI, conversation
+history/resume, and the New Chat button all work identically across
+every one of them. Only installed agents appear in `llmux agent list`
+and the picker dropdown; detection uses a pure-Node PATH walk.
 
 Per-session overrides via `llmux session start <agent>`:
 - `--name <X>` — tmux session name (defaults to the agent key)
@@ -385,6 +404,20 @@ llmux session resume <name> --conversation <id>
 llmux session history <name>                  # list past conversations + ids
 llmux session start opencode --resume-from ses_<id>  # spawn pre-bound
 ```
+
+**Reliability note for scripted use.** New Chat and conversation
+switching don't have authoritative state to query — llmux infers
+"which conversation is this" by watching a human-facing TUI from the
+outside: scraping tmux panes, polling transcript-file mtimes, racing
+against per-agent paste-debounce timing. That's held up under live,
+adversarial testing (repeated real-world bug reports, fixed, retested
+until it stuck), but the failure mode when it slips is silent — a
+respawn can report success while the underlying agent never actually
+switched conversations, with no exception for a caller to catch.
+`session prompt` on an already-spawned session doesn't share this risk
+— it's a much thinner surface. If a pipeline needs a clean context per
+task, spawning a new named session per task is the safer pattern over
+calling New Chat/resume on a shared one mid-pipeline.
 
 ## Auth
 
