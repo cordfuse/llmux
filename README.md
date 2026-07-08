@@ -39,8 +39,8 @@ llmux just adds the unified surface on top.)
 
 > **Status:** stable. One binary (`llmux`) covers daemon + CLI client.
 > Auth + tokens, mobile picker with per-row destructive actions,
-> conversation resume across all six Cordfuse-supported agents
-> (claude, codex, gemini, agy, opencode, qwen) with a bound-conversation
+> conversation resume across all seven Cordfuse-supported agents
+> (claude, codex, gemini, agy, opencode, qwen, copilot) with a bound-conversation
 > indicator on the session row and an in-form "resume from" picker,
 > daemon-wide + per-session init prompts, optional turnq FIFO turn
 > coordination, an editable Settings page with a runtime overlay file,
@@ -350,11 +350,22 @@ Node, and attaching to tmux through node-pty under Bun caused immediate SIGHUP.
 | `gemini`   | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `--yolo` |
 | `qwen`     | [Qwen Code](https://github.com/QwenLM/qwen-code) | `--yolo` |
 | `opencode` | [OpenCode](https://opencode.ai) | env: `OPENCODE_YOLO=1` (TUI lacks a flag) |
+| `copilot`  | [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/copilot-cli) — `npm install -g @github/copilot`, binary `copilot` (NOT `gh copilot`, a separate thin launcher for the same binary) | `--yolo` |
 
-These six are the fully-supported set — spawn, Chat GUI, conversation
+These seven are the fully-supported set — spawn, Chat GUI, conversation
 history/resume, and the New Chat button all work identically across
 every one of them. Only installed agents appear in `llmux agent list`
 and the picker dropdown; detection uses a pure-Node PATH walk.
+
+> `copilot` gates every spawn in a new git repo with an interactive
+> folder-trust prompt that no flag (including `--yolo`) suppresses.
+> llmux pre-populates its `trustedFolders` setting before spawn, which
+> reliably skips the prompt for plain directories but — confirmed live,
+> not just theorized — does NOT for git repos, which is most real
+> usage. Undocumented internal behavior in a CLI that's explicitly
+> still in preview. First spawn in a given repo needs one manual
+> answer via the Terminal view; that's it, doesn't recur for
+> subsequent prompts in the same session.
 
 Per-session overrides via `llmux session start <agent>`:
 - `--name <X>` — tmux session name (defaults to the agent key)
@@ -380,6 +391,7 @@ with the right resume flag.
 | `agy`      | `~/.gemini/antigravity-cli/history.jsonl` (one line per prompt, grouped by `conversationId`) | `--conversation <id>` |
 | `opencode` | `~/.local/share/opencode/opencode.db` (sqlite via `better-sqlite3`) | `--session <id>` |
 | `qwen`     | `~/.qwen/tmp/<dir>/chats/session-*.jsonl` (Gemini-fork storage) | `--resume <id>` |
+| `copilot`  | `~/.copilot/session-state/<uuid>/events.jsonl` (live transcript) + `~/.copilot/session-store.db` (sqlite catalog, indexed by cwd — used for the picker list/titles/counts) | `--resume <id>` |
 
 The selected conversation id is persisted on the session record so
 respawn keeps you on the same conversation. The picked conversation

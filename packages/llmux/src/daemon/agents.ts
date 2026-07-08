@@ -1974,6 +1974,309 @@ const opencodeHistory: AgentHistoryAdapter = {
 };
 
 /**
+ * GitHub Copilot CLI (`@github/copilot` on npm, binary `copilot` — NOT
+ * `gh copilot`, which is a thin launcher bundled with the `gh` CLI that
+ * downloads and runs this same binary; verified live that `gh copilot`
+ * detects install via a completely different path
+ * (~/.local/share/gh/copilot) than where npm actually puts the binary).
+ *
+ * Storage is a hybrid, verified live against v1.0.69:
+ *   - `~/.copilot/session-store.db` (sqlite) — one row per session in the
+ *     top-level `sessions` table (id, cwd, summary, created_at,
+ *     updated_at), indexed on cwd. Updated in real time — confirmed the
+ *     `summary` column (an auto-generated title) appears within seconds of
+ *     a session's first prompt. Used for listConversations/
+ *     countConversations/lookupTitle — no file parsing needed, unlike
+ *     Claude/Codex.
+ *   - `~/.copilot/session-state/<uuid>/events.jsonl` — the live,
+ *     append-only transcript, one JSON event per line. NOT reflected in
+ *     the sqlite `turns` table, which is confirmed to stay empty during
+ *     an active session (looks write-once at some later point, maybe
+ *     session end — untested) — events.jsonl is the only real-time
+ *     source, so it's what currentTranscript/readTranscript/
+ *     parseTranscriptLine use, same shape as Claude/Codex's jsonl tailing.
+ *
+ * Event types actually observed (verified live, including a real tool
+ * call): session.start / session.model_change / session.
+ * permissions_changed / system.message — all bookkeeping, dropped.
+ * user.message (data.content) — the real prompt text; deliberately NOT
+ * data.transformedContent, which has an injected <current_datetime>
+ * wrapper and other synthetic framing, same reasoning as every other
+ * adapter stripping wrapper text before display. assistant.message —
+ * data.content is the text (often empty on a tool-calling turn),
+ * data.toolRequests[] (toolCallId/name/arguments) is the tool_use half.
+ * tool.execution_complete — data.result.content is the tool_result text,
+ * data.success inverts to isError; correlated back to its tool_use via
+ * toolCallId. tool.execution_start is redundant with the toolRequests
+ * already on assistant.message and is skipped. assistant.turn_start/
+ * turn_end are pure bookkeeping.
+ */
+function copilotSessionStateDir(id: string): string {
+  return join(homedir(), '.copilot', 'session-state', id);
+}
+
+function copilotDbPath(): string {
+  return join(homedir(), '.copilot', 'session-store.db');
+}
+
+function openCopilotDb(): InstanceType<typeof Database> | undefined {
+  const path = copilotDbPath();
+  if (!existsSync(path)) return undefined;
+  try {
+    return new Database(path, { readonly: true, fileMustExist: true });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Copilot gates every spawn in a new cwd with an interactive folder-trust
+ * prompt (Yes / Yes-and-remember / No) and provides no CLI flag to skip
+ * it — verified live, including that `--yolo` (all-permissions) does NOT
+ * suppress it, since trust and tool-permissions are separate gates.
+ *
+ * The documented `trustedFolders` setting (`copilot help config`) DOES
+ * skip it when pre-populated in ~/.copilot/settings.json — but ONLY for
+ * plain directories. For a git repo it does NOT, confirmed by direct
+ * A/B test: same write, same session, `/tmp/plain-dir` skipped the
+ * prompt every time, every git repo tried (including ones never
+ * interacted with before, ruling out leftover state from earlier manual
+ * testing) still showed it. Also confirmed live-answering "Yes, and
+ * remember this folder for future sessions" does NOT reliably suppress
+ * it on a later respawn either, and diffing a full hash tree of
+ * ~/.copilot before/after that selection found no settings.json write
+ * and no other obvious persisted trust marker — copilot tracks git-repo
+ * trust somewhere this couldn't locate. Undocumented, possibly
+ * unfinished — the CLI is explicitly in preview.
+ *
+ * This is a best-effort, not a guarantee: it silently no-ops the
+ * prompt away for non-git cwds (the common case for e.g. a scratch
+ * directory) and simply doesn't help for git repos, which is most real
+ * llmux usage. Same first-run-friction shape this README already
+ * documents for other agents' OAuth flows (attach once, confirm,
+ * detach) — until the real mechanism is found, a git-repo cwd's first
+ * copilot spawn needs one manual answer via the Terminal view.
+ *
+ * Same shape as codexPreSpawnTrust above; reads the existing settings
+ * file (if any) rather than clobbering other keys, since this is the
+ * documented user-settings file, not an llmux-owned one.
+ */
+function copilotPreSpawnTrust(ctx: { cwd: string }): void {
+  try {
+    const dir = join(homedir(), '.copilot');
+    const path = join(dir, 'settings.json');
+    let settings: Record<string, unknown> = {};
+    if (existsSync(path)) {
+      try {
+        settings = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+      } catch {
+        settings = {};
+      }
+    }
+    const trusted = Array.isArray(settings.trustedFolders) ? (settings.trustedFolders as unknown[]) : [];
+    if (trusted.includes(ctx.cwd)) return; // already trusted
+    settings.trustedFolders = [...trusted, ctx.cwd];
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(path, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
+  } catch (err) {
+    console.warn(`[llmux] copilot preSpawn trust write failed (proceeding): ${(err as Error).message}`);
+  }
+}
+
+/**
+ * `/clear` ("Abandon this session and start fresh" per its own help text)
+ * creates a new ~/.copilot/session-state/<uuid>/ directory immediately —
+ * verified live, before the first message even lands (better than Codex,
+ * which defers file creation until the next message). Watching the sqlite
+ * `sessions` table by cwd rather than the session-state directory listing
+ * (which is global, not cwd-partitioned) so a concurrent copilot session
+ * in an unrelated cwd can't be mistaken for this one's fresh id — same
+ * reasoning as opencodeDetectFreshSessionId.
+ */
+async function copilotDetectFreshSessionId(ctx: { cwd: string }): Promise<string | undefined> {
+  const snapshot = (): Set<string> => {
+    const db = openCopilotDb();
+    if (!db) return new Set();
+    try {
+      const rows = db.prepare(`SELECT id FROM sessions WHERE cwd = ?`).all(ctx.cwd) as { id: string }[];
+      return new Set(rows.map((r) => r.id));
+    } catch {
+      return new Set();
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  };
+  const before = snapshot();
+  const deadline = Date.now() + FRESH_SESSION_ID_DETECT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    for (const id of snapshot()) {
+      if (!before.has(id)) return id;
+    }
+  }
+  return undefined;
+}
+
+interface CopilotEvent {
+  type?: string;
+  id?: string;
+  timestamp?: string;
+  data?: {
+    content?: unknown;
+    toolRequests?: { toolCallId?: string; name?: string; arguments?: unknown }[];
+    toolCallId?: string;
+    success?: boolean;
+    result?: { content?: unknown };
+  };
+}
+
+function normalizeCopilotEvent(evt: CopilotEvent): TranscriptTurn[] {
+  const id = evt.id ?? `${evt.type}-${evt.timestamp ?? ''}`;
+  const ts = evt.timestamp;
+  const data = evt.data ?? {};
+
+  if (evt.type === 'user.message') {
+    const text = typeof data.content === 'string' ? data.content : '';
+    return text.trim() ? [{ id, role: 'user', ts, parts: [{ kind: 'text', text }] }] : [];
+  }
+
+  if (evt.type === 'assistant.message') {
+    const parts: TranscriptPart[] = [];
+    const text = typeof data.content === 'string' ? data.content : '';
+    if (text.trim()) parts.push({ kind: 'text', text });
+    for (const req of data.toolRequests ?? []) {
+      if (typeof req.name === 'string') {
+        parts.push({ kind: 'tool_use', id: req.toolCallId, name: req.name, input: req.arguments });
+      }
+    }
+    return parts.length ? [{ id, role: 'assistant', ts, parts }] : [];
+  }
+
+  if (evt.type === 'tool.execution_complete') {
+    const content = data.result?.content;
+    const text = typeof content === 'string' ? content : (content != null ? JSON.stringify(content) : '');
+    return [{ id, role: 'tool', ts, parts: [{ kind: 'tool_result', forId: data.toolCallId, text, isError: data.success === false }] }];
+  }
+
+  // session.start / session.model_change / session.permissions_changed /
+  // system.message / tool.execution_start (redundant with the toolRequests
+  // already surfaced on assistant.message) / assistant.turn_start /
+  // assistant.turn_end — all bookkeeping, no conversational content.
+  return [];
+}
+
+const copilotHistory: AgentHistoryAdapter = {
+  listConversations(cwd: string): Conversation[] {
+    const db = openCopilotDb();
+    if (!db) return [];
+    try {
+      const rows = db.prepare(
+        `SELECT id, summary, created_at, updated_at FROM sessions WHERE cwd = ? ORDER BY updated_at DESC`,
+      ).all(cwd) as { id: string; summary: string | null; created_at: string; updated_at: string }[];
+      return rows.map((r) => {
+        let messageCount = 0;
+        try {
+          const raw = readFileSync(join(copilotSessionStateDir(r.id), 'events.jsonl'), 'utf8');
+          for (const line of raw.split('\n')) {
+            if (line.includes('"type":"user.message"')) messageCount++;
+          }
+        } catch {
+          // events.jsonl not created yet (session-state dir exists, no message sent) — 0 is correct.
+        }
+        return {
+          id: r.id,
+          title: r.summary?.trim() || '(no opener)',
+          startedAt: r.created_at,
+          lastMessageAt: r.updated_at,
+          messageCount,
+        };
+      });
+    } catch {
+      return [];
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  },
+  countConversations(cwd: string): number {
+    // sqlite row count only — no file parsing, matches claudeHistory's
+    // fast-count reasoning (this runs on every session-list poll).
+    const db = openCopilotDb();
+    if (!db) return 0;
+    try {
+      const row = db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE cwd = ?`).get(cwd) as { n: number };
+      return row.n;
+    } catch {
+      return 0;
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  },
+  lookupTitle(cwd: string, id: string): string | undefined {
+    const db = openCopilotDb();
+    if (!db) return undefined;
+    try {
+      const row = db.prepare(`SELECT summary FROM sessions WHERE id = ? AND cwd = ?`).get(id, cwd) as { summary: string | null } | undefined;
+      return row?.summary?.trim() || undefined;
+    } catch {
+      return undefined;
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  },
+  resumeFlag(id: string): string {
+    return `--resume ${id}`;
+  },
+  currentTranscript(cwd: string, sessionId?: string): string | undefined {
+    if (sessionId) {
+      const pinned = join(copilotSessionStateDir(sessionId), 'events.jsonl');
+      if (existsSync(pinned)) return pinned;
+    }
+    const db = openCopilotDb();
+    if (!db) return undefined;
+    try {
+      const row = db.prepare(`SELECT id FROM sessions WHERE cwd = ? ORDER BY updated_at DESC LIMIT 1`).get(cwd) as { id: string } | undefined;
+      if (!row) return undefined;
+      const path = join(copilotSessionStateDir(row.id), 'events.jsonl');
+      return existsSync(path) ? path : undefined;
+    } catch {
+      return undefined;
+    } finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  },
+  readTranscript(path: string): TranscriptTurn[] {
+    let raw: string;
+    try {
+      raw = readFileSync(path, 'utf8');
+    } catch {
+      return [];
+    }
+    const turns: TranscriptTurn[] = [];
+    for (const line of raw.split('\n')) {
+      if (!line) continue;
+      let evt: CopilotEvent;
+      try {
+        evt = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      for (const t of normalizeCopilotEvent(evt)) turns.push(t);
+    }
+    return turns;
+  },
+  parseTranscriptLine(line: string): TranscriptTurn[] {
+    if (!line) return [];
+    let evt: CopilotEvent;
+    try {
+      evt = JSON.parse(line);
+    } catch {
+      return [];
+    }
+    return normalizeCopilotEvent(evt);
+  },
+};
+
+/**
  * WSL2 mounts the Windows filesystem under /mnt (C: → /mnt/c, …) and marks
  * every file there world-executable. A bare PATH scan therefore "finds"
  * Windows binaries (e.g. an npm-global `codex` shim under
@@ -2006,14 +2309,6 @@ const which = (cmd: string): boolean => {
     }
   }
   return false;
-};
-
-const copilotInstalled = (): boolean => {
-  // `gh copilot` is a built-in subcommand of gh 2.92+ (not an extension), and
-  // the actual Copilot CLI binary is downloaded on first invocation to
-  // ~/.local/share/gh/copilot. Treat the binary's presence as the install
-  // signal — `gh extension list` no longer surfaces copilot.
-  return existsSync(join(homedir(), '.local/share/gh/copilot'));
 };
 
 const claudeInstalled = (): boolean => {
@@ -2054,7 +2349,15 @@ export const DEFAULT_AGENTS: Record<string, AgentDefinition> = {
   plandex:  { key: 'plandex',  displayName: 'Plandex',             cmd: 'plandex',     readyPrompt: '^>', installHint: 'curl -fsSL https://plandex.ai/install.sh | bash', docsUrl: 'https://docs.plandex.ai' },
   // goose has no launch flag — auto-approve is controlled via GOOSE_MODE=auto.
   goose:    { key: 'goose',    displayName: 'Goose',               cmd: 'goose', readyPrompt: 'Goose❯', installHint: 'curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh | bash', docsUrl: 'https://block.github.io/goose', envDefaults: { GOOSE_MODE: 'auto' } },
-  copilot:  { key: 'copilot',  displayName: 'GitHub Copilot CLI',  cmd: 'gh copilot',      detectInstalled: copilotInstalled, readyPrompt: '●', installHint: 'gh copilot suggest "hi"  # gh prerequisite; first run downloads', docsUrl: 'https://docs.github.com/en/copilot/how-tos/use-copilot-in-the-cli' },
+  // cmd is 'copilot', NOT 'gh copilot' — verified live that those are two
+  // different things: gh copilot is a thin launcher bundled with the gh
+  // CLI that downloads and runs this same binary from a DIFFERENT install
+  // path (~/.local/share/gh/copilot) than the real one (npm-global,
+  // standard PATH — no detectInstalled override needed, same as the other
+  // npm-installed agents). --yolo verified live to NOT skip the separate
+  // folder-trust gate; preSpawn handles that instead (see
+  // copilotPreSpawnTrust's docstring).
+  copilot:  { key: 'copilot',  displayName: 'GitHub Copilot CLI',  cmd: 'copilot',  flags: '--yolo',  readyPrompt: '^❯', installHint: 'npm install -g @github/copilot', docsUrl: 'https://docs.github.com/copilot/how-tos/copilot-cli', history: copilotHistory, preSpawn: copilotPreSpawnTrust, sessionIdFlag: (id) => `--session-id ${id}`, detectFreshSessionId: copilotDetectFreshSessionId, newChatCommand: '/clear' },
 };
 
 export function isAgentInstalled(agent: AgentDefinition): boolean {

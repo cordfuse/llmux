@@ -5,6 +5,39 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-07-08
+
+### Added
+
+- **GitHub Copilot CLI is now the 7th fully-supported agent** — spawn,
+  Chat GUI, conversation history/resume, and New Chat all work
+  identically to the other six. The catalog previously pointed at
+  `gh copilot` (a thin launcher bundled with the `gh` CLI that
+  downloads and runs a *different* copy of the binary) instead of the
+  real, standalone `copilot` binary (`npm install -g @github/copilot`)
+  — confirmed live these are genuinely different install paths, and
+  the wrong one was never going to detect a real install correctly.
+  History adapter reads `~/.copilot/session-store.db` (sqlite, indexed
+  by cwd — real-time updated, verified) for the picker's conversation
+  list/titles/counts, and tails
+  `~/.copilot/session-state/<uuid>/events.jsonl` for the live
+  transcript (confirmed NOT reflected in the sqlite `turns` table
+  during an active session, unlike the `sessions` table). `--yolo` is
+  the danger-mode default; `--session-id`/`--resume` match Claude
+  Code's pinning pattern almost exactly.
+
+  One known limitation, documented rather than silently shipped: the
+  CLI gates every spawn in a git repo with a folder-trust prompt that
+  no flag suppresses. llmux pre-populates its `trustedFolders` setting
+  before spawn, which reliably skips the prompt for plain directories
+  but — confirmed with a controlled A/B test, not assumed — does NOT
+  for git repos specifically, which is most real usage. Diffed a full
+  hash tree of `~/.copilot` before/after manually answering "yes, and
+  remember this folder" and found no persisted marker this could
+  target instead; undocumented internal behavior in a CLI that's
+  explicitly still in preview. First spawn in a given repo needs one
+  manual answer via the Terminal view.
+
 ## [0.40.4] — 2026-07-08
 
 ### Fixed
