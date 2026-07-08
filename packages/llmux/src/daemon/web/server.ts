@@ -5359,11 +5359,27 @@ export function startServer(opts: ServeOptions): ServerHandle {
         // addTurn), so a full re-send of the tail is safe, just a little
         // more bandwidth than true line-tailing.
         if (!hist.parseTranscriptLine) {
-          const sentIds = new Set<string>();
+          let sentIds = new Set<string>();
+          // Unlike the file-tailing branch below, this had NO concept of
+          // "the active conversation changed" at all — it only ever
+          // tracked "have I sent this turn id before", so switching to a
+          // genuinely different conversation (New Chat, or fresh-spawn
+          // detection completing) just appended the new conversation's
+          // turns after the old one's, forever, instead of resetting.
+          // Confirmed live: after New Chat, an OpenCode Chat tab showed
+          // BOTH the pre- and post-New-Chat conversations concatenated.
+          let activePollPath: string | undefined;
           const pollOnce = () => {
             try {
               const path = hist.currentTranscript!(cwd, getPinnedSessionId());
               if (!path) return;
+              if (path !== activePollPath) {
+                if (activePollPath !== undefined) {
+                  try { res.write('event: reset\ndata: {}\n\n'); } catch {}
+                }
+                activePollPath = path;
+                sentIds = new Set<string>();
+              }
               const all = hist.readTranscript!(path);
               const tail = all.length > TRANSCRIPT_SNAPSHOT_MAX ? all.slice(-TRANSCRIPT_SNAPSHOT_MAX) : all;
               for (const t of tail) {
