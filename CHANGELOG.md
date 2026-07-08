@@ -5,6 +5,23 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.40.3] — 2026-07-08
+
+### Fixed
+
+- **The session list's `↻ <title>` "resumed from" badge could show a
+  completely different conversation than the session's own Chat GUI**
+  — reported live, confirmed with Playwright by comparing the two
+  directly. Root cause: the badge was built from `resumeFrom` alone,
+  while the Chat view resolves the current conversation via
+  `externalSessionId ?? resumeFrom` (externalSessionId wins — see the
+  v0.40.0 New Chat fixes for why). A session that has done New Chat
+  since it was last resumed has both fields set to different
+  conversations, and the badge was reading the stale one. Same
+  mismatch existed in the past-conversations picker modal's
+  "currently bound" highlight. Both now use the same
+  `externalSessionId ?? resumeFrom` id the Chat view itself uses.
+
 ## [0.40.2] — 2026-07-08
 
 ### Fixed

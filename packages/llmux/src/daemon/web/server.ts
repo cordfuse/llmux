@@ -86,6 +86,22 @@ interface SessionView {
    * UI falls back to a truncated id.
    */
   resumeFromTitle?: string;
+  /**
+   * The conversation id the Chat view actually resolves to right now —
+   * externalSessionId ?? resumeFrom, the SAME priority getPinnedSessionId
+   * uses server-side for transcript lookups (see its docstring). NOT the
+   * same as resumeFrom: a session that's done New Chat since it was last
+   * resumed has both fields set to DIFFERENT conversations, and resumeFrom
+   * alone is the ORIGINAL/stale one. Reported live, confirmed with
+   * Playwright: the picker's "↻ <title>" badge (built from resumeFrom)
+   * showed a completely different conversation than what the session's own
+   * Chat GUI was actually displaying. resumeFrom itself is left alone
+   * (still needed as-is for the edit form's "resume from" dropdown, which
+   * must reflect the raw binding, not what New Chat may have since done).
+   */
+  boundConversationId?: string;
+  /** Title for boundConversationId, resolved the same way resumeFromTitle is. */
+  boundConversationTitle?: string;
   /** Per-session init prompts (combined with daemon.initPrompts at next respawn). */
   initPrompts?: string[];
   /** Whether the agent has a history adapter — UI shows the conversations icon. */
@@ -931,14 +947,21 @@ ${renderHeader({
     // visible at a glance. The dot itself is display:none on desktop,
     // where the dedicated STATE column shows the textual status.
     const stateDot = '<span class="state-dot ' + s.status + '" aria-label="' + s.status + '" title="' + s.status + '"></span>';
-    // "↻ resumed: <title>" badge — visible only when the session is
-    // currently bound to a conversation id (s.resumeFrom is set).
-    // Title comes from the adapter's lookupTitle(); fallback to the
-    // truncated id when lookup returns undefined.
+    // "↻ resumed: <title>" badge — visible whenever the session is
+    // currently bound to a conversation. Deliberately reads
+    // boundConversationId, NOT resumeFrom directly — resumeFrom is only
+    // the ORIGINAL binding a session was spawned/resumed with, and New
+    // Chat can leave it stale while the Chat view has long since moved on
+    // (externalSessionId tracks that). Reported live, confirmed with
+    // Playwright: this badge showed a completely different conversation
+    // than what the session's own Chat GUI was actually displaying, for
+    // exactly that reason. boundConversationId is resumeFrom itself when
+    // that's genuinely still current, so this changes nothing for the
+    // common case — only for sessions where New Chat has since run.
     let resumedFromHtml = '';
-    if (s.resumeFrom) {
-      const label = s.resumeFromTitle || (s.resumeFrom.length > 14 ? s.resumeFrom.slice(0, 14) + '…' : s.resumeFrom);
-      resumedFromHtml = '<span class="resumed-from" title="resumed from conversation ' + escapeHtml(s.resumeFrom) + '">↻ ' + escapeHtml(label) + '</span>';
+    if (s.boundConversationId) {
+      const label = s.boundConversationTitle || (s.boundConversationId.length > 14 ? s.boundConversationId.slice(0, 14) + '…' : s.boundConversationId);
+      resumedFromHtml = '<span class="resumed-from" title="current conversation ' + escapeHtml(s.boundConversationId) + '">↻ ' + escapeHtml(label) + '</span>';
     }
     return '<tr data-name="' + escapeHtml(s.name) + '" data-agent="' + escapeHtml(s.agent) + '">' +
       '<td class="select-col"><input type="checkbox" class="row-select" data-name="' + escapeHtml(s.name) + '" data-status="' + s.status + '" aria-label="select ' + escapeHtml(s.name) + '"></td>' +
@@ -1126,14 +1149,18 @@ ${renderHeader({
     convsList.innerHTML = 'loading…';
     convsModal.classList.add('open');
     convsModal.setAttribute('aria-hidden', 'false');
-    // Track this row's current resumeFrom so we can flag the active conversation
+    // Track which conversation is ACTUALLY current so we can flag it below.
+    // boundConversationId, not resumeFrom — same reasoning as the row
+    // badge in rowHtml: resumeFrom alone goes stale the moment New Chat
+    // runs, and this modal flagging the wrong entry as "current" would be
+    // exactly as misleading as the row badge was.
     convsCurrentResumeFrom = null;
     try {
       const sres = await fetch('/api/sessions', { cache: 'no-store' });
       if (sres.ok){
         const list = await sres.json();
         const row = list.find(function(s){ return s.name === sessionName; });
-        if (row) convsCurrentResumeFrom = row.resumeFrom || null;
+        if (row) convsCurrentResumeFrom = row.boundConversationId || null;
       }
     } catch(_){}
     try {
@@ -4263,15 +4290,31 @@ function viewOf(s: state.SessionState, live: boolean): SessionView {
       conversationCount = 0;
     }
   }
-  // Resolve the bound-conversation title for the per-row "↻ resumed: X"
-  // badge. Adapters that implement lookupTitle do a single targeted read
-  // (one file open / one SQL row) rather than walking the full set.
+  // Title for the edit form's raw resumeFrom binding (what respawn will
+  // actually use) — separate from boundConversationId/Title below, which
+  // is what the row badge shows (what the Chat view is ACTUALLY resolving
+  // to right now, which can differ after a New Chat).
   let resumeFromTitle: string | undefined;
   if (s.resumeFrom && agentDef?.history?.lookupTitle) {
     try {
       resumeFromTitle = agentDef.history.lookupTitle(s.cwd, s.resumeFrom);
     } catch {
       resumeFromTitle = undefined;
+    }
+  }
+  // externalSessionId wins over resumeFrom — same priority as
+  // getPinnedSessionId in the transcript-stream handler. See
+  // boundConversationId's docstring on SessionView for why this can't
+  // just reuse resumeFrom/resumeFromTitle above.
+  const boundConversationId = s.externalSessionId ?? s.resumeFrom;
+  let boundConversationTitle: string | undefined;
+  if (boundConversationId === s.resumeFrom) {
+    boundConversationTitle = resumeFromTitle;
+  } else if (boundConversationId && agentDef?.history?.lookupTitle) {
+    try {
+      boundConversationTitle = agentDef.history.lookupTitle(s.cwd, boundConversationId);
+    } catch {
+      boundConversationTitle = undefined;
     }
   }
   return {
@@ -4285,6 +4328,8 @@ function viewOf(s: state.SessionState, live: boolean): SessionView {
     defaultEnv: agentDef?.envDefaults ?? {},
     ...(s.resumeFrom !== undefined ? { resumeFrom: s.resumeFrom } : {}),
     ...(resumeFromTitle !== undefined ? { resumeFromTitle } : {}),
+    ...(boundConversationId !== undefined ? { boundConversationId } : {}),
+    ...(boundConversationTitle !== undefined ? { boundConversationTitle } : {}),
     ...(s.initPrompts !== undefined ? { initPrompts: s.initPrompts } : {}),
     hasHistory: Boolean(agentDef?.history),
     conversationCount,
