@@ -209,19 +209,21 @@ function encodeClaudeCwd(cwd: string): string {
 }
 
 /**
- * Shared by every *DetectFreshSessionId function below. 60s, not 15s —
- * confirmed live that 15s isn't always enough: Codex specifically doesn't
- * create its new rollout file the moment `/new` runs, only once the
- * OPERATOR sends their first real message in the fresh conversation (a
- * real test with a ~10s gap between clicking New Chat and sending a
- * follow-up prompt missed a 15s window entirely, even though the file
- * appeared correctly once the message landed). A real person composing a
- * message after starting a fresh conversation can easily take longer than
- * 15s. Cheap to be generous here — this is a detached/fire-and-forget
- * background poll either way (see armFreshSessionIdDetection), never
- * something a caller blocks on.
+ * Shared by every *DetectFreshSessionId function below. 10 minutes, not 60s
+ * — 60s already replaced an earlier 15s after confirming THAT wasn't
+ * enough (Codex doesn't create its new rollout file the moment `/new`
+ * runs, only once the operator sends their first real message in the
+ * fresh conversation), and 60s STILL wasn't enough: confirmed live on a
+ * real phone, typing a short follow-up after tapping New Chat — thinking
+ * + mobile keyboard pace alone can exceed 60s, and detection had already
+ * given up by the time the message landed, even though the file appeared
+ * correctly right after. There's no reliable upper bound on "how long
+ * until the operator sends their next message" short of just not
+ * guessing — cheap to be generous here regardless of the exact number,
+ * since this is a detached/fire-and-forget background poll either way
+ * (see armFreshSessionIdDetection), never something a caller blocks on.
  */
-const FRESH_SESSION_ID_DETECT_TIMEOUT_MS = 60000;
+const FRESH_SESSION_ID_DETECT_TIMEOUT_MS = 600000;
 
 /**
  * Claude Code's sessionIdFlag only pins an id at SPAWN time. Mid-session
