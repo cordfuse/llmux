@@ -2567,7 +2567,23 @@ function sessionTopbar(name: string, agentKey: string, mode: 'chat' | 'terminal'
     fetch('/api/sessions/${encodeURIComponent(name)}/new-chat', { method: 'POST' })
       .then(function(r){ return r.json().catch(function(){ return { ok: false }; }); })
       .then(function(j){
-        if (!j.ok) alert('New chat failed: ' + (j.error || 'unknown error'));
+        if (!j.ok) { alert('New chat failed: ' + (j.error || 'unknown error')); return; }
+        // Chat GUI's own reset is currently entirely dependent on the
+        // slow, background id-detection that follows this — which itself
+        // needs the OPERATOR's next real message before some agents even
+        // create a file to detect (confirmed: Codex/OpenCode don't until
+        // then). Reported live, confirmed with matching before/after
+        // screenshots: clicking New Chat alone produced literally zero
+        // visible change — the command genuinely landed, but nothing told
+        // the Chat view about it since nothing had changed FOR IT to
+        // notice yet. Dispatched here so chatPage's own script (which
+        // has clearLog/showToast, unlike this shared topbar script) can
+        // reset immediately on the command actually being sent —
+        // correctness of WHICH conversation loads on a future reload
+        // still depends on that background detection, but the operator
+        // shouldn't have to wait on it just to see feedback that the
+        // button worked at all.
+        document.dispatchEvent(new CustomEvent('llmux:new-chat'));
       })
       .catch(function(){ alert('New chat failed: network error'); })
       .finally(function(){ busy = false; btn.disabled = false; btn.textContent = label; });
@@ -3035,6 +3051,18 @@ ${sessionTopbar(name, agentKey, 'chat')}
       else clearPendingPrompt();
     });
   }
+
+  // Fired by the New Chat button in the shared topbar script the moment
+  // its command send succeeds — NOT tied to the SSE 'reset' event above,
+  // deliberately. That event only fires once background id-detection
+  // notices the conversation changed, which itself needs the operator's
+  // NEXT message before some agents even create a file to detect
+  // (confirmed: Codex/OpenCode don't until then). Reported live, confirmed
+  // with matching before/after screenshots: clicking New Chat alone
+  // produced zero visible change. Resetting here instead means the
+  // operator sees feedback immediately, independent of whenever (or
+  // whether) that background detection ever completes.
+  document.addEventListener('llmux:new-chat', function(){ clearLog(); showToast('New session started'); });
 
   var barEl = document.getElementById('bar');
   function syncComposer(){
