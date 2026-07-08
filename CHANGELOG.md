@@ -5,6 +5,27 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.40.4] — 2026-07-08
+
+### Fixed
+
+- **`server start` minted a brand new, non-expiring pairing token on
+  every single boot**, unconditionally. Fine for a genuine first boot;
+  actively wrong for every restart after — a dev iterating on the
+  daemon (or systemd/crash-restarting it in production) accumulates
+  one permanent credential per restart with no cleanup, ever (this is
+  where the 34 accumulated `server-start-*` tokens found live came
+  from — one dev session, ~30 restarts). Root cause: token minting was
+  tied to "process start," not "new device pairing intent" — those are
+  very different events the code couldn't distinguish. `server start`
+  now checks for an existing live (non-expired) token for the resolved
+  owner first and skips minting if one exists, printing a short status
+  line instead of a QR. Pairing a genuinely new device is unaffected —
+  `llmux token create --qr` is a separate code path this doesn't
+  touch — as is passing `--qr-name` or `--qr-expiry` explicitly, which
+  signals deliberate intent to mint a specific token and bypasses the
+  skip.
+
 ## [0.40.3] — 2026-07-08
 
 ### Fixed

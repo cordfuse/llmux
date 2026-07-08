@@ -485,6 +485,27 @@ async function printServerStartQr(port: number, args: ParsedArgs): Promise<void>
     }
     owner = firstAdmin.username;
   }
+  // Skip minting if this owner already has a live (non-expired) token —
+  // this used to be unconditional, minting a fresh non-expiring credential
+  // on every single `server start`. Fine for the true first boot, actively
+  // wrong for every restart after: a dev iterating on the daemon (or
+  // systemd/crash-restarting it in prod) racked up 34 permanent tokens in
+  // one session, none ever cleaned up, because nothing distinguished "new
+  // device pairing" from "the same process starting again." The plaintext
+  // secret can't be reprinted (only its hash is persisted, deliberately —
+  // same reasoning as password hashing), so an ALREADY-PAIRED operator
+  // gets a short status line instead of a QR; a genuinely new device is
+  // paired with an explicit `llmux token create --qr`, which is a
+  // different code path this check doesn't touch.
+  const existing = await stores.tokens.list(owner);
+  const now = Date.now();
+  const stillLive = existing.filter((t) => !t.expiresAt || new Date(t.expiresAt).getTime() > now);
+  if (stillLive.length > 0 && !nameFlag && !expiryFlag) {
+    console.log('');
+    console.log(`  ✓ ${owner} already has ${stillLive.length} active token(s) — skipping auto-mint.`);
+    console.log('    Pair a new device with `llmux token create --qr`, or see existing ones with `llmux token list`.');
+    return;
+  }
   const endpoint = endpointFlag
     ? resolveQrEndpoint(endpointFlag, port)
     : autoPickQrEndpoint(port);
