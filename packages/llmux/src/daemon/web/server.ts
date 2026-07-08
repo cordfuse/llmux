@@ -5130,6 +5130,21 @@ export function startServer(opts: ServeOptions): ServerHandle {
         // or /new always creates a brand new conversation regardless.
         const freshIdPending = startFreshSessionIdDetection(agent, session.cwd, undefined);
         try {
+          // Reported live (with screenshots) across four separate agents:
+          // if the composer already had unsent text sitting in it, typing
+          // the new-chat command straight on top produced concatenated
+          // garbage — "/clearnew", "//clear", "clear/clear" — since
+          // sendWithTurn/sendKeys just types into whatever's already
+          // there, it doesn't clear first. Each agent handled the garbled
+          // result differently (Codex rejected it outright, agy answered
+          // it as a literal prompt instead of running it, Claude happened
+          // to parse it leniently anyway) — but the fix is the same
+          // regardless: clear first. Small delay after so the TUI's own
+          // redraw settles before the real keystrokes land — sending both
+          // too close together risks the same kind of merge/race this is
+          // fixing in the first place.
+          tmux.clearComposer(name);
+          await new Promise((resolve) => setTimeout(resolve, 150));
           await turnqIntegration.sendWithTurn(name, agent.newChatCommand, {
             enter: true,
             skipTurnq: false,

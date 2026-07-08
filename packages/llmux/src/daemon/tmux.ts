@@ -152,6 +152,38 @@ export function sendKey(name: string, key: string): void {
 }
 
 /**
+ * Clears whatever's currently typed (but not yet sent) in the composer, by
+ * spamming Backspace — deliberately NOT Ctrl+A/Ctrl+U/Ctrl+K (readline-style
+ * "clear line" bindings): at least one of the supported CLIs binds Ctrl+A to
+ * something else entirely in some contexts (confirmed: OpenCode's own
+ * picker overlay uses ctrl+a for "connect provider"), so a key combo meant
+ * to clear text risks doing something UNRELATED instead, on some agent, in
+ * some state. Plain Backspace has no alternate meaning to collide with in
+ * any of these TUIs. All `count` presses go in ONE tmux invocation (cheap,
+ * fast) rather than one process spawn per keystroke.
+ *
+ * Exists specifically for the New Chat feature: reported live (with
+ * screenshots) that typing a new-chat command straight into a composer that
+ * already had unsent leftover text produced concatenated garbage —
+ * "/clearnew", "//clear", "clear/clear" — which every agent handled
+ * differently (Codex rejected it outright, agy answered it as a literal
+ * prompt, Claude happened to parse it leniently anyway). Clearing first
+ * removes the ambiguity regardless of what was already there.
+ */
+export function clearComposer(name: string, count = 300): void {
+  if (!hasSession(name)) {
+    throw new Error(`tmux session "${name}" not found`);
+  }
+  if (!isOwnedSession(name)) {
+    throw new Error(`tmux session "${name}" exists but was not spawned by llmux (foreign session) — refusing to send keys`);
+  }
+  const r = spawnSync('tmux', ['send-keys', '-t', name, ...Array(count).fill('BSpace')], { stdio: 'pipe' });
+  if (r.status !== 0) {
+    throw new Error(`tmux send-keys BSpace failed: ${r.stderr.toString().trim() || `exit ${r.status}`}`);
+  }
+}
+
+/**
  * Read the pane's root pid (the immediate process tmux spawned to run
  * the agent's command). For the multi-window edge case we only take the
  * first; llmux sessions are always single-window single-pane.
