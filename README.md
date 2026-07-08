@@ -51,29 +51,29 @@ llmux just adds the unified surface on top.)
 <table>
 <tr>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/chat.png" width="100%" alt="Chat GUI — a conversation with an agent rendered as cards in the browser">
+<img src="docs/screenshots/chat.png" width="100%" alt="Chat GUI — a conversation with an agent rendered as cards in the browser">
 <br><sub>Chat GUI</sub>
 </td>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/terminal.png" width="100%" alt="Terminal view — the same session's raw TUI, xterm.js in the browser">
+<img src="docs/screenshots/terminal.png" width="100%" alt="Terminal view — the same session's raw TUI, xterm.js in the browser">
 <br><sub>Terminal / TUI</sub>
 </td>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/edit.png" width="100%" alt="Edit session — agent, cwd, flags, env vars, resume-from picker, init prompts">
+<img src="docs/screenshots/edit.png" width="100%" alt="Edit session — agent, cwd, flags, env vars, resume-from picker, init prompts">
 <br><sub>Edit session</sub>
 </td>
 </tr>
 <tr>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/agents.png" width="100%" alt="Agents dashboard — installed status and running count per supported CLI">
+<img src="docs/screenshots/agents.png" width="100%" alt="Agents dashboard — installed status and running count per supported CLI">
 <br><sub>Agents dashboard</sub>
 </td>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/settings.png" width="100%" alt="Settings — discovery, listen address, turnq config, daemon init prompts, live YAML overlay">
+<img src="docs/screenshots/settings.png" width="100%" alt="Settings — discovery, listen address, turnq config, daemon init prompts, live YAML overlay">
 <br><sub>Settings</sub>
 </td>
 <td align="center" width="33%">
-<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/about.png" width="100%" alt="About — daemon host, version, session count, web UI connection info">
+<img src="docs/screenshots/about.png" width="100%" alt="About — daemon host, version, session count, web UI connection info">
 <br><sub>About</sub>
 </td>
 </tr>
