@@ -48,16 +48,39 @@ llmux just adds the unified surface on top.)
 > See [CHANGELOG.md](./CHANGELOG.md) for the per-version detail.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/cli.gif" width="85%" alt="CLI tour — version, installed agents, session list, JSON output">
+<table>
+<tr>
+<td align="center" width="33%">
+<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/chat.png" width="100%" alt="Chat GUI — a conversation with an agent rendered as cards in the browser">
+<br><sub>Chat GUI</sub>
+</td>
+<td align="center" width="33%">
+<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/terminal.png" width="100%" alt="Terminal view — the same session's raw TUI, xterm.js in the browser">
+<br><sub>Terminal / TUI</sub>
+</td>
+<td align="center" width="33%">
+<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/edit.png" width="100%" alt="Edit session — agent, cwd, flags, env vars, resume-from picker, init prompts">
+<br><sub>Edit session</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="33%">
+<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/agents.png" width="100%" alt="Agents dashboard — installed status and running count per supported CLI">
+<br><sub>Agents dashboard</sub>
+</td>
+<td align="center" width="33%">
+<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/settings.png" width="100%" alt="Settings — discovery, listen address, turnq config, daemon init prompts, live YAML overlay">
+<br><sub>Settings</sub>
+</td>
+<td align="center" width="33%">
+<img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/screenshots/about.png" width="100%" alt="About — daemon host, version, session count, web UI connection info">
+<br><sub>About</sub>
+</td>
+</tr>
+</table>
 </p>
 
-<p align="center"><em>CLI tour against a live daemon — version, agent catalog, session list, JSON surface, then a real tmux attach into a running Codex session and a clean detach.</em></p>
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/cordfuse/llmux/main/docs/demo/mobile.gif" width="30%" alt="Mobile picker, attach into an opencode session, soft-keyboard toolbar visible">
-</p>
-
-<p align="center"><em>Phone — picker → tap session → attached xterm with soft-keyboard toolbar (Esc / Tab / Ctrl / arrows / shell chars). Blue rings mark each tap. Pixel 7 emulation.</em></p>
+<p align="center"><em>Mobile web UI (Pixel 7) — Chat GUI and Terminal views of the same live session, edit form, agent catalog, settings, and daemon info. Every screen also works full-width on desktop.</em></p>
 
 ### One persistent process per agent
 
