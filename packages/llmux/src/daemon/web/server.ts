@@ -5170,17 +5170,27 @@ export function startServer(opts: ServeOptions): ServerHandle {
           // result differently (Codex rejected it outright, agy answered
           // it as a literal prompt instead of running it, Claude happened
           // to parse it leniently anyway) — but the fix is the same
-          // regardless: clear first. Small delay after so the TUI's own
-          // redraw settles before the real keystrokes land — sending both
-          // too close together risks the same kind of merge/race this is
-          // fixing in the first place.
+          // regardless: clear first.
           tmux.clearComposer(name);
-          await new Promise((resolve) => setTimeout(resolve, 150));
-          await turnqIntegration.sendWithTurn(name, agent.newChatCommand, {
-            enter: true,
-            skipTurnq: false,
-            turnqConfig: currentConfig?.turnq,
-          });
+          // Deliberately paced, NOT the usual sendWithTurn/sendKeys path
+          // (300ms text-then-Enter internally) — reported live that the
+          // button's version of this sequence completed with a 200 OK, yet
+          // /new never actually registered on a REAL, hours-old session
+          // (no new file, no token-usage recap — Codex's own tooltip
+          // confirmed the command WAS recognized as valid, so this isn't
+          // the composer-not-cleared bug again). Reproduced by hand: the
+          // identical clear→type→Enter sequence sent as separate tmux
+          // calls with ~1s gaps worked correctly every time, tight ~150–
+          // 300ms gaps did not — the same ink-paste-mode-debounce class of
+          // issue documented on tmux.sendKeys, just needing a longer
+          // window on this session than sendKeys' shared default provides.
+          // Fire-and-forget from the caller's perspective either way (the
+          // HTTP response doesn't wait on this), so being generous costs
+          // nothing.
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          tmux.sendKeys(name, agent.newChatCommand, { enter: false });
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          tmux.sendKey(name, 'Enter');
         } catch (err) {
           return sendJson(res, { ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
         }
