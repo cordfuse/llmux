@@ -2595,6 +2595,7 @@ function chatPage(name: string, agentKey: string): string {
   html,body{margin:0;height:100dvh;background:#0b0c10;color:#eee;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overscroll-behavior:none}
   ${sessionTopbarCss()}
   #note{display:none;position:fixed;top:var(--topbar-h);left:0;right:0;background:#3a2a12;color:#f0c674;border-bottom:1px solid #5a4522;padding:8px 14px;font-size:13px;z-index:20}
+  #toast{display:none;position:fixed;top:calc(var(--topbar-h) + 8px);left:50%;transform:translateX(-50%);background:#152230;color:#7cc4ff;border:1px solid #2d5a85;border-radius:8px;padding:6px 14px;font-size:12px;z-index:25;box-shadow:0 2px 8px #0006}
   #log{position:fixed;top:var(--topbar-h);left:0;right:0;bottom:84px;overflow-y:auto;padding:12px 0}
   #log-inner{max-width:820px;margin:0 auto}
   .turn{display:flex;margin:10px 14px}
@@ -2695,6 +2696,7 @@ function chatPage(name: string, agentKey: string): string {
 <body>
 ${sessionTopbar(name, agentKey, 'chat')}
 <div id="note"></div>
+<div id="toast"></div>
 <div id="log"><div id="log-inner"><div id="empty">No messages yet. Type below to send input to this agent.</div></div></div>
 <div id="bar"><div id="composer">
   <textarea id="input" rows="1" placeholder="Send a message…"></textarea>
@@ -2742,6 +2744,22 @@ ${sessionTopbar(name, agentKey, 'chat')}
   var ta = document.getElementById('input');
   var sendBtn = document.getElementById('send');
   var noteEl = document.getElementById('note');
+  var toastEl = document.getElementById('toast');
+  var toastTimer = null;
+  // Transient, not a persistent warning like showNote (#note is amber —
+  // reserved for actual problems, e.g. "no transcript adapter"). Used to
+  // confirm New Chat actually took effect once the SSE 'reset' event
+  // fires — the whole point of the underlying re-pinning fix was that
+  // this reset can now happen well after the button click (background
+  // detection can take up to a minute), so a silent clear alone could
+  // look like nothing happened at all.
+  function showToast(m){
+    if (!toastEl) return;
+    toastEl.textContent = m;
+    toastEl.style.display = 'block';
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toastEl.style.display = 'none'; }, 3000);
+  }
 
   function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function md(t){ try { return window.marked ? marked.parse(t,{breaks:true,gfm:true}) : esc(t); } catch(e){ return esc(t); } }
@@ -3008,7 +3026,7 @@ ${sessionTopbar(name, agentKey, 'chat')}
     es.onopen = function(){ dot.dataset.state='live'; dot.title='live'; };
     es.onerror = function(){ dot.dataset.state='error'; dot.title='reconnecting…'; };
     es.onmessage = function(ev){ try{ addTurn(JSON.parse(ev.data)); }catch(e){} };
-    es.addEventListener('reset', function(){ clearLog(); });
+    es.addEventListener('reset', function(){ clearLog(); showToast('New session started'); });
     es.addEventListener('unsupported', function(){ dot.dataset.state='error'; showNote('This agent has no transcript adapter yet — chat view unavailable. Use the Terminal view.'); });
     es.addEventListener('prompt', function(ev){ try{ renderPendingPrompt(JSON.parse(ev.data)); }catch(e){} });
     es.addEventListener('prompt-clear', function(){
@@ -4169,18 +4187,30 @@ export function startFreshSessionIdDetection(agent: AgentDefinition, cwd: string
  * Attaches the persist step to a promise started by startFreshSessionIdDetection
  * — call once spawn has actually succeeded and the session is recorded.
  * Re-reads the CURRENT session record (not a captured reference — avoids
- * clobbering any edits/respawns during the up-to-15s detection window) and
- * persists the discovered id, provided the session hasn't since been
- * resumed (already has its own deterministic id), renamed away, or — if
- * spawn itself failed after detection was already started — never
- * recorded at all.
+ * clobbering any edits/respawns during the up-to-60s detection window) and
+ * persists the discovered id, unless the session was renamed away (gone
+ * entirely) or its resumeFrom CHANGED since detection started (some other
+ * resume/edit raced this one — don't clobber that).
+ *
+ * originalResumeFrom must be the exact resumeFrom value in effect when
+ * startFreshSessionIdDetection was called for this same detection run —
+ * NOT necessarily undefined. Bug, found live: this used to just check
+ * "is current.resumeFrom truthy at all" — correct for the fresh-spawn
+ * callers (where startFreshSessionIdDetection only ever runs when
+ * resumeFrom was undefined, so any truthy value by persist-time really
+ * does mean a race happened), but New Chat calls this on sessions that
+ * were themselves originally spawned via resume — resumeFrom is SUPPOSED
+ * to still be set there, unchanged, and the old check silently discarded
+ * every New Chat detection result for any such session. Confirmed live:
+ * a real Codex session with resumeFrom set from its original spawn never
+ * got re-pinned after /new, no matter how many times it ran.
  */
-export function armFreshSessionIdDetection(name: string, pending: Promise<string | undefined> | undefined): void {
+export function armFreshSessionIdDetection(name: string, pending: Promise<string | undefined> | undefined, originalResumeFrom: string | undefined): void {
   if (!pending) return;
   pending.then((id) => {
     if (!id) return;
     const current = state.get(name);
-    if (!current || current.resumeFrom) return;
+    if (!current || current.resumeFrom !== originalResumeFrom) return;
     state.record({ ...current, externalSessionId: id });
   }).catch(() => { /* best-effort — chat view falls back to the mtime guess */ });
 }
@@ -4331,7 +4361,7 @@ function createSession(input: { agent: string; name?: string; cwd?: string; flag
     restart: 'on-failure',
   };
   state.record(session);
-  armFreshSessionIdDetection(name, freshIdPending);
+  armFreshSessionIdDetection(name, freshIdPending, resumeFrom);
 
   return { ok: true, session: viewOf(session, true) };
 }
@@ -4375,7 +4405,7 @@ function respawnSession(name: string): { ok: true; session: SessionView } | { ok
     createdAt: new Date().toISOString(),
   };
   state.record(refreshed);
-  armFreshSessionIdDetection(session.name, freshIdPending);
+  armFreshSessionIdDetection(session.name, freshIdPending, session.resumeFrom);
   return { ok: true, session: viewOf(refreshed, true) };
 }
 
@@ -4540,7 +4570,7 @@ export function editSession(
           createdAt: new Date().toISOString(),
         };
         state.record(refreshed);
-        armFreshSessionIdDetection(updated.name, freshIdPending);
+        armFreshSessionIdDetection(updated.name, freshIdPending, updated.resumeFrom);
         return { ok: true, session: viewOf(refreshed, true) };
       } catch (err) {
         const what = cwdChanged && resumeChanged ? 'cwd + resumeFrom' : (cwdChanged ? 'cwd' : 'resumeFrom');
@@ -5153,7 +5183,15 @@ export function startServer(opts: ServeOptions): ServerHandle {
         } catch (err) {
           return sendJson(res, { ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
         }
-        armFreshSessionIdDetection(name, freshIdPending);
+        // originalResumeFrom is session.resumeFrom here — NOT the undefined
+        // passed to startFreshSessionIdDetection above. That undefined only
+        // tells detection to run regardless of resumeFrom; this tells the
+        // persist step what to compare against to detect an unrelated race,
+        // and for a session that resumed something at spawn, that original
+        // value is very much NOT undefined (this exact mismatch was the
+        // Codex bug: passing undefined here silently discarded every
+        // detection result for any session with resumeFrom set).
+        armFreshSessionIdDetection(name, freshIdPending, session.resumeFrom);
         return sendJson(res, { ok: true });
       }
       const mRespawn = url.pathname.match(RESPAWN_RE);
@@ -5230,9 +5268,33 @@ export function startServer(opts: ServeOptions): ServerHandle {
         const hist = agent?.history;
         const cwd = session.cwd;
         // Whichever id deterministically identifies THIS session's own
-        // transcript file, if any adapter can use one — resumeFrom wins
-        // (already deterministic) over the spawn-time pinned id.
-        const pinnedSessionId = session.resumeFrom ?? session.externalSessionId;
+        // transcript file, if any adapter can use one. externalSessionId
+        // wins over resumeFrom — NOT the other way around. resumeFrom is
+        // fixed forever at whatever conversation the session originally
+        // launched from; externalSessionId is what New Chat's background
+        // detection (armFreshSessionIdDetection) updates every time /clear
+        // or /new moves the conversation on. A session that was originally
+        // spawned via resume, then did New Chat, has BOTH fields set —
+        // resumeFrom stale and unchanging, externalSessionId current — so
+        // resumeFrom-first would mean New Chat's own detection result is
+        // computed correctly and persisted correctly, then never actually
+        // used for anything. Confirmed live: a real resumed Codex session
+        // detected its post-/new conversation's id fine, but Chat view kept
+        // resolving to the pre-/new one via resumeFrom regardless.
+        //
+        // Re-reads state fresh on every call rather than capturing this
+        // once — an SSE connection can stay open a long time, and New
+        // Chat's detection updates state in the BACKGROUND, in a promise
+        // this same connection has no way to observe if the id were only
+        // ever read once at connection-open. Confirmed live: without this
+        // part, an already-open Chat tab kept showing the pre-New-Chat
+        // conversation indefinitely even after the id was correctly
+        // persisted — only a fresh page load (a new connection, re-reading
+        // state from scratch) picked it up.
+        const getPinnedSessionId = (): string | undefined => {
+          const current = state.get(name);
+          return current?.externalSessionId ?? current?.resumeFrom;
+        };
 
         res.writeHead(200, {
           'content-type': 'text/event-stream',
@@ -5299,7 +5361,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
           const sentIds = new Set<string>();
           const pollOnce = () => {
             try {
-              const path = hist.currentTranscript!(cwd, pinnedSessionId);
+              const path = hist.currentTranscript!(cwd, getPinnedSessionId());
               if (!path) return;
               const all = hist.readTranscript!(path);
               const tail = all.length > TRANSCRIPT_SNAPSHOT_MAX ? all.slice(-TRANSCRIPT_SNAPSHOT_MAX) : all;
@@ -5373,7 +5435,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
           watchActive();
         };
 
-        const initial = hist.currentTranscript(cwd, pinnedSessionId);
+        const initial = hist.currentTranscript(cwd, getPinnedSessionId());
         if (initial) attach(initial);
 
         // Poll for the active file switching (fresh spawn writes a new file) and
@@ -5381,7 +5443,7 @@ export function startServer(opts: ServeOptions): ServerHandle {
         // carries the pending-prompt check (same cadence, one timer).
         const poll = setInterval(() => {
           try {
-            const p = hist.currentTranscript!(cwd, pinnedSessionId);
+            const p = hist.currentTranscript!(cwd, getPinnedSessionId());
             if (p && p !== activePath) {
               try { res.write('event: reset\ndata: {}\n\n'); } catch {}
               attach(p);
@@ -5415,7 +5477,10 @@ export function startServer(opts: ServeOptions): ServerHandle {
         if (!hist?.currentTranscript || !hist.readTranscript) {
           return sendJson(res, { supported: false, path: null, turns: [] });
         }
-        const path = hist.currentTranscript(session.cwd, session.resumeFrom ?? session.externalSessionId);
+        // externalSessionId wins over resumeFrom — see the streaming
+        // endpoint's getPinnedSessionId for why the reverse priority is
+        // wrong once New Chat has run on a resumed session.
+        const path = hist.currentTranscript(session.cwd, session.externalSessionId ?? session.resumeFrom);
         if (!path) return sendJson(res, { supported: true, path: null, turns: [] });
         try {
           const all = hist.readTranscript(path);
