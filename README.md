@@ -427,6 +427,15 @@ admin user with a passphrase. Subsequent logins go through `/login` (web)
 or `llmux auth login` (CLI), both of which mint **identity tokens** that
 are bound to the authenticated user.
 
+Once that first admin exists, `server start` also prints a scannable
+QR pairing code by default (`--no-qr` to suppress) — but only once.
+It mints a token and shows the QR the first time there's no live
+token yet for that user; every restart after that just starts the
+daemon normally instead of minting another one, since a restart isn't
+a new device asking to pair. Pair an actual new device with
+`llmux token create --qr` (below) — that's a separate, always-available
+path, unaffected by whether one was auto-minted at some earlier boot.
+
 Tokens are owned. The Tokens page in the web UI (drawer → Tokens) shows
 every token's owner, and admins can mint a token for any user; non-admins
 can only mint their own. From the CLI:
