@@ -168,7 +168,7 @@ llmux session start claude --name sdd \
 ```
 
 **Spawn timing.** The daemon polls the tmux pane for each agent's
-`readyPrompt` regex (e.g. `^>` for Claude, `Goose❯` for Goose). Once
+`readyPrompt` regex (e.g. `^>` for Claude, `^agy>` for Antigravity CLI). Once
 the regex matches the bottom of the pane the prompts fire in order
 with a 500ms gap between. Timeout is 10s — if the regex never matches
 (agent hung at OAuth, etc.) llmux warns and fires anyway. For agents
@@ -346,19 +346,11 @@ Node, and attaching to tmux through node-pty under Bun caused immediate SIGHUP.
 | `gemini`   | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | `--yolo` |
 | `qwen`     | [Qwen Code](https://github.com/QwenLM/qwen-code) | `--yolo` |
 | `opencode` | [OpenCode](https://opencode.ai) | env: `OPENCODE_YOLO=1` (TUI lacks a flag) |
-| `amp`      | [Sourcegraph Amp](https://ampcode.com) | `--dangerously-allow-all` |
-| `grok`     | [Grok Build CLI](https://x.ai/cli) | `--always-approve` |
-| `aider`    | [Aider](https://aider.chat) | `--yes-always` |
-| `continue` | [Continue CLI](https://docs.continue.dev/guides/cli) (`cn`) | `--auto` |
-| `kiro`     | [Kiro CLI](https://kiro.dev/cli/) | `--trust-all-tools` |
-| `cursor`   | [Cursor CLI](https://cursor.com/docs/cli/installation) (`cursor-agent`) | (config-based) |
-| `plandex`  | [Plandex](https://plandex.ai) | (interactive `set-auto`) |
-| `goose`    | [Goose](https://block.github.io/goose) | env: `GOOSE_MODE=auto` |
-| `copilot`  | [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/use-copilot-in-the-cli) (`gh copilot`) | n/a |
 
-Only installed agents appear in `llmux agent list` and the picker dropdown.
-Detection uses a pure-Node PATH walk for most; `copilot` checks the gh-managed
-binary directory.
+These six are the fully-supported set — spawn, Chat GUI, conversation
+history/resume, and the New Chat button all work identically across
+every one of them. Only installed agents appear in `llmux agent list`
+and the picker dropdown; detection uses a pure-Node PATH walk.
 
 Per-session overrides via `llmux session start <agent>`:
 - `--name <X>` — tmux session name (defaults to the agent key)
