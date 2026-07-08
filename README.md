@@ -111,10 +111,14 @@ re-attaches forever.
 
 ### One addressable surface, many use cases
 
-Because each session is reachable by name from any client, llmux is the
-substrate higher-level patterns sit on — spec-driven development (SDD)
-pipelines, multi-agent chains, scheduled jobs, evals harnessed against
-live agents.
+Because each session is reachable by name from any client, llmux is a
+substrate higher-level patterns can sit on — spec-driven development
+(SDD) pipelines, multi-agent chains, scheduled jobs, evals harnessed
+against live agents. The part of the surface this is true for is spawn
+once + `session prompt` in a loop, reading responses back off the
+transcript — a thin, low-surface-area primitive that doesn't touch
+anything below. See [Conversation resume](#conversation-resume) for
+where that stops being true.
 
 ## Multiple senders, one session
 
@@ -400,6 +404,20 @@ llmux session resume <name> --conversation <id>
 llmux session history <name>                  # list past conversations + ids
 llmux session start opencode --resume-from ses_<id>  # spawn pre-bound
 ```
+
+**Reliability note for scripted use.** New Chat and conversation
+switching don't have authoritative state to query — llmux infers
+"which conversation is this" by watching a human-facing TUI from the
+outside: scraping tmux panes, polling transcript-file mtimes, racing
+against per-agent paste-debounce timing. That's held up under live,
+adversarial testing (repeated real-world bug reports, fixed, retested
+until it stuck), but the failure mode when it slips is silent — a
+respawn can report success while the underlying agent never actually
+switched conversations, with no exception for a caller to catch.
+`session prompt` on an already-spawned session doesn't share this risk
+— it's a much thinner surface. If a pipeline needs a clean context per
+task, spawning a new named session per task is the safer pattern over
+calling New Chat/resume on a shared one mid-pipeline.
 
 ## Auth
 
