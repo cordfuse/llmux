@@ -2655,7 +2655,8 @@ function chatPage(name: string, agentKey: string): string {
   #bar::before{content:"";position:absolute;top:-32px;left:0;right:0;height:32px;background:linear-gradient(to bottom,transparent 0%,#0b0c10 100%);pointer-events:none}
   /* chatframe-style composer pill: textarea on top, icon send button beneath,
      rounded container whose border lifts to the accent on focus-within. */
-  #composer{max-width:820px;margin:0 auto;background:transparent;border:none;border-radius:22px;overflow:hidden}
+  #composer{max-width:820px;margin:0 auto;background:#161b22;border:1px solid #262c34;border-radius:22px;overflow:hidden}
+  #composer:focus-within{border-color:#3a414b}
   #input{display:block;width:100%;resize:none;min-height:24px;max-height:180px;background:transparent;color:#e6e8eb;border:none;outline:none;padding:12px 16px 4px;font:14px ui-monospace,monospace;line-height:1.45;scrollbar-width:none;-ms-overflow-style:none}
   #input::-webkit-scrollbar{display:none;width:0;height:0}
   #input::placeholder{color:#5a6068}
