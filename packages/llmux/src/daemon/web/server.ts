@@ -1194,8 +1194,13 @@ ${renderHeader({
       });
       const data = await r.json().catch(function(){ return {}; });
       if (!r.ok || data.ok === false) throw new Error(data.error || 'resume failed');
-      showToast('resumed ' + sessionName);
-      poll();
+      // Previously just toasted + refreshed the list in place, leaving the
+      // operator to notice the row changed and go find it themselves.
+      // Selecting a past conversation should mean "take me there" — the
+      // Chat view reads the on-disk transcript directly (see chatPage),
+      // so it renders correctly even in the moment right after resume
+      // kills and relaunches the pty, before the new process is fully up.
+      window.location.href = '/chat/' + encodeURIComponent(sessionName);
     } catch(err){
       showToast('resume failed: ' + (err.message || err), true);
     }
@@ -2523,7 +2528,6 @@ function sessionTopbarCss(): string {
   #title-dot[data-state="reconnecting"]{animation:pulse 1s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   #title-name{flex:0 1 auto;font-weight:600;color:#e6e8eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #title-agent{flex:0 0 auto;color:#a371f7;font-size:11px}
   #topbar .xlink{flex:0 0 auto;background:#1c2128;color:#7cc4ff;border:1px solid #262c34;border-radius:6px;height:22px;padding:0 8px;font:600 11px/1 ui-monospace,monospace;display:inline-flex;align-items:center;text-decoration:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;outline:none}
   #topbar .xlink:active{background:#252b34;border-color:#3a414b}
   `;
@@ -2535,7 +2539,6 @@ function sessionTopbarCss(): string {
  * place instead of being wired twice.
  */
 function sessionTopbar(name: string, agentKey: string, mode: 'chat' | 'terminal'): string {
-  const agentLabel = DEFAULT_AGENTS[agentKey]?.displayName ?? agentKey;
   const cross = mode === 'chat'
     ? `<a class="xlink" href="/session/${encodeURIComponent(name)}" title="Terminal view">Terminal</a>`
     : `<a class="xlink" href="/chat/${encodeURIComponent(name)}" title="Chat view">Chat</a>`;
@@ -2549,7 +2552,7 @@ function sessionTopbar(name: string, agentKey: string, mode: 'chat' | 'terminal'
     : '';
   return `<div id="topbar">
   <a id="back" href="/" title="Session list">⌂</a>
-  <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapeHtml(name)}</span><span id="title-agent">${escapeHtml(agentLabel)}</span></span>
+  <span id="title-block"><span id="title-dot" data-state="connecting" title="connecting…"></span><span id="title-name">${escapeHtml(name)}</span></span>
   ${newChatBtn}
   ${cross}
 </div>

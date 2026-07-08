@@ -5,6 +5,22 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.40.1] — 2026-07-08
+
+### Changed
+
+- **Removed the agent name from the Chat/Terminal topbar** — the
+  session name alone is now the title; the colored agent label next
+  to it (e.g. "Codex CLI", "Antigravity CLI") is gone.
+
+### Fixed
+
+- **Selecting a past conversation from a session's history (the ☰
+  button in the session list) now takes you to that session's Chat
+  view.** Previously it resumed the conversation on the backend but
+  left you on the session list with just a toast — you had to notice
+  the row and go find it yourself.
+
 ## [0.40.0] — 2026-07-08
 
 ### Added
