@@ -4479,8 +4479,21 @@ function resumeConversation(
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
+  // externalSessionId is deliberately DROPPED here (not carried over via
+  // spread, not set to undefined — exactOptionalPropertyTypes rejects an
+  // explicit undefined on an optional string field), rather than left as
+  // whatever it was. getPinnedSessionId (the Chat view's transcript
+  // lookup) prefers externalSessionId over resumeFrom — correct for New
+  // Chat, where externalSessionId is the freshly-detected conversation
+  // and resumeFrom is deliberately stale. But a session that had EVER
+  // done New Chat still carries that old externalSessionId, and this
+  // action sets a DIFFERENT resumeFrom — the explicit choice right here —
+  // which that stale value would then silently outrank. Reported live:
+  // selecting a past conversation from the ☰ history picker kept showing
+  // an unrelated, older conversation instead of the one just picked.
+  const { externalSessionId: _dropped, ...sessionWithoutExternalId } = session;
   const refreshed: state.SessionState = {
-    ...session,
+    ...sessionWithoutExternalId,
     resumeFrom: conversationId,
     createdAt: new Date().toISOString(),
   };
@@ -4561,6 +4574,16 @@ export function editSession(
     ...(nextResumeFrom !== undefined ? { resumeFrom: nextResumeFrom } : {}),
     ...(nextInitPrompts !== undefined ? { initPrompts: nextInitPrompts } : {}),
     ...(session.turnqMarker !== undefined ? { turnqMarker: session.turnqMarker } : {}),
+    // Carried over only when resumeFrom ISN'T actually changing — an edit
+    // to some unrelated field (flags, env, cwd) shouldn't silently wipe a
+    // pinned New-Chat detection result just because this object is built
+    // fresh rather than spread from session. When resumeFrom DOES change,
+    // this is deliberately omitted — see resumeConversation's identical
+    // reasoning for why a stale externalSessionId must not survive an
+    // explicit switch to a different conversation.
+    ...(nextResumeFrom === session.resumeFrom && session.externalSessionId !== undefined
+      ? { externalSessionId: session.externalSessionId }
+      : {}),
     createdAt: session.createdAt,
     parent: session.parent,
     restart: session.restart,

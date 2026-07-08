@@ -5,6 +5,23 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.40.2] — 2026-07-08
+
+### Fixed
+
+- **Selecting a past conversation from a session's history could land on
+  the wrong conversation** — reported live on Claude specifically,
+  likely affecting any agent. The Chat view's transcript lookup prefers
+  a freshly-detected New Chat id (`externalSessionId`) over the
+  session's `resumeFrom`, which is correct for New Chat but meant a
+  session that had EVER done New Chat kept that old id around
+  afterward — so explicitly resuming a *different* past conversation
+  updated `resumeFrom` correctly but the stale `externalSessionId`
+  still won the lookup, silently overriding the operator's actual
+  choice. Both the resume action and unrelated session edits now
+  correctly drop or preserve `externalSessionId` based on whether
+  `resumeFrom` is actually changing.
+
 ## [0.40.1] — 2026-07-08
 
 ### Changed
